@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sched.h>
 #include <signal.h>
@@ -74,6 +75,43 @@ struct observer_state {
 
 static struct task_state tasks[TM_MAX_TASKS];
 static struct observer_state observer;
+
+static int has_inherited_descriptors(void)
+{
+    DIR *directory = opendir("/proc/self/fd");
+    struct dirent *entry;
+    int scan_descriptor;
+    int ineligible = 0;
+    if (directory == NULL) return 1;
+    scan_descriptor = dirfd(directory);
+    for (;;) {
+        char *end;
+        long descriptor;
+        int flags;
+        errno = 0;
+        entry = readdir(directory);
+        if (entry == NULL) {
+            if (errno != 0) ineligible = 1;
+            break;
+        }
+        if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+        descriptor = strtol(entry->d_name, &end, 10);
+        if (*end != '\0' || descriptor <= STDERR_FILENO ||
+            descriptor == scan_descriptor) continue;
+        flags = fcntl((int)descriptor, F_GETFD);
+        if (flags < 0) {
+            if (errno == EBADF) continue;
+            ineligible = 1;
+            break;
+        }
+        if ((flags & FD_CLOEXEC) == 0) {
+            ineligible = 1;
+            break;
+        }
+    }
+    closedir(directory);
+    return ineligible;
+}
 
 static void mark_observer_failure(void)
 {
@@ -658,7 +696,7 @@ static void report_reasons(void)
         fprintf(stderr, "tm: reuse rejected: directory membership is not modeled\n");
     }
     if (observer.saw_external_descriptor) {
-        fprintf(stderr, "tm: reuse rejected: input descriptor provenance is not modeled\n");
+        fprintf(stderr, "tm: reuse rejected: inherited or untracked descriptor provenance is not modeled\n");
     }
     if (observer.saw_unknown_syscall) {
         size_t unsupported_index;
@@ -798,7 +836,8 @@ static void detach_descendants(void)
     }
 }
 
-static int trace_child(pid_t child, int explain, const char *repository_root)
+static int trace_child(pid_t child, int explain, const char *repository_root,
+                       int inherited_descriptors)
 {
     int status;
     long options = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK |
@@ -810,6 +849,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root)
     memset(&observer, 0, sizeof(observer));
     observer.explain = explain;
     observer.repository_root = repository_root;
+    observer.saw_external_descriptor = inherited_descriptors;
     observer.direct_pid = child;
     if (add_task(child) == NULL) {
         return plain_wait(child);
@@ -937,6 +977,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root)
 int tm_observe_and_run(char **command, int explain, char *const environment[],
                        const char *repository_root)
 {
+    int inherited_descriptors = has_inherited_descriptors();
     pid_t child = fork();
 
     if (child < 0) {
@@ -955,7 +996,8 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
         raise(SIGSTOP);
         exec_command(command, environment);
     }
-    return trace_child(child, explain, repository_root);
+    return trace_child(child, explain, repository_root,
+                       inherited_descriptors);
 }
 
 #else

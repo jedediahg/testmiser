@@ -249,6 +249,11 @@ set -e
 test "$status" -eq 29
 grep -q 'tm: RUN:' "$tmp_dir/explain.err"
 if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
+    exec 9<"$tmp_dir/repo/tests/explicit.txt"
+    "$tm_bin" --explain -- /bin/true 2>"$tmp_dir/inherited-fd.err"
+    exec 9<&-
+    grep -q 'inherited or untracked descriptor provenance is not modeled' \
+        "$tmp_dir/inherited-fd.err"
     "$tm_bin" --explain -- "$network_syscall_probe" \
         2>"$tmp_dir/network-syscalls.err"
     grep -q 'socket or network operation observed' "$tmp_dir/network-syscalls.err"
