@@ -90,6 +90,15 @@ int tm_result_find_matching_snapshot_inputs(
     const char *const *root_paths, const int *root_descriptors,
     size_t root_count, unsigned char **record, size_t *record_length,
     char record_id[72]);
+/* As above, but accept output-bearing records without restoring their outputs.
+ * Intended for audits that need to compare a later outcome to prior evidence. */
+int tm_result_find_matching_snapshot_record(
+    int store_root_fd, const char *command_fingerprint,
+    const char *profile_digest, const char *runtime_digest,
+    const char *context_digest, const struct tm_trust_policy *trust_policy,
+    const char *const *root_paths, const int *root_descriptors,
+    size_t root_count, unsigned char **record, size_t *record_length,
+    char record_id[72]);
 /* Snapshot-input variant that also restores the authenticated output tree
  * before reporting a hit. */
 int tm_result_find_matching_snapshot_inputs_and_restore(

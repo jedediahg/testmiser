@@ -318,6 +318,7 @@ static int test_output_lookup(
     struct tm_verification_identity output_identity = *identity;
     struct tm_output_manifest manifest = {0};
     struct tm_snapshot *input_snapshot = NULL;
+    struct stat status;
     unsigned char *record = NULL, *found = NULL;
     size_t record_length = 0, found_length = 0;
     char blob_digest[72] = {0};
@@ -372,6 +373,9 @@ static int test_output_lookup(
             trust, roots, 1, &found, &found_length, record_id) != 0 ||
         found_length != record_length || memcmp(found, record, record_length) != 0)
         goto done;
+    free(found); found = NULL;
+    if (unlinkat(clonefd, "dist/report.txt", 0) < 0 ||
+        unlinkat(clonefd, "dist", AT_REMOVEDIR) < 0) goto done;
     {
         const char *snapshot_paths[] = {"tests"};
         int snapshot_roots[1];
@@ -380,6 +384,16 @@ static int test_output_lookup(
             (snapshot_rootfd = tm_snapshot_open_root_readable(
                 input_snapshot, 0)) < 0) goto done;
         snapshot_roots[0] = snapshot_rootfd;
+        int probed = tm_result_find_matching_snapshot_record(sharedfd,
+                command_fingerprint, output_identity.profile_digest,
+                output_identity.runtime_digest, output_identity.context_digest,
+                trust, snapshot_paths, snapshot_roots, 1, &found,
+                &found_length, record_id);
+        if (probed != 0 || found_length != record_length ||
+            memcmp(found, record, record_length) != 0 ||
+            fstatat(clonefd, "dist", &status, AT_SYMLINK_NOFOLLOW) == 0 ||
+            errno != ENOENT) goto done;
+        free(found); found = NULL;
         if (tm_result_find_matching_snapshot_inputs_and_restore(sharedfd,
                 clonefd, sharedfd, command_fingerprint,
                 output_identity.profile_digest, output_identity.runtime_digest,

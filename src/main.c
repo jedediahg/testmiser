@@ -387,6 +387,8 @@ static int find_profile_cache_hit(int repository_fd,
                                   size_t output_root_count,
                                   const char *const *blocked_fingerprints,
                                   size_t blocked_count,
+                                  int probe_only,
+                                  char verification_fingerprint[72],
                                   char record_id[72])
 {
     struct tm_snapshot *snapshot = NULL;
@@ -417,13 +419,30 @@ static int find_profile_cache_hit(int repository_fd,
     preflight = tm_backend_preflight(profile, runtime_root, repository_root,
                                      snapshot);
     if (preflight != 1) goto done;
-    found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(repository_fd,
-        repository_fd, repository_fd,
-        command_fingerprint, tm_profile_digest(profile),
-        tm_profile_runtime_digest(profile), context_fingerprint,
-        trust_policy, root_paths, root_descriptors, root_count,
-        output_roots, output_root_count, blocked_fingerprints, blocked_count,
-        &record, &record_length, record_id);
+    if (probe_only)
+        found = tm_result_find_matching_snapshot_record(repository_fd,
+            command_fingerprint, tm_profile_digest(profile),
+            tm_profile_runtime_digest(profile), context_fingerprint,
+            trust_policy, root_paths, root_descriptors, root_count,
+            &record, &record_length, record_id);
+    else
+        found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
+            repository_fd, repository_fd, repository_fd, command_fingerprint,
+            tm_profile_digest(profile), tm_profile_runtime_digest(profile),
+            context_fingerprint, trust_policy, root_paths, root_descriptors,
+            root_count, output_roots, output_root_count, blocked_fingerprints,
+            blocked_count, &record, &record_length, record_id);
+    if (found == 0 && probe_only) {
+        struct tm_result_summary summary = {0};
+        char inspected_id[72];
+        if (tm_result_inspect(record, record_length, &summary, inspected_id) < 0)
+            found = -1;
+        else {
+            memcpy(verification_fingerprint, summary.verification_fingerprint,
+                   72);
+            tm_result_summary_clear(&summary);
+        }
+    }
     if (found == 0) found = 0;
     else found = 1;
 done:
@@ -455,6 +474,8 @@ int main(int argc, char **argv)
     char *working_directory = NULL;
     char command_fingerprint[72] = {0};
     char context_fingerprint[72] = {0};
+    char prior_forced_fingerprint[72] = {0};
+    int prior_forced_success = 0;
     char signing_key_id[72] = {0};
     uint64_t signing_epoch = 0;
     struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
@@ -784,6 +805,22 @@ int main(int argc, char **argv)
     }
     if (options.force && options.explain)
         fprintf(stderr, "tm: force requested; command will execute\n");
+    if (attempt_state_ready && attempt_state.blocked_all && options.explain)
+        fprintf(stderr, "tm: RUN: local incomplete or interrupted attempt blocks reuse for this command/context\n");
+    if (options.force && attempt_state_ready && options.input_count == 0 &&
+        profile != NULL && command_fingerprint[0] != '\0') {
+        char prior_record_id[72];
+        if (find_profile_cache_hit(repository_fd, profile, runtime_root,
+                repository_root, command_fingerprint, context_fingerprint,
+                trust_policy, options.output_paths, options.output_count,
+                NULL, 0, 1, prior_forced_fingerprint,
+                prior_record_id) == 0) {
+            prior_forced_success = 1;
+            if (options.explain)
+                fprintf(stderr, "tm: forced run is checking trusted prior result %s\n",
+                        prior_record_id);
+        }
+    }
     if (options.explain && options.output_count > 0 && profile == NULL)
         fprintf(stderr, "tm: reuse rejected: --output requires an approved enforced profile\n");
     if (!options.force && attempt_state_ready &&
@@ -799,6 +836,7 @@ int main(int argc, char **argv)
                 trust_policy, options.output_paths, options.output_count,
                 (const char *const *)attempt_state.blocked_fingerprints,
                 attempt_state.blocked_count,
+                0, NULL,
                 candidate_id) == 0) {
             cache_hit = 1;
             result = 0;
@@ -924,10 +962,18 @@ int main(int argc, char **argv)
                 fprintf(stderr, "tm: could not resolve local attempt state: %s\n",
                         strerror(errno));
         } else if (result != 0) {
-            if (tm_attempt_state_finish(&attempt_state, TM_ATTEMPT_FAILED,
+            int contradictory = options.force && prior_forced_success &&
+                verification_fingerprint != NULL &&
+                strcmp(prior_forced_fingerprint,
+                       verification_fingerprint) == 0;
+            enum tm_attempt_outcome outcome = contradictory ?
+                TM_ATTEMPT_QUARANTINED : TM_ATTEMPT_FAILED;
+            if (tm_attempt_state_finish(&attempt_state, outcome,
                     verification_fingerprint) < 0 && options.explain)
                 fprintf(stderr, "tm: could not persist failed attempt state: %s\n",
                         strerror(errno));
+            else if (contradictory && options.explain)
+                fprintf(stderr, "tm: CONTRADICTION: forced failure matches trusted prior success; fingerprint quarantined\n");
         } else {
             (void)tm_attempt_state_finish(&attempt_state, TM_ATTEMPT_RUN_ONLY,
                                           NULL);
