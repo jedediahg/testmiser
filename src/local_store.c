@@ -3,7 +3,10 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -73,4 +76,41 @@ fail:
     free(canonical_root);
     errno = saved;
     return -1;
+}
+
+int tm_local_store_open_default(int *store_root_fd)
+{
+    const char *xdg_cache = getenv("XDG_CACHE_HOME");
+    const char *home = getenv("HOME");
+    char *cache_root = NULL;
+    size_t length;
+    int result;
+
+    if (store_root_fd == NULL) { errno = EINVAL; return -1; }
+    *store_root_fd = -1;
+    if (xdg_cache != NULL && xdg_cache[0] != '\0') {
+        if (xdg_cache[0] != '/') { errno = EINVAL; return -1; }
+        cache_root = strdup(xdg_cache);
+        if (cache_root == NULL) return -1;
+    } else {
+        if (home == NULL || home[0] != '/') { errno = ENOENT; return -1; }
+        length = strlen(home);
+        if (length > SIZE_MAX - sizeof("/.cache")) {
+            errno = EOVERFLOW;
+            return -1;
+        }
+        cache_root = malloc(length + sizeof("/.cache"));
+        if (cache_root == NULL) return -1;
+        (void)snprintf(cache_root, length + sizeof("/.cache"), "%s/.cache",
+                       home);
+        if (mkdir(cache_root, 0700) < 0 && errno != EEXIST) {
+            int saved = errno;
+            free(cache_root);
+            errno = saved;
+            return -1;
+        }
+    }
+    result = tm_local_store_open(cache_root, store_root_fd);
+    free(cache_root);
+    return result;
 }
