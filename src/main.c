@@ -102,8 +102,38 @@ static int profile_command(int argc, char **argv)
 static int runtime_command(int argc, char **argv)
 {
     char digest[72];
+    if (argc == 6 && strcmp(argv[2], "verify") == 0) {
+        struct tm_profile *profile = NULL;
+        struct tm_trust_policy *policy = NULL;
+        int result = TM_EXIT_INTERNAL_ERROR;
+        if (tm_profile_load(argv[3], &profile) < 0 ||
+            tm_trust_policy_load(argv[4], &policy) < 0 ||
+            tm_trust_policy_approves_profile(policy,
+                tm_profile_repository_id(profile),
+                tm_profile_digest(profile)) < 0) {
+            fprintf(stderr, "tm: runtime profile or approval is invalid\n");
+            goto verify_done;
+        }
+        if (tm_runtime_tree_digest(argv[5], digest) < 0) {
+            fprintf(stderr, "tm: cannot digest runtime tree: %s\n",
+                    strerror(errno));
+            goto verify_done;
+        }
+        if (strcmp(digest, tm_profile_runtime_digest(profile)) != 0) {
+            fprintf(stderr,
+                    "tm: runtime tree does not match the approved profile\n");
+            goto verify_done;
+        }
+        result = printf("runtime identity verified: %s\n", digest) < 0 ?
+                 TM_EXIT_INTERNAL_ERROR : 0;
+verify_done:
+        tm_profile_free(profile);
+        tm_trust_policy_free(policy);
+        return result;
+    }
     if (argc != 4 || strcmp(argv[2], "digest") != 0) {
-        fprintf(stderr, "Usage: tm runtime digest ROOTFS_DIR\n");
+        fprintf(stderr, "Usage: tm runtime digest ROOTFS_DIR\n"
+                        "       tm runtime verify PROFILE TRUST_POLICY ROOTFS_DIR\n");
         return TM_EXIT_INTERNAL_ERROR;
     }
     if (tm_runtime_tree_digest(argv[3], digest) < 0) {

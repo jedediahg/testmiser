@@ -271,6 +271,12 @@ const char *tm_profile_digest(const struct tm_profile *profile)
     return profile == NULL ? NULL : profile->digest;
 }
 
+const char *tm_profile_runtime_digest(const struct tm_profile *profile)
+{
+    return profile == NULL ? NULL :
+        string_value(profile->document, "runtime_digest");
+}
+
 int tm_profile_is_deterministic(const struct tm_profile *profile)
 {
     if (profile == NULL) return 0;

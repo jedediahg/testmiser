@@ -210,6 +210,24 @@ printf 'test runtime\n' >"$tmp_dir/runtime-root/bin/tool"
 chmod 0755 "$tmp_dir/runtime-root/bin/tool"
 runtime_digest=$("$tm_bin" runtime digest "$tmp_dir/runtime-root")
 printf '%s\n' "$runtime_digest" | grep -q '^sha256:[0-9a-f]\{64\}$'
+sed "s#sha256:1111111111111111111111111111111111111111111111111111111111111111#$runtime_digest#" \
+    "$tmp_dir/profile.json" >"$tmp_dir/runtime-profile.json"
+runtime_profile_digest=$("$tm_bin" profile digest \
+    "$tmp_dir/runtime-profile.json" | cut -d ' ' -f 2)
+printf '{"schema_version":1,"repositories":[{"repository_id":"sample","minimum_trust_epoch":1,"allowed_semantics":[2],"profiles":["%s"],"keys":[],"revoked_key_ids":[]}]}\n' \
+    "$runtime_profile_digest" >"$tmp_dir/runtime-policy.json"
+chmod 600 "$tmp_dir/runtime-policy.json"
+"$tm_bin" runtime verify "$tmp_dir/runtime-profile.json" \
+    "$tmp_dir/runtime-policy.json" "$tmp_dir/runtime-root" \
+    | grep -q "runtime identity verified: $runtime_digest"
+printf 'different runtime\n' >"$tmp_dir/runtime-root/bin/tool"
+set +e
+"$tm_bin" runtime verify "$tmp_dir/runtime-profile.json" \
+    "$tmp_dir/runtime-policy.json" "$tmp_dir/runtime-root" \
+    >"$tmp_dir/runtime-mismatch.out" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
 set +e
 "$tm_bin" runtime digest "$tmp_dir/missing-runtime" \
     >"$tmp_dir/runtime-error.out" 2>&1
@@ -261,7 +279,9 @@ set -e
 test "$status" -eq 143
 process_is_running() {
     [ -r "/proc/$1/stat" ] || return 1
-    process_state=$(sed 's/.*) //' "/proc/$1/stat" | cut -d ' ' -f 1)
+    process_state=$(sed 's/.*) //' "/proc/$1/stat" 2>/dev/null |
+        cut -d ' ' -f 1)
+    [ -n "$process_state" ] || return 1
     [ "$process_state" != Z ] && [ "$process_state" != X ]
 }
 for terminated_pid in "$wrapped_pid" "$wrapped_descendant_pid"; do

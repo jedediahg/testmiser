@@ -774,6 +774,7 @@ Target commands for the first portable release (not claims of current implementa
 tm [--root DIR] [--profile FILE] [--trust-policy FILE] [--input FILE] [--output PATH] [--force] [--explain] -- COMMAND [ARGUMENT ...]
 tm profile digest FILE
 tm runtime digest ROOTFS_DIR
+tm runtime verify PROFILE TRUST_POLICY ROOTFS_DIR
 tm validate [--root DIR] [--trust-policy FILE] [--require-trust]
 tm clean [--root DIR] [--records]
 ```
@@ -787,6 +788,8 @@ Compute `profile_digest = "sha256:" || hex(SHA256(JCS(profile)))`, over the comp
 Profile digest v1 golden vector: for repository `sample`, backend `bubblewrap-linux-x86_64-v1`, runtime digest `sha256:` followed by 64 `1` digits, workspace `/workspace`, deterministic `true`, privacy `public`, environment `{"LANG":"C"}`, input roots `["src","tests"]`, no output roots, and scratch root `["/tmp"]`, the digest is `sha256:9594caa6d198b87e03b0dbfd5a869f6096ad69f889dd06bf10b8094cabb716dc`.
 
 For `bubblewrap-linux-x86_64-v1`, `runtime_digest` identifies the normalized runtime root tree, not its host path. `tm runtime digest ROOTFS_DIR` computes `SHA256("tm-runtime-tree-v1\\0" || records)` in depth-first byte-sorted path order. Each record contains a node type, length-prefixed relative path, permission/special mode bits, numeric uid and gid, and link count. Regular-file records add byte size and SHA-256 content digest; symlink records add the exact target bytes; directory records have no payload. The root directory is recorded with an empty path. Timestamps, host device IDs, and host inode numbers are omitted. Unsupported special files, unstable reads, entry counts above one million, paths above 4096 bytes, or nesting deeper than 128 directories fail closed. Runtime packages MUST use normalized ownership and modes. `TM_RUNTIME_ROOT` is operator-supplied and is excluded from profile identity; the backend MUST verify its tree digest against the approved profile and require a read-only source mount before launch. Runtime content identity does not cover the host kernel or CPU; those remain context inputs or require an enforced common VM contract.
+
+`tm runtime verify PROFILE TRUST_POLICY ROOTFS_DIR` verifies that the profile is approved for its repository and that the supplied tree matches its `runtime_digest`. It is a provisioning check only; it does not establish that the backend mounted the tree read-only or enforced the remaining profile contract.
 
 Remote transport APIs and profile field serialization must be frozen with golden fixtures before implementation enables portable hits. Their behavioral contracts are normative here.
 
