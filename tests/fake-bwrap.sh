@@ -18,6 +18,7 @@ workspace_tmpfs=no
 workspace_readonly=no
 input_mount=no
 expected_input_mount=no
+output_fd=
 workspace_build_dir=no
 whole_workspace_bind=no
 workspace_overlay=no
@@ -81,6 +82,19 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
                         expected_input_mount=yes
                     fi
                     ;;
+            esac
+            shift 2
+            ;;
+        --bind-fd)
+            if [ "$#" -lt 3 ]; then exit 90; fi
+            test -d "/proc/$$/fd/$2" ||
+                fail "writable bind descriptor $2 is not inherited"
+            case "$3" in
+                /workspace/build/tm-backend-output) output_fd=$2 ;;
+                /workspace/*)
+                    fail "unexpected writable bind at $3"
+                    ;;
+                *) fail "writable bind escaped the workspace: $3" ;;
             esac
             shift 2
             ;;
@@ -150,6 +164,9 @@ if [ "$1" = "/bin/sh" ] && [ "$4" = "tm-profile-view-probe" ]; then
     exit 0
 else
     printf 'command\n' >>"$TM_FAKE_BWRAP_LOG"
+fi
+if [ -n "$output_fd" ]; then
+    printf 'captured report\n' >"/proc/$$/fd/$output_fd/report.txt"
 fi
 if [ "${TM_FAKE_BWRAP_INPUT_FILE+x}" = x ]; then
     printf changed >"$TM_FAKE_BWRAP_INPUT_FILE"

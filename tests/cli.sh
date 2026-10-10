@@ -313,8 +313,7 @@ mkdir -p "$tmp_dir/profile-output-root"
         2>"$tmp_dir/output-fallback.err"
 )
 test "$(cat "$tmp_dir/profile-output-root/build/reports/report.txt")" = preserved
-grep -q 'declared output restoration is not integrated' \
-    "$tmp_dir/output-fallback.err"
+grep -q '^tm: RUN:' "$tmp_dir/output-fallback.err"
 printf 'different runtime\n' >"$tmp_dir/runtime-root/bin/tool"
 set +e
 TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$tm_bin" \

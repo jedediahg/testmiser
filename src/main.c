@@ -436,6 +436,7 @@ int main(int argc, char **argv)
     struct tm_trust_policy *trust_policy = NULL;
     struct tm_observer_report observer_report = {0};
     struct tm_observed_input_manifest observed_inputs = {0};
+    struct tm_output_manifest output_manifest = {0};
     EVP_PKEY *signing_key = NULL;
     char **child_environment = NULL;
     const char *force_environment;
@@ -733,7 +734,8 @@ int main(int argc, char **argv)
             tm_backend_run(profile, runtime_root, repository_root,
                 options.output_paths, options.output_count,
                 &argv[options.command_index], options.explain,
-                &observer_report, &observed_inputs, &backend_result) : 0;
+                &observer_report, &observed_inputs, &output_manifest,
+                &backend_result) : 0;
         if (backend_used > 0) {
             result = backend_result;
         } else if (signing_key != NULL) {
@@ -777,7 +779,7 @@ int main(int argc, char **argv)
         tm_profile_is_deterministic(profile) &&
         strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
         backend_used > 0 && reusable_context &&
-        options.output_count == 0 && unavailable_input_count == 0 &&
+        unavailable_input_count == 0 &&
         explicit_input_count == 0 && explicit_inputs_unchanged &&
         tm_observer_report_allows_reuse(&observer_report)) {
         struct tm_verification_identity identity = {
@@ -792,7 +794,8 @@ int main(int argc, char **argv)
         char record_id[72];
         if (tm_verification_fingerprint(&identity,
                                         verification_fingerprint) == 0 &&
-            tm_result_create(&identity, signing_epoch, signing_key,
+            tm_result_create_with_outputs(&identity, signing_epoch,
+                signing_key, &output_manifest,
                 &record, &record_length, record_id) == 0 &&
             tm_result_store(repository_fd, record, record_length,
                             record_id) == 0) {
@@ -810,6 +813,7 @@ int main(int argc, char **argv)
             "tm: successful command was not eligible for signed publication\n");
     }
     tm_observed_input_manifest_clear(&observed_inputs);
+    tm_output_manifest_clear(&output_manifest);
     if (options.explain)
         for (index = 0; index < unavailable_input_count; index++)
             fprintf(stderr,

@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "tm/backend.h"
+#include "tm/digest.h"
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/runtime.h"
@@ -44,11 +45,23 @@ int main(void)
         "\"privacy_class\":\"public\",\"environment\":{},"
         "\"input_roots\":[\"build/.tm-backend-root-link\"],"
         "\"output_roots\":[],\"scratch_roots\":[\"/tmp\"]}";
+    static const char output_profile_template[] =
+        "{\"schema_version\":1,\"repository_id\":\"backend-test\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v2\","
+        "\"runtime_digest\":\"%s\","
+        "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
+        "\"privacy_class\":\"public\",\"environment\":{},"
+        "\"input_roots\":[\"build/tm-backend-input\"],"
+        "\"output_roots\":[\"build/tm-backend-output\"],"
+        "\"scratch_roots\":[\"/tmp\"]}";
     char temporary[] = "/tmp/tm-backend-test-XXXXXX";
     char profile_path[512] = {0}, log_path[512] = {0};
     char runtime_path[512] = {0}, runtime_digest[72] = {0};
     char profile_json[1024], symlink_profile_json[1024];
+    char output_profile_json[1024];
     char marker_path[512] = {0};
+    char output_path[512] = {0}, output_file[512] = {0};
+    char blob_path[512] = {0};
     char input_link_path[512] = {0};
     char input_root_path[512] = {0}, input_file_path[512] = {0};
     char nested_root_path[512] = {0}, nested_file_path[512] = {0};
@@ -57,13 +70,17 @@ int main(void)
     char *repository_root = NULL;
     char *command[] = {"/bin/sh", "-c", "printf called >> \"$1\"", "sh",
                        marker_path, NULL};
+    char *output_command[] = {"/bin/true", NULL};
+    const char *output_roots[] = {"build/tm-backend-output"};
     struct tm_profile *profile = NULL;
     struct tm_observer_report observer_report = {0};
     struct tm_observed_input_manifest observed_inputs = {0};
+    struct tm_output_manifest outputs = {0};
     char *resolved_bwrap = NULL;
     char bwrap_digest[72];
     int command_result = -1, status = 1, base_descriptor = -1;
     int high_descriptor = -1;
+    int blob_existed = 0;
     int preflight_repository_fd = -1;
     struct tm_snapshot *preflight_snapshot = NULL;
     mode_t original_umask = 0;
@@ -92,10 +109,21 @@ int main(void)
                  runtime_digest) >= (int)sizeof(profile_json) ||
         snprintf(symlink_profile_json, sizeof(symlink_profile_json),
                  symlink_profile_template, runtime_digest) >=
-                 (int)sizeof(symlink_profile_json))
+                 (int)sizeof(symlink_profile_json) ||
+        snprintf(output_profile_json, sizeof(output_profile_json),
+                 output_profile_template, runtime_digest) >=
+                 (int)sizeof(output_profile_json))
         goto done;
     repository_root = realpath(".", NULL);
     if (repository_root == NULL ||
+        snprintf(output_path, sizeof(output_path),
+                 "%s/build/tm-backend-output", repository_root) >=
+                 (int)sizeof(output_path) ||
+        snprintf(output_file, sizeof(output_file), "%s/report.txt",
+                 output_path) >= (int)sizeof(output_file) ||
+        snprintf(blob_path, sizeof(blob_path),
+                 "%s/.tm/blobs/sha256/", repository_root) >=
+                 (int)sizeof(blob_path) ||
         snprintf(input_link_path, sizeof(input_link_path),
                  "%s/build/.tm-backend-root-link", repository_root) < 0 ||
         snprintf(input_root_path, sizeof(input_root_path),
@@ -171,6 +199,7 @@ int main(void)
 
     if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
                        0, &observer_report, &observed_inputs,
+                       &outputs,
                        &command_result) != 1 ||
         command_result != 0) {
         stream = fopen(log_path, "r");
@@ -224,7 +253,7 @@ int main(void)
     if (tm_profile_load(profile_path, &profile) < 0) goto done;
     command_result = -1;
     if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
-                       0, NULL, NULL, &command_result) != 0 ||
+                       0, NULL, NULL, NULL, &command_result) != 0 ||
         command_result != -1) {
         fprintf(stderr, "backend accepted a symlinked profile input root\n");
         goto done;
@@ -239,8 +268,49 @@ int main(void)
         goto done;
     }
     fclose(stream);
+    {
+        static const unsigned char expected_output[] = "captured report\n";
+        char digest[65];
+        size_t blob_directory_length;
+        if (unlink(input_link_path) < 0 ||
+            write_file(input_file_path, "original") < 0 ||
+            write_file(profile_path, output_profile_json) < 0 ||
+            tm_sha256_bytes(expected_output, sizeof(expected_output) - 1,
+                            digest) < 0) goto done;
+        tm_profile_free(profile);
+        profile = NULL;
+        if (tm_profile_load(profile_path, &profile) < 0) goto done;
+        blob_directory_length = strlen(blob_path);
+        if (snprintf(blob_path + blob_directory_length,
+                     sizeof(blob_path) - blob_directory_length, "%s", digest) >=
+            (int)(sizeof(blob_path) - blob_directory_length)) goto done;
+        blob_existed = access(blob_path, F_OK) == 0;
+        blob_path[blob_directory_length] = '\0';
+        (void)unlink(output_file);
+        (void)rmdir(output_path);
+        command_result = -1;
+        if (tm_backend_run(profile, runtime_path, repository_root, output_roots,
+                1, output_command, 0, &observer_report, &observed_inputs,
+                &outputs, &command_result) != 1 || command_result != 0 ||
+            outputs.count != 2 || access(output_file, F_OK) < 0) {
+            fprintf(stderr,
+                    "backend did not capture and restore its staged output\n");
+            goto done;
+        }
+        stream = fopen(output_file, "r");
+        if (stream == NULL || fgets(marker_contents, sizeof(marker_contents),
+                                    stream) == NULL ||
+            strcmp(marker_contents, "captured report\n") != 0) {
+            if (stream != NULL) fclose(stream);
+            goto done;
+        }
+        fclose(stream);
+        stream = NULL;
+    }
     status = 0;
 done:
+    tm_output_manifest_clear(&outputs);
+    tm_observed_input_manifest_clear(&observed_inputs);
     if (restore_umask) (void)umask(original_umask);
     tm_snapshot_free(preflight_snapshot);
     if (preflight_repository_fd >= 0) close(preflight_repository_fd);
@@ -251,6 +321,23 @@ done:
     if (profile_path[0] != '\0') unlink(profile_path);
     if (log_path[0] != '\0') unlink(log_path);
     if (marker_path[0] != '\0') unlink(marker_path);
+    if (output_file[0] != '\0') unlink(output_file);
+    if (output_path[0] != '\0') rmdir(output_path);
+    if (!blob_existed && blob_path[0] != '\0') {
+        char full_blob_path[512];
+        if (snprintf(full_blob_path, sizeof(full_blob_path), "%s", blob_path) <
+            (int)sizeof(full_blob_path)) {
+            static const unsigned char expected_output[] = "captured report\n";
+            char digest[65];
+            if (tm_sha256_bytes(expected_output, sizeof(expected_output) - 1,
+                                digest) == 0 &&
+                snprintf(full_blob_path + strlen(blob_path),
+                         sizeof(full_blob_path) - strlen(blob_path), "%s",
+                         digest) <
+                    (int)(sizeof(full_blob_path) - strlen(blob_path)))
+                (void)unlink(full_blob_path);
+        }
+    }
     if (input_link_path[0] != '\0') unlink(input_link_path);
     if (input_file_path[0] != '\0') unlink(input_file_path);
     if (nested_file_path[0] != '\0') unlink(nested_file_path);

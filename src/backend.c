@@ -363,11 +363,12 @@ static int push_pair(struct argument_vector *arguments, const char *option,
            push_argument(arguments, value) < 0 ? -1 : 0;
 }
 
-static int push_output_mount(struct argument_vector *arguments,
+static int push_output_mount(struct argument_vector *arguments, int *descriptor,
                              const char *path)
 {
     char *guest_path;
     size_t length = strlen(path) + sizeof(GUEST_WORKSPACE) + 1;
+    char descriptor_text[32];
     int result;
     guest_path = malloc(length);
     if (guest_path == NULL) return -1;
@@ -376,8 +377,156 @@ static int push_output_mount(struct argument_vector *arguments,
         errno = EIO;
         return -1;
     }
-    result = push_pair(arguments, "--tmpfs", guest_path);
+    if (descriptor == NULL || *descriptor < 0 ||
+        arguments->preserved_fd_count >= arguments->capacity) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (snprintf(descriptor_text, sizeof(descriptor_text), "%d",
+                 *descriptor) >= (int)sizeof(descriptor_text)) {
+        free(guest_path);
+        errno = EOVERFLOW;
+        return -1;
+    }
+    result = push_argument(arguments, "--bind-fd") < 0 ||
+             push_argument(arguments, descriptor_text) < 0 ||
+             push_argument(arguments, guest_path) < 0 ? -1 : 0;
+    if (result == 0) {
+        arguments->preserved_fds[arguments->preserved_fd_count++] = *descriptor;
+        *descriptor = -1;
+    }
     free(guest_path);
+    return result;
+}
+
+static int open_or_create_output_directory(int root_fd, const char *path)
+{
+    char *copy = strdup(path);
+    char *component, *save = NULL;
+    int current = dup(root_fd);
+    if (copy == NULL || current < 0) {
+        free(copy);
+        if (current >= 0) close(current);
+        return -1;
+    }
+    for (component = strtok_r(copy, "/", &save); component != NULL;
+         component = strtok_r(NULL, "/", &save)) {
+        int next;
+        if (mkdirat(current, component, 0700) < 0 && errno != EEXIST)
+            goto fail;
+        next = openat(current, component, O_RDONLY | O_DIRECTORY |
+                       O_CLOEXEC | O_NOFOLLOW);
+        if (next < 0) goto fail;
+        close(current);
+        current = next;
+    }
+    free(copy);
+    return current;
+fail:
+    {
+        int saved = errno;
+        close(current);
+        free(copy);
+        errno = saved;
+    }
+    return -1;
+}
+
+static int remove_output_stage_contents(int directory_fd, unsigned int depth);
+
+static int create_output_stage(const char *const *roots, size_t root_count,
+                               char **stage_path, int *stage_fd,
+                               int **output_fds)
+{
+    char template[] = "/tmp/tm-output-stage-XXXXXX";
+    size_t index;
+    int *descriptors;
+    if (roots == NULL || root_count == 0 || stage_path == NULL ||
+        stage_fd == NULL || output_fds == NULL) { errno = EINVAL; return -1; }
+    *stage_path = NULL;
+    *stage_fd = -1;
+    *output_fds = NULL;
+    if (tm_output_roots_validate(roots, root_count) < 0 ||
+        root_count > SIZE_MAX / sizeof(*descriptors)) return -1;
+    descriptors = malloc(root_count * sizeof(*descriptors));
+    if (descriptors == NULL) return -1;
+    for (index = 0; index < root_count; index++) descriptors[index] = -1;
+    *stage_path = strdup(template);
+    if (*stage_path == NULL || mkdtemp(*stage_path) == NULL) goto fail;
+    *stage_fd = open(*stage_path,
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (*stage_fd < 0) goto fail;
+    for (index = 0; index < root_count; index++) {
+        int directory = open_or_create_output_directory(*stage_fd, roots[index]);
+        if (directory < 0) goto fail;
+        descriptors[index] = directory;
+    }
+    *output_fds = descriptors;
+    return 0;
+fail:
+    {
+        int saved = errno;
+        for (index = 0; index < root_count; index++)
+            if (descriptors[index] >= 0) close(descriptors[index]);
+        free(descriptors);
+        if (*stage_fd >= 0) {
+            (void)remove_output_stage_contents(*stage_fd, 0);
+            close(*stage_fd);
+        }
+        if (*stage_path != NULL) {
+            (void)rmdir(*stage_path);
+            free(*stage_path);
+            *stage_path = NULL;
+        }
+        *stage_fd = -1;
+        errno = saved;
+    }
+    return -1;
+}
+
+static int remove_output_stage_contents(int directory_fd, unsigned int depth)
+{
+    DIR *directory;
+    int duplicate, result = 0;
+    if (depth > 128) { errno = ELOOP; return -1; }
+    duplicate = dup(directory_fd);
+    if (duplicate < 0) return -1;
+    directory = fdopendir(duplicate);
+    if (directory == NULL) { close(duplicate); return -1; }
+    for (;;) {
+        struct dirent *entry;
+        struct stat status;
+        errno = 0;
+        entry = readdir(directory);
+        if (entry == NULL) {
+            if (errno != 0) result = -1;
+            break;
+        }
+        if (strcmp(entry->d_name, ".") == 0 ||
+            strcmp(entry->d_name, "..") == 0) continue;
+        if (fstatat(directory_fd, entry->d_name, &status,
+                    AT_SYMLINK_NOFOLLOW) < 0) { result = -1; break; }
+        if (S_ISDIR(status.st_mode)) {
+            int child = openat(directory_fd, entry->d_name,
+                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            if (child < 0 || remove_output_stage_contents(child, depth + 1) < 0) {
+                int saved = errno;
+                if (child >= 0) close(child);
+                errno = saved;
+                result = -1;
+                break;
+            }
+            close(child);
+            if (unlinkat(directory_fd, entry->d_name, AT_REMOVEDIR) < 0) {
+                result = -1;
+                break;
+            }
+        } else if (unlinkat(directory_fd, entry->d_name, 0) < 0) {
+            result = -1;
+            break;
+        }
+    }
+    closedir(directory);
     return result;
 }
 
@@ -439,6 +588,30 @@ static int push_input_parent_directories(struct argument_vector *arguments,
                 free(guest);
                 if (result < 0) return -1;
             }
+            slash++;
+        }
+    }
+    return 0;
+}
+
+static int push_output_parent_directories(struct argument_vector *arguments,
+                                          const char *const *roots,
+                                          size_t root_count)
+{
+    size_t index;
+    for (index = 0; index < root_count; index++) {
+        const char *path = roots[index], *slash = path;
+        while ((slash = strchr(slash, '/')) != NULL) {
+            size_t prefix_length = (size_t)(slash - path);
+            size_t guest_length = strlen(GUEST_WORKSPACE) + prefix_length + 2;
+            char *guest = malloc(guest_length);
+            int pushed;
+            if (guest == NULL) return -1;
+            (void)snprintf(guest, guest_length, "%s/%.*s",
+                           GUEST_WORKSPACE, (int)prefix_length, path);
+            pushed = push_pair(arguments, "--dir", guest);
+            free(guest);
+            if (pushed < 0) return -1;
             slash++;
         }
     }
@@ -536,6 +709,7 @@ static int build_arguments(struct argument_vector *arguments,
                            const struct tm_snapshot *snapshot,
                            const char *working_directory,
                            const char *const *output_roots,
+                           int *output_fds,
                            size_t output_root_count,
                            char **command)
 {
@@ -564,14 +738,21 @@ static int build_arguments(struct argument_vector *arguments,
         }
         capacity += 2 * path_length + 3;
     }
+    for (index = 0; index < output_root_count; index++) {
+        size_t path_length = strlen(output_roots[index]);
+        if (path_length > (SIZE_MAX - capacity - 3) / 2) {
+            errno = EOVERFLOW; return -1;
+        }
+        capacity += 2 * path_length + 3;
+    }
     if (tm_profile_scratch_root_count(profile) > (SIZE_MAX - capacity) / 2) {
         errno = EOVERFLOW; return -1;
     }
     capacity += 2 * tm_profile_scratch_root_count(profile);
-    if (output_root_count > (SIZE_MAX - capacity) / 2) {
+    if (output_root_count > (SIZE_MAX - capacity) / 3) {
         errno = EOVERFLOW; return -1;
     }
-    capacity += 2 * output_root_count;
+    capacity += 3 * output_root_count;
     if (capacity > SIZE_MAX - command_count) { errno = EOVERFLOW; return -1; }
     capacity += command_count;
     if (init_arguments(arguments, capacity) < 0) return -1;
@@ -629,7 +810,9 @@ static int build_arguments(struct argument_vector *arguments,
         push_argument(arguments, "/dev/null") < 0 ||
         push_argument(arguments, "/dev/null") < 0)
         return -1;
-    if (push_input_parent_directories(arguments, profile) < 0) return -1;
+    if (push_input_parent_directories(arguments, profile) < 0 ||
+        push_output_parent_directories(arguments, output_roots,
+                                       output_root_count) < 0) return -1;
     for (index = 0; index < tm_profile_input_root_count(profile); index++)
         if (push_input_mount(arguments, snapshot, index,
                              tm_profile_input_root(profile, index)) < 0)
@@ -639,7 +822,9 @@ static int build_arguments(struct argument_vector *arguments,
                       tm_profile_scratch_root(profile, index)) < 0)
             return -1;
     for (index = 0; index < output_root_count; index++)
-        if (push_output_mount(arguments, output_roots[index]) < 0) return -1;
+        if (output_fds == NULL || output_fds[index] < 0 ||
+            push_output_mount(arguments, &output_fds[index],
+                              output_roots[index]) < 0) return -1;
     if (push_pair(arguments, "--remount-ro", GUEST_WORKSPACE) < 0)
         return -1;
 
@@ -761,7 +946,7 @@ int tm_backend_preflight(const struct tm_profile *profile,
             input_paths[index] = tm_profile_input_root(profile, index);
     }
     built = build_arguments(&arguments, profile, runtime, snapshot,
-                            working_directory, NULL, 0, command);
+                            working_directory, NULL, NULL, 0, command);
     if (built > 0) result = run_probe(&arguments, profile);
 done:
     if (repository_fd >= 0) close(repository_fd);
@@ -806,24 +991,32 @@ int tm_backend_run(const struct tm_profile *profile,
                    char **command, int explain,
                    struct tm_observer_report *report,
                    struct tm_observed_input_manifest *observed_inputs,
+                   struct tm_output_manifest *output_manifest,
                    int *command_result)
 {
     struct argument_vector arguments = {0};
     struct tm_snapshot *snapshot = NULL;
     const char **input_paths = NULL;
+    int *output_fds = NULL;
     char *runtime = NULL, *current = NULL, *working_directory = NULL;
+    char *output_stage_path = NULL;
+    int output_stage_fd = -1;
     size_t input_count, index;
     int repository_fd = -1, built, result = 0;
 
     if (profile == NULL || runtime_root == NULL || repository_root == NULL ||
         command == NULL || command[0] == NULL || command_result == NULL ||
-        report == NULL || observed_inputs == NULL)
+        report == NULL || observed_inputs == NULL || output_manifest == NULL)
         return 0;
     memset(observed_inputs, 0, sizeof(*observed_inputs));
-    if (output_root_count != 0) {
+    tm_output_manifest_clear(output_manifest);
+    if (output_root_count > 0 &&
+        create_output_stage(output_roots, output_root_count,
+            &output_stage_path, &output_stage_fd, &output_fds) < 0) {
         if (explain)
             fprintf(stderr,
-                "tm: RUN: declared output restoration is not integrated; using uncached host execution\n");
+                "tm: RUN: declared output staging failed (%s); using uncached host execution\n",
+                strerror(errno));
         return 0;
     }
     runtime = realpath(runtime_root, NULL);
@@ -850,7 +1043,7 @@ int tm_backend_run(const struct tm_profile *profile,
     }
     built = build_arguments(&arguments, profile, runtime, snapshot,
                             working_directory, output_roots,
-                            output_root_count, command);
+                            output_fds, output_root_count, command);
     close(repository_fd);
     repository_fd = -1;
     if (built <= 0) {
@@ -880,6 +1073,24 @@ int tm_backend_run(const struct tm_profile *profile,
             "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; lookup remains disabled\n");
     result = run_bubblewrap(&arguments, explain, report, command,
                             working_directory, command_result);
+    if (result > 0 && *command_result == 0 && output_root_count > 0) {
+        repository_fd = open_directory_without_symlinks(repository_root);
+        if (repository_fd < 0 ||
+            tm_outputs_capture_to_store(output_stage_fd, repository_fd,
+                output_roots, output_root_count, output_manifest) < 0 ||
+            tm_outputs_restore_from_store(repository_fd, repository_fd,
+                output_roots, output_root_count, output_manifest) < 0) {
+            int saved = errno;
+            tm_output_manifest_clear(output_manifest);
+            fprintf(stderr,
+                "tm: output warning: child succeeded, but declared outputs could not be safely captured and restored (%s)\n",
+                strerror(saved));
+        }
+        if (repository_fd >= 0) {
+            close(repository_fd);
+            repository_fd = -1;
+        }
+    }
     if (result > 0 && *command_result == 0 &&
         tm_observer_report_allows_reuse(report)) {
         int *readable_roots = input_count == 0 ? NULL :
@@ -924,6 +1135,21 @@ int tm_backend_run(const struct tm_profile *profile,
 done:
     if (repository_fd >= 0) close(repository_fd);
     free_arguments(&arguments);
+    if (output_stage_fd >= 0) {
+        (void)remove_output_stage_contents(output_stage_fd, 0);
+        close(output_stage_fd);
+    }
+    if (output_stage_path != NULL) {
+        (void)rmdir(output_stage_path);
+        free(output_stage_path);
+    }
+    if (output_fds != NULL) {
+        for (index = 0; index < output_root_count; index++)
+            if (output_fds[index] >= 0) close(output_fds[index]);
+        free(output_fds);
+    }
+    if (result <= 0 || *command_result != 0)
+        tm_output_manifest_clear(output_manifest);
     tm_snapshot_free(snapshot);
     free(input_paths);
     free(working_directory);

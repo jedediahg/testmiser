@@ -3,6 +3,7 @@
 
 #include "tm/observer.h"
 #include "tm/observed_inputs.h"
+#include "tm/outputs.h"
 
 struct tm_profile;
 struct tm_snapshot;
@@ -25,6 +26,7 @@ int tm_backend_run(const struct tm_profile *profile,
                    char **command, int explain,
                    struct tm_observer_report *report,
                    struct tm_observed_input_manifest *inputs,
+                   struct tm_output_manifest *outputs,
                    int *command_result);
 
 #endif
