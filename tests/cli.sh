@@ -12,6 +12,7 @@ cwd_probe=${CWD_PROBE:-./build/cwd_probe}
 path_error_probe=${PATH_ERROR_PROBE:-./build/path_error_probe}
 execveat_probe=${EXECVEAT_PROBE:-./build/execveat_probe}
 getcwd_probe=${GETCWD_PROBE:-./build/getcwd_probe}
+readlink_probe=${READLINK_PROBE:-./build/readlink_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -526,6 +527,24 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         printf '%s\n' 'ENOENT was rejected instead of modeled as absence' >&2
         exit 1
     fi
+    mkdir -p "$tmp_dir/repo/tests"
+    printf target >"$tmp_dir/repo/tests/readlink-target"
+    ln -s readlink-target "$tmp_dir/repo/tests/readlink-link"
+    "$tm_bin" --explain --root "$tmp_dir/repo" -- \
+        "$readlink_probe" "$tmp_dir/repo/tests/readlink-link" success \
+        2>"$tmp_dir/readlink-success.err"
+    grep -q 'observed input candidate: symlink: tests/readlink-link' \
+        "$tmp_dir/readlink-success.err"
+    "$tm_bin" --explain --root "$tmp_dir/repo" -- \
+        "$readlink_probe" "$tmp_dir/repo/tests/readlink-missing" missing \
+        2>"$tmp_dir/readlink-missing.err"
+    grep -q 'observed input candidate: absent path: tests/readlink-missing' \
+        "$tmp_dir/readlink-missing.err"
+    "$tm_bin" --explain --root "$tmp_dir/repo" -- \
+        "$readlink_probe" "$tmp_dir/repo/tests/readlink-target" error \
+        2>"$tmp_dir/readlink-error.err"
+    grep -q 'filesystem or descriptor error result is not modeled' \
+        "$tmp_dir/readlink-error.err"
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'

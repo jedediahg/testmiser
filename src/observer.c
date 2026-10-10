@@ -623,6 +623,15 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
             mark_observer_failure();
         }
         return;
+    case 89:  /* readlink */
+        if (read_tracee_string(task->pid, registers->rdi, raw_path,
+                               sizeof(raw_path)) == 0) {
+            task_path(task->pid, AT_FDCWD, raw_path, task->pending_path,
+                      sizeof(task->pending_path));
+        } else {
+            mark_observer_failure();
+        }
+        return;
     case 267: /* readlinkat */
         if (read_tracee_string(task->pid, registers->rsi, raw_path,
                                sizeof(raw_path)) == 0) {
@@ -907,6 +916,7 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 57:  /* fork: descendants are traced */
     case 58:  /* vfork: descendants are traced */
     case 59:  /* execve is captured by note_syscall */
+    case 89:  /* readlink is captured by note_syscall */
     case 267: /* readlinkat is captured by note_syscall */
     case 322: /* execveat path is captured by note_syscall */
     case 437: /* openat2 request validated by note_syscall */
@@ -959,7 +969,7 @@ static void syscall_stop(struct task_state *task)
     if ((task->syscall_number == 80 || task->syscall_number == 81) &&
         result < 0)
         mark_unmodeled_error();
-    if (task->syscall_number == 267) {
+    if (task->syscall_number == 89 || task->syscall_number == 267) {
         if (result >= 0)
             candidate_path("symlink", task->pending_path);
         else if (result == -ENOENT || result == -ENOTDIR)
