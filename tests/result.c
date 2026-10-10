@@ -225,6 +225,7 @@ static int test_output_lookup(
     const char *argv[] = {"make", "test"};
     const char *input_paths[] = {"tests/a", "tests/missing"};
     char root[] = "/tmp/tm-result-output-XXXXXX";
+    char shared_store[] = "/tmp/tm-result-output-shared-XXXXXX";
     char path[768], record_id[72] = {0};
     const char *roots[] = {"dist"};
     char command_fingerprint[72], verification_fingerprint[72];
@@ -236,16 +237,17 @@ static int test_output_lookup(
     unsigned char *record = NULL, *found = NULL;
     size_t record_length = 0, found_length = 0;
     char blob_digest[72] = {0};
-    int rootfd = -1, testsfd = -1, distfd = -1, filefd = -1;
+    int rootfd = -1, sharedfd = -1, testsfd = -1, distfd = -1, filefd = -1;
     int result = -1;
     if (tm_command_fingerprint(&command_identity, command_fingerprint) < 0)
         goto done;
     output_identity.command_fingerprint = command_fingerprint;
     if (tm_verification_fingerprint(&output_identity,
                                     verification_fingerprint) < 0) goto done;
-    if (mkdtemp(root) == NULL) goto done;
+    if (mkdtemp(root) == NULL || mkdtemp(shared_store) == NULL) goto done;
     rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (rootfd < 0 || mkdirat(rootfd, "tests", 0700) < 0 ||
+    sharedfd = open(shared_store, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (rootfd < 0 || sharedfd < 0 || mkdirat(rootfd, "tests", 0700) < 0 ||
         mkdirat(rootfd, "dist", 0700) < 0) goto done;
     testsfd = openat(rootfd, "tests", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     distfd = openat(rootfd, "dist", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -258,10 +260,10 @@ static int test_output_lookup(
         filefd = -1; goto done;
     }
     filefd = -1;
-    if (tm_outputs_capture(rootfd, roots, 1, &manifest) < 0 ||
+    if (tm_outputs_capture_to_store(rootfd, sharedfd, roots, 1, &manifest) < 0 ||
         tm_result_create_with_outputs(&output_identity, 3, private_key, &manifest,
             &record, &record_length, record_id) < 0 ||
-        tm_result_store(rootfd, record, record_length, record_id) < 0)
+        tm_result_store(sharedfd, record, record_length, record_id) < 0)
         goto done;
     if (manifest.count != 2) goto done;
     memcpy(blob_digest, manifest.entries[1].digest, sizeof(blob_digest));
@@ -276,7 +278,8 @@ static int test_output_lookup(
     }
     filefd = -1;
     close(distfd); distfd = -1;
-    if (tm_result_find_and_restore(rootfd, command_fingerprint,
+    if (tm_result_find_and_restore_in_store(sharedfd, rootfd,
+            command_fingerprint,
             verification_fingerprint,
             trust, roots, 1, &found, &found_length, record_id) != 0 ||
         found_length != record_length || memcmp(found, record, record_length) != 0)
@@ -295,6 +298,7 @@ static int test_output_lookup(
 done:
     if (filefd >= 0) close(filefd);
     if (rootfd >= 0) close(rootfd);
+    if (sharedfd >= 0) close(sharedfd);
     if (testsfd >= 0) close(testsfd);
     if (distfd >= 0) close(distfd);
     free(found);
@@ -308,24 +312,25 @@ done:
         (void)snprintf(path, sizeof(path), "%s/dist/stale.txt", root); (void)unlink(path);
         (void)snprintf(path, sizeof(path), "%s/dist", root); (void)rmdir(path);
         if (blob_digest[0] != '\0') {
-            (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256/%s", root, blob_digest + 7);
+            (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256/%s", shared_store, blob_digest + 7);
             (void)unlink(path);
         }
-        (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256", root); (void)rmdir(path);
-        (void)snprintf(path, sizeof(path), "%s/.tm/blobs", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256", shared_store); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm/blobs", shared_store); (void)rmdir(path);
         (void)snprintf(command_dir, sizeof(command_dir), "%s/.tm/results/%s",
                        root, command_fingerprint + 7);
         (void)snprintf(result_dir, sizeof(result_dir),
-            "%s/.tm/results/%s/%s", root, command_fingerprint + 7,
+            "%s/.tm/results/%s/%s", shared_store, command_fingerprint + 7,
             verification_fingerprint + 7);
         (void)snprintf(record_path, sizeof(record_path),
-            "%s/.tm/results/%s/%s/%s.tm.json", root,
+            "%s/.tm/results/%s/%s/%s.tm.json", shared_store,
             command_fingerprint + 7, verification_fingerprint + 7,
             record_id[0] == '\0' ? "" : record_id + 7);
         (void)unlink(record_path); (void)rmdir(result_dir); (void)rmdir(command_dir);
-        (void)snprintf(path, sizeof(path), "%s/.tm/results", root); (void)rmdir(path);
-        (void)snprintf(path, sizeof(path), "%s/.tm", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm/results", shared_store); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm", shared_store); (void)rmdir(path);
         (void)rmdir(root);
+        (void)rmdir(shared_store);
     }
     return result;
 }

@@ -985,6 +985,7 @@ static int open_existing_directory(int parent, const char *name)
 }
 
 static int result_find(int store_root_fd, int repository_root_fd,
+                       int blob_store_root_fd,
                        const char *command_fingerprint,
                        const char *verification_fingerprint,
                        const struct tm_trust_policy *trust_policy,
@@ -998,7 +999,7 @@ static int result_find(int store_root_fd, int repository_root_fd,
     DIR *directory = NULL;
     struct dirent *entry;
     size_t visited = 0;
-    if (store_root_fd < 0 || repository_root_fd < 0 ||
+    if (store_root_fd < 0 || repository_root_fd < 0 || blob_store_root_fd < 0 ||
         !valid_sha256(command_fingerprint) ||
         !valid_sha256(verification_fingerprint) || trust_policy == NULL ||
         record == NULL || record_length == NULL || record_id == NULL) {
@@ -1062,7 +1063,8 @@ static int result_find(int store_root_fd, int repository_root_fd,
                 matches = output_root_count == 0;
             } else if (restore_outputs && output_roots != NULL &&
                        output_root_count > 0 &&
-                       tm_outputs_restore(repository_root_fd, output_roots,
+                       tm_outputs_restore_from_store(repository_root_fd,
+                           blob_store_root_fd, output_roots,
                            output_root_count,
                            &(struct tm_output_manifest){summary.outputs,
                                                         summary.output_count}) == 0) {
@@ -1107,7 +1109,7 @@ int tm_result_find(int repository_root_fd, const char *command_fingerprint,
                    unsigned char **record, size_t *record_length,
                    char record_id[72])
 {
-    return result_find(repository_root_fd, repository_root_fd,
+    return result_find(repository_root_fd, repository_root_fd, repository_root_fd,
         command_fingerprint, verification_fingerprint, trust_policy, NULL, 0, 0,
         record, record_length, record_id);
 }
@@ -1119,7 +1121,8 @@ int tm_result_find_in_store(int store_root_fd, int repository_root_fd,
                             unsigned char **record, size_t *record_length,
                             char record_id[72])
 {
-    return result_find(store_root_fd, repository_root_fd, command_fingerprint,
+    return result_find(store_root_fd, repository_root_fd, store_root_fd,
+        command_fingerprint,
         verification_fingerprint, trust_policy, NULL, 0, 0,
         record, record_length, record_id);
 }
@@ -1135,9 +1138,25 @@ int tm_result_find_and_restore(
         errno = EINVAL;
         return -1;
     }
-    return result_find(repository_root_fd, repository_root_fd,
+    return result_find(repository_root_fd, repository_root_fd, repository_root_fd,
         command_fingerprint, verification_fingerprint, trust_policy, output_roots,
         output_root_count, 1, record, record_length, record_id);
+}
+
+int tm_result_find_and_restore_in_store(
+    int store_root_fd, int repository_root_fd,
+    const char *command_fingerprint, const char *verification_fingerprint,
+    const struct tm_trust_policy *trust_policy,
+    const char *const *output_roots, size_t output_root_count,
+    unsigned char **record, size_t *record_length, char record_id[72])
+{
+    if (output_root_count > 0 && output_roots == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    return result_find(store_root_fd, repository_root_fd, store_root_fd,
+        command_fingerprint, verification_fingerprint, trust_policy,
+        output_roots, output_root_count, 1, record, record_length, record_id);
 }
 
 int tm_result_verify(const unsigned char *record, size_t record_length,

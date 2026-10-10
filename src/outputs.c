@@ -653,19 +653,20 @@ int tm_output_roots_validate(const char *const *roots, size_t root_count)
     return 0;
 }
 
-int tm_outputs_capture(int repository_root_fd, const char *const *roots,
-                       size_t root_count, struct tm_output_manifest *manifest)
+int tm_outputs_capture_to_store(int repository_root_fd, int blob_store_root_fd,
+                                const char *const *roots, size_t root_count,
+                                struct tm_output_manifest *manifest)
 {
     int blob_fd = -1, result = -1, saved;
     size_t i;
-    if (repository_root_fd < 0 || manifest == NULL ||
+    if (repository_root_fd < 0 || blob_store_root_fd < 0 || manifest == NULL ||
         (root_count > 0 && roots == NULL) || root_count > OUTPUT_ROOT_LIMIT) {
         errno = EINVAL; return -1;
     }
     tm_output_manifest_clear(manifest);
     if (root_count == 0) return 0;
     if (tm_output_roots_validate(roots, root_count) < 0) goto done;
-    blob_fd = blob_directory(repository_root_fd);
+    blob_fd = blob_directory(blob_store_root_fd);
     if (blob_fd < 0) goto done;
     for (i = 0; i < root_count; i++) {
         char *leaf = NULL;
@@ -695,13 +696,20 @@ done:
     return result;
 }
 
-int tm_outputs_restore(int repository_root_fd, const char *const *roots,
-                      size_t root_count,
-                      const struct tm_output_manifest *manifest)
+int tm_outputs_capture(int repository_root_fd, const char *const *roots,
+                       size_t root_count, struct tm_output_manifest *manifest)
+{
+    return tm_outputs_capture_to_store(repository_root_fd, repository_root_fd,
+                                       roots, root_count, manifest);
+}
+
+int tm_outputs_restore_from_store(
+    int repository_root_fd, int blob_store_root_fd, const char *const *roots,
+    size_t root_count, const struct tm_output_manifest *manifest)
 {
     int blobfd = -1, result = -1, saved;
     size_t i, j;
-    if (repository_root_fd < 0 || manifest == NULL ||
+    if (repository_root_fd < 0 || blob_store_root_fd < 0 || manifest == NULL ||
         (root_count > 0 && roots == NULL) || root_count > OUTPUT_ROOT_LIMIT ||
         (manifest->count > 0 && manifest->entries == NULL)) {
         errno = EINVAL; return -1;
@@ -756,7 +764,7 @@ int tm_outputs_restore(int repository_root_fd, const char *const *roots,
         if (!found) { errno = EINVAL; goto done; }
     }
     if (root_count == 0 && manifest->count != 0) { errno = EINVAL; goto done; }
-    blobfd = read_blob_directory(repository_root_fd);
+    blobfd = read_blob_directory(blob_store_root_fd);
     if (blobfd < 0) goto done;
     /* Verify every blob before any owned destination is replaced. */
     for (i = 0; i < manifest->count; i++) {
@@ -778,4 +786,12 @@ done:
     if (blobfd >= 0) close(blobfd);
     errno = saved;
     return result;
+}
+
+int tm_outputs_restore(int repository_root_fd, const char *const *roots,
+                      size_t root_count,
+                      const struct tm_output_manifest *manifest)
+{
+    return tm_outputs_restore_from_store(repository_root_fd,
+        repository_root_fd, roots, root_count, manifest);
 }
