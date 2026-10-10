@@ -53,4 +53,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends bubblewrap busybox-static jq
       - name: Verify signed cross-worktree reuse
+        env:
+          TM_ACCEPTANCE_SHARED_STORE: ${{ vars.TM_ACCEPTANCE_SHARED_STORE }}
         run: bash tests/portable-reuse-ci.sh

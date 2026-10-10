@@ -34,6 +34,16 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+if [[ -n "${TM_ACCEPTANCE_SHARED_STORE:-}" ]]; then
+    shared_store=$TM_ACCEPTANCE_SHARED_STORE
+    if [[ "$shared_store" != /* || ! -d "$shared_store" ]]; then
+        printf '%s\n' 'TM_ACCEPTANCE_SHARED_STORE must name an existing absolute directory.' >&2
+        exit 2
+    fi
+else
+    shared_store=$work/shared-store
+    mkdir -m 0700 "$shared_store"
+fi
 id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 git clone --quiet --local "$repo_root" "$work/producer"
 git -C "$work/producer" config user.name 'tm acceptance test'
@@ -46,21 +56,28 @@ mkdir -p "$work/producer/build/reports"
 
 run_tm() {
     local checkout=$1 cache=$2
+    local shared_store_for_run=${4:-}
+    local run_id=${5:-$id}
     local -a key_option=()
+    local -a store_option=()
     shift 2
     if [[ -n "${1:-}" ]]; then
         key_option=(--signing-key "$1")
         shift
     fi
+    if [[ -n "$shared_store_for_run" ]]; then
+        store_option=(TM_SHARED_STORE="$shared_store_for_run")
+    fi
     (
         cd "$checkout"
         env -u TM_SHARED_STORE -u TM_FORCE -u TM_ACCEPTANCE_SIGNING_KEY \
-            XDG_CACHE_HOME="$cache" TM_RUNTIME_ROOT="$runtime_root" \
+            "${store_option[@]}" XDG_CACHE_HOME="$cache" \
+            TM_RUNTIME_ROOT="$runtime_root" \
             "$tm_bin" --root . --profile "$profile" \
             --trust-policy "$trust_policy" "${key_option[@]}" \
             --output build/reports --explain -- \
             ./build/portable-reuse-probe build/portable-input.txt \
-            build/reports/portable-reuse.txt "$id"
+            build/reports/portable-reuse.txt "$run_id"
     )
 }
 
@@ -119,4 +136,75 @@ if [[ "$(cat "$work/changed.out")" != "$id:changed-input" ||
     exit 1
 fi
 
-printf '%s\n' 'Portable cross-worktree reuse and input invalidation passed.'
+shared_id=$id-shared
+git clone --quiet --local "$repo_root" "$work/shared-producer"
+git -C "$work/shared-producer" config user.name 'tm acceptance test'
+git -C "$work/shared-producer" config user.email 'tm-acceptance@localhost'
+mkdir -p "$work/shared-producer/build/reports"
+cp "$probe" "$work/shared-producer/build/portable-reuse-probe"
+chmod 0755 "$work/shared-producer/build/portable-reuse-probe"
+printf '%s\n' 'unchanged-input' \
+    >"$work/shared-producer/build/portable-input.txt"
+if ! run_tm "$work/shared-producer" "$work/cache-shared-producer" \
+    "$signing_key" "$shared_store" "$shared_id" \
+    >"$work/shared-producer.out" \
+    2>"$work/shared-producer.err"; then
+    cat "$work/shared-producer.err" >&2
+    printf '%s\n' 'Shared-store producer execution failed.' >&2
+    exit 1
+fi
+if [[ "$(cat "$work/shared-producer.out")" != \
+      "$shared_id:unchanged-input" ||
+      "$(cat "$work/shared-producer/build/reports/portable-reuse.txt")" != \
+      "$shared_id:unchanged-input" ]]; then
+    printf '%s\n' 'Shared-store producer did not create the expected output.' >&2
+    exit 1
+fi
+if grep -R -F "$work/shared-producer" "$work/shared-producer/.tm/results"; then
+    printf '%s\n' 'Shared-store result metadata contains its producer checkout path.' >&2
+    exit 1
+fi
+git -C "$work/shared-producer" add -f \
+    build/portable-input.txt build/portable-reuse-probe
+git -C "$work/shared-producer" commit --quiet -m \
+    'Add shared-store acceptance fixture'
+git clone --quiet --local "$work/shared-producer" "$work/shared-consumer"
+git -C "$work/shared-consumer" rm --quiet --ignore-unmatch -r \
+    .tm/results .tm/blobs
+mkdir -p "$work/shared-consumer/build/reports"
+printf '%s\n' 'stale output' \
+    >"$work/shared-consumer/build/reports/stale.txt"
+if ! run_tm "$work/shared-consumer" "$work/cache-shared-consumer" \
+    '' "$shared_store" "$shared_id" >"$work/shared-consumer.out" \
+    2>"$work/shared-consumer.err"; then
+    cat "$work/shared-consumer.err" >&2
+    exit 1
+fi
+if [[ -s "$work/shared-consumer.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/shared-consumer.err" ||
+   [[ "$(cat "$work/shared-consumer/build/reports/portable-reuse.txt")" != \
+      "$shared_id:unchanged-input" ||
+      -e "$work/shared-consumer/build/reports/stale.txt" ]]; then
+    cat "$work/shared-consumer.err" >&2
+    printf '%s\n' 'Clean shared-store consumer failed to reuse and restore the result.' >&2
+    exit 1
+fi
+printf '%s\n' 'changed-input' \
+    >"$work/shared-consumer/build/portable-input.txt"
+if ! run_tm "$work/shared-consumer" "$work/cache-shared-consumer" \
+    '' "$shared_store" "$shared_id" >"$work/shared-changed.out" \
+    2>"$work/shared-changed.err"; then
+    cat "$work/shared-changed.err" >&2
+    exit 1
+fi
+if [[ "$(cat "$work/shared-changed.out")" != \
+      "$shared_id:changed-input" ||
+      "$(cat "$work/shared-consumer/build/reports/portable-reuse.txt")" != \
+      "$shared_id:changed-input" ]] ||
+   grep -q '^tm: SKIP: trusted result ' "$work/shared-changed.err"; then
+    cat "$work/shared-changed.err" >&2
+    printf '%s\n' 'Shared store reused evidence after an input changed.' >&2
+    exit 1
+fi
+
+printf '%s\n' 'Checked-in and shared-store reuse, output restoration, and input invalidation passed.'
