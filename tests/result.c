@@ -257,6 +257,7 @@ static int test_output_lookup(
     const char *argv[] = {"make", "test"};
     const char *input_paths[] = {"tests/a", "tests/missing"};
     char root[] = "/tmp/tm-result-output-XXXXXX";
+    char clone[] = "/tmp/tm-result-output-clone-XXXXXX";
     char shared_store[] = "/tmp/tm-result-output-shared-XXXXXX";
     char path[768], record_id[72] = {0};
     const char *roots[] = {"dist"};
@@ -269,14 +270,16 @@ static int test_output_lookup(
     unsigned char *record = NULL, *found = NULL;
     size_t record_length = 0, found_length = 0;
     char blob_digest[72] = {0};
-    int rootfd = -1, sharedfd = -1, testsfd = -1, distfd = -1, filefd = -1;
+    int rootfd = -1, clonefd = -1, clone_testsfd = -1, clone_distfd = -1;
+    int sharedfd = -1, testsfd = -1, distfd = -1, filefd = -1;
     int result = -1;
     if (tm_command_fingerprint(&command_identity, command_fingerprint) < 0)
         goto done;
     output_identity.command_fingerprint = command_fingerprint;
     if (tm_verification_fingerprint(&output_identity,
                                     verification_fingerprint) < 0) goto done;
-    if (mkdtemp(root) == NULL || mkdtemp(shared_store) == NULL) goto done;
+    if (mkdtemp(root) == NULL || mkdtemp(clone) == NULL ||
+        mkdtemp(shared_store) == NULL) goto done;
     rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     sharedfd = open(shared_store, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (rootfd < 0 || sharedfd < 0 || mkdirat(rootfd, "tests", 0700) < 0 ||
@@ -302,6 +305,31 @@ static int test_output_lookup(
     if (tm_result_find(rootfd, command_fingerprint, verification_fingerprint,
             trust, &found, &found_length, record_id) != 1 || found != NULL)
         goto done;
+    clonefd = open(clone, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (clonefd < 0 || mkdirat(clonefd, "tests", 0700) < 0) goto done;
+    clone_testsfd = openat(clonefd, "tests",
+                           O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (clone_testsfd < 0) goto done;
+    filefd = openat(clone_testsfd, "a",
+                    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (filefd < 0 || close(filefd) < 0) { filefd = -1; goto done; }
+    filefd = -1;
+    if (tm_result_find_matching_inputs_and_restore(sharedfd, clonefd, sharedfd,
+            command_fingerprint, output_identity.profile_digest,
+            output_identity.runtime_digest, output_identity.context_digest,
+            trust, roots, 1, &found, &found_length, record_id) != 0 ||
+        found_length != record_length || memcmp(found, record, record_length) != 0)
+        goto done;
+    clone_distfd = openat(clonefd, "dist", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    filefd = clone_distfd < 0 ? -1 :
+        openat(clone_distfd, "report.txt", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    {
+        char bytes[8];
+        if (filefd < 0 || read(filefd, bytes, sizeof(bytes)) != sizeof(bytes) ||
+            memcmp(bytes, "artifact", sizeof(bytes)) != 0) goto done;
+        close(filefd);
+        filefd = -1;
+    }
     if (unlinkat(distfd, "report.txt", 0) < 0 ||
         (filefd = openat(distfd, "stale.txt",
             O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600)) < 0 ||
@@ -330,6 +358,9 @@ static int test_output_lookup(
 done:
     if (filefd >= 0) close(filefd);
     if (rootfd >= 0) close(rootfd);
+    if (clonefd >= 0) close(clonefd);
+    if (clone_testsfd >= 0) close(clone_testsfd);
+    if (clone_distfd >= 0) close(clone_distfd);
     if (sharedfd >= 0) close(sharedfd);
     if (testsfd >= 0) close(testsfd);
     if (distfd >= 0) close(distfd);
@@ -363,6 +394,14 @@ done:
         (void)snprintf(path, sizeof(path), "%s/.tm", shared_store); (void)rmdir(path);
         (void)rmdir(root);
         (void)rmdir(shared_store);
+    }
+    if (clone[0] != '\0') {
+        (void)snprintf(path, sizeof(path), "%s/dist/report.txt", clone);
+        (void)unlink(path);
+        (void)snprintf(path, sizeof(path), "%s/dist", clone); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/tests/a", clone); (void)unlink(path);
+        (void)snprintf(path, sizeof(path), "%s/tests", clone); (void)rmdir(path);
+        (void)rmdir(clone);
     }
     return result;
 }

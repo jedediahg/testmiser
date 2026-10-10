@@ -1172,10 +1172,12 @@ int tm_result_find_in_store(int store_root_fd, int repository_root_fd,
         record, record_length, record_id);
 }
 
-int tm_result_find_matching_inputs(
+static int result_find_matching_inputs(
     int store_root_fd, int repository_root_fd, const char *command_fingerprint,
     const char *profile_digest, const char *runtime_digest,
     const char *context_digest, const struct tm_trust_policy *trust_policy,
+    int blob_store_root_fd, const char *const *output_roots,
+    size_t output_root_count,
     unsigned char **record, size_t *record_length, char record_id[72])
 {
     int tmfd = -1, resultsfd = -1, commandfd = -1, duplicate = -1;
@@ -1185,6 +1187,9 @@ int tm_result_find_matching_inputs(
     size_t visited = 0, visited_directories = 0;
 
     if (store_root_fd < 0 || repository_root_fd < 0 ||
+        (output_root_count > 0 &&
+         (blob_store_root_fd < 0 || output_roots == NULL)) ||
+        tm_output_roots_validate(output_roots, output_root_count) < 0 ||
         !valid_sha256(command_fingerprint) ||
         !valid_sha256(profile_digest) || !valid_sha256(runtime_digest) ||
         !valid_sha256(context_digest) || trust_policy == NULL ||
@@ -1253,7 +1258,7 @@ int tm_result_find_matching_inputs(
             unsigned char *candidate = NULL;
             size_t candidate_length = 0;
             char candidate_id[72], expected_name[80];
-            int matches = 0;
+            int matches = 0, candidate_valid = 0;
             errno = 0;
             entry = readdir(records);
             if (entry == NULL) {
@@ -1277,13 +1282,20 @@ int tm_result_find_matching_inputs(
                 strcmp(summary.profile_digest, profile_digest) == 0 &&
                 strcmp(summary.runtime_digest, runtime_digest) == 0 &&
                 strcmp(summary.context_digest, context_digest) == 0 &&
-                summary.output_count == 0 &&
                 (name_length = snprintf(expected_name, sizeof(expected_name),
                                          "%s.tm.json", candidate_id + 7)) >= 0 &&
                 (size_t)name_length < sizeof(expected_name) &&
                 strcmp(entry->d_name, expected_name) == 0 &&
                 tm_result_verify_inputs_match(candidate, candidate_length,
                     trust_policy, repository_root_fd, candidate_id) == 0)
+                candidate_valid = 1;
+            if (candidate_valid && summary.output_count == 0)
+                matches = output_root_count == 0;
+            else if (candidate_valid && output_root_count > 0 &&
+                     tm_outputs_restore_from_store(repository_root_fd,
+                         blob_store_root_fd, output_roots, output_root_count,
+                         &(struct tm_output_manifest){summary.outputs,
+                                                       summary.output_count}) == 0)
                 matches = 1;
             tm_result_summary_clear(&summary);
             if (matches) {
@@ -1314,6 +1326,31 @@ done:
     if (tmfd >= 0) close(tmfd);
     errno = saved;
     return result;
+}
+
+int tm_result_find_matching_inputs(
+    int store_root_fd, int repository_root_fd, const char *command_fingerprint,
+    const char *profile_digest, const char *runtime_digest,
+    const char *context_digest, const struct tm_trust_policy *trust_policy,
+    unsigned char **record, size_t *record_length, char record_id[72])
+{
+    return result_find_matching_inputs(store_root_fd, repository_root_fd,
+        command_fingerprint, profile_digest, runtime_digest, context_digest,
+        trust_policy, -1, NULL, 0, record, record_length, record_id);
+}
+
+int tm_result_find_matching_inputs_and_restore(
+    int store_root_fd, int repository_root_fd, int blob_store_root_fd,
+    const char *command_fingerprint, const char *profile_digest,
+    const char *runtime_digest, const char *context_digest,
+    const struct tm_trust_policy *trust_policy,
+    const char *const *output_roots, size_t output_root_count,
+    unsigned char **record, size_t *record_length, char record_id[72])
+{
+    return result_find_matching_inputs(store_root_fd, repository_root_fd,
+        command_fingerprint, profile_digest, runtime_digest, context_digest,
+        trust_policy, blob_store_root_fd, output_roots, output_root_count,
+        record, record_length, record_id);
 }
 
 int tm_result_find_and_restore(
