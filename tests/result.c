@@ -268,24 +268,20 @@ static int test_store(const unsigned char *record, size_t length,
             summary.verification_fingerprint, trust, &found, &found_length,
             record_id) != 1 || found != NULL) goto done;
     stage = 8;
-    fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
-    if (fd < 0) goto done;
-    { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
-    stage = 9;
     tmfd = openat(rootfd, ".tm", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (tmfd < 0) goto done;
-    stage = 10;
+    stage = 9;
     resultsfd = openat(tmfd, "results", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (resultsfd < 0) goto done;
-    stage = 11;
+    stage = 10;
     commandfd = openat(resultsfd, summary.command_id,
                        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (commandfd < 0) goto done;
-    stage = 12;
+    stage = 11;
     verifyfd = openat(commandfd, summary.verification_id,
                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (verifyfd < 0) goto done;
-    stage = 13;
+    stage = 12;
     {
         size_t index;
         char filler[32];
