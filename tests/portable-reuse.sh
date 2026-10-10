@@ -55,7 +55,6 @@ run_tm() {
     (
         cd "$checkout"
         env -u TM_SHARED_STORE -u TM_FORCE -u TM_ACCEPTANCE_SIGNING_KEY \
-            TM_BACKEND_DEBUG=1 \
             XDG_CACHE_HOME="$cache" TM_RUNTIME_ROOT="$runtime_root" \
             "$tm_bin" --root . --profile "$profile" \
             --trust-policy "$trust_policy" "${key_option[@]}" \

@@ -46,12 +46,7 @@ static int trusted_executable_directories(const char *executable_path)
         else *separator = '\0';
         descriptor = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC |
                                   O_NOFOLLOW);
-        if (descriptor < 0) {
-            if (getenv("TM_BACKEND_DEBUG") != NULL)
-                fprintf(stderr, "tm backend trust: cannot open %s: %s\n",
-                        parent, strerror(errno));
-            break;
-        }
+        if (descriptor < 0) break;
         if (fstat(descriptor, &status) < 0) {
             int saved = errno;
             close(descriptor);
@@ -59,18 +54,11 @@ static int trusted_executable_directories(const char *executable_path)
             break;
         }
         if (!S_ISDIR(status.st_mode) || status.st_uid != 0) {
-            if (getenv("TM_BACKEND_DEBUG") != NULL)
-                fprintf(stderr, "tm backend trust: unsafe directory %s (uid=%lu mode=%o)\n",
-                        parent, (unsigned long)status.st_uid,
-                        (unsigned)(status.st_mode & 07777));
             close(descriptor);
             errno = EPERM;
             break;
         }
         if ((status.st_mode & 0222) != 0) {
-            if (getenv("TM_BACKEND_DEBUG") != NULL)
-                fprintf(stderr, "tm backend trust: writable directory %s (mode=%o)\n",
-                        parent, (unsigned)(status.st_mode & 07777));
             close(descriptor);
             errno = EPERM;
             break;
@@ -114,13 +102,6 @@ int tm_backend_executable_identity(char **resolved_path, char digest[72])
     if (geteuid() == 0 ||
         (before.st_mode & (S_ISUID | S_ISGID)) != 0 ||
         before.st_uid != 0 || (before.st_mode & 0222) != 0) {
-        if (getenv("TM_BACKEND_DEBUG") != NULL)
-            fprintf(stderr, "tm backend trust: unsafe executable %s (euid=%lu root=%d setid=%o uid=%lu writable=%o mode=%o)\n",
-                    path, (unsigned long)geteuid(), geteuid() == 0,
-                    (unsigned)(before.st_mode & (S_ISUID | S_ISGID)),
-                    (unsigned long)before.st_uid,
-                    (unsigned)(before.st_mode & 0222),
-                    (unsigned)(before.st_mode & 07777));
         free(path);
         errno = EPERM;
         return -1;
