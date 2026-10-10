@@ -43,6 +43,8 @@ int main(void)
     struct tm_lock held = {-1}, independent = {-1}, rejected = {-1};
     int ready[2] = {-1, -1}, acquired[2] = {-1, -1};
     pid_t child = -1;
+    char *old_xdg_cache = NULL;
+    int had_xdg_cache = 0;
     int status = 1, stage = 1;
 
     if (mkdtemp(cache) == NULL ||
@@ -56,6 +58,15 @@ int main(void)
                  "%s/testmiser/locks", cache) >= (int)sizeof(lock_directory) ||
         count_files(lock_directory) != 2 || pipe(ready) < 0 ||
         pipe(acquired) < 0) goto done;
+    {
+        const char *current = getenv("XDG_CACHE_HOME");
+        if (current != NULL) {
+            old_xdg_cache = strdup(current);
+            if (old_xdg_cache == NULL) goto done;
+            had_xdg_cache = 1;
+        }
+        if (setenv("XDG_CACHE_HOME", cache, 1) < 0) goto done;
+    }
     stage = 3;
     child = fork();
     if (child < 0) goto done;
@@ -67,8 +78,8 @@ int main(void)
         close(ready[0]);
         close(acquired[0]);
         if (write(ready[1], &byte, 1) != 1) _exit(2);
-        if (tm_lock_acquire(cache, "sample", command_digest, profile_digest,
-                            context_digest, &second) < 0) {
+        if (tm_lock_acquire_default("sample", command_digest, profile_digest,
+                                    context_digest, &second) < 0) {
             perror("child lock acquire");
             _exit(2);
         }
@@ -118,6 +129,9 @@ int main(void)
     status = 0;
 
 done:
+    if (had_xdg_cache) (void)setenv("XDG_CACHE_HOME", old_xdg_cache, 1);
+    else (void)unsetenv("XDG_CACHE_HOME");
+    free(old_xdg_cache);
     if (child > 0) {
         (void)kill(child, SIGKILL);
         (void)waitpid(child, NULL, 0);

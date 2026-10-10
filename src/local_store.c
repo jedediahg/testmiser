@@ -78,20 +78,22 @@ fail:
     return -1;
 }
 
-int tm_local_store_open_default(int *store_root_fd)
+int tm_user_cache_root(char **cache_root)
 {
     const char *xdg_cache = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
-    char *cache_root = NULL;
+    char *candidate = NULL;
     size_t length;
-    int result;
+    char *canonical_root;
+    struct stat status;
+    int descriptor = -1, saved;
 
-    if (store_root_fd == NULL) { errno = EINVAL; return -1; }
-    *store_root_fd = -1;
+    if (cache_root == NULL) { errno = EINVAL; return -1; }
+    *cache_root = NULL;
     if (xdg_cache != NULL && xdg_cache[0] != '\0') {
         if (xdg_cache[0] != '/') { errno = EINVAL; return -1; }
-        cache_root = strdup(xdg_cache);
-        if (cache_root == NULL) return -1;
+        candidate = strdup(xdg_cache);
+        if (candidate == NULL) return -1;
     } else {
         if (home == NULL || home[0] != '/') { errno = ENOENT; return -1; }
         length = strlen(home);
@@ -99,17 +101,49 @@ int tm_local_store_open_default(int *store_root_fd)
             errno = EOVERFLOW;
             return -1;
         }
-        cache_root = malloc(length + sizeof("/.cache"));
-        if (cache_root == NULL) return -1;
-        (void)snprintf(cache_root, length + sizeof("/.cache"), "%s/.cache",
+        candidate = malloc(length + sizeof("/.cache"));
+        if (candidate == NULL) return -1;
+        (void)snprintf(candidate, length + sizeof("/.cache"), "%s/.cache",
                        home);
-        if (mkdir(cache_root, 0700) < 0 && errno != EEXIST) {
+        if (mkdir(candidate, 0700) < 0 && errno != EEXIST) {
             int saved = errno;
-            free(cache_root);
+            free(candidate);
             errno = saved;
             return -1;
         }
     }
+    canonical_root = realpath(candidate, NULL);
+    free(candidate);
+    if (canonical_root == NULL) return -1;
+    descriptor = open(canonical_root,
+                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) goto fail;
+    if (fstat(descriptor, &status) < 0) goto fail;
+    if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
+        (status.st_mode & 022) != 0) {
+        errno = EACCES;
+        goto fail;
+    }
+    close(descriptor);
+    *cache_root = canonical_root;
+    return 0;
+
+fail:
+    saved = errno;
+    if (descriptor >= 0) close(descriptor);
+    free(canonical_root);
+    errno = saved;
+    return -1;
+}
+
+int tm_local_store_open_default(int *store_root_fd)
+{
+    char *cache_root = NULL;
+    int result;
+
+    if (store_root_fd == NULL) { errno = EINVAL; return -1; }
+    *store_root_fd = -1;
+    if (tm_user_cache_root(&cache_root) < 0) return -1;
     result = tm_local_store_open(cache_root, store_root_fd);
     free(cache_root);
     return result;

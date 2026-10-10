@@ -93,9 +93,9 @@ $(BUILD_DIR)/test_repo: tests/repo.c src/repo.c include/tm/repo.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/repo.c src/repo.c
 
-$(BUILD_DIR)/test_lock: tests/lock.c src/lock.c src/digest.c include/tm/lock.h include/tm/digest.h
+$(BUILD_DIR)/test_lock: tests/lock.c src/lock.c src/local_store.c src/digest.c include/tm/lock.h include/tm/local_store.h include/tm/digest.h
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/lock.c src/lock.c src/digest.c $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/lock.c src/lock.c src/local_store.c src/digest.c $(LDLIBS)
 
 $(BUILD_DIR)/test_local_store: tests/local_store.c src/local_store.c include/tm/local_store.h
 	@mkdir -p $(BUILD_DIR)

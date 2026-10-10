@@ -11,6 +11,11 @@ int tm_lock_acquire(const char *cache_root, const char *repository_id,
                     const char *command_fingerprint,
                     const char *profile_digest, const char *context_digest,
                     struct tm_lock *lock);
+int tm_lock_acquire_default(const char *repository_id,
+                            const char *command_fingerprint,
+                            const char *profile_digest,
+                            const char *context_digest,
+                            struct tm_lock *lock);
 void tm_lock_release(struct tm_lock *lock);
 
 #endif

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -12,6 +13,7 @@
 
 #include "tm/digest.h"
 #include "tm/lock.h"
+#include "tm/local_store.h"
 
 static int valid_digest(const char *value)
 {
@@ -152,6 +154,23 @@ fail:
     if (root >= 0) close(root);
     errno = saved;
     return -1;
+}
+
+int tm_lock_acquire_default(const char *repository_id,
+                            const char *command_fingerprint,
+                            const char *profile_digest,
+                            const char *context_digest,
+                            struct tm_lock *lock)
+{
+    char *cache_root = NULL;
+    int result, saved;
+    if (tm_user_cache_root(&cache_root) < 0) return -1;
+    result = tm_lock_acquire(cache_root, repository_id, command_fingerprint,
+                             profile_digest, context_digest, lock);
+    saved = errno;
+    free(cache_root);
+    errno = saved;
+    return result;
 }
 
 void tm_lock_release(struct tm_lock *lock)
