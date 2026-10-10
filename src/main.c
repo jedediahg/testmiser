@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "tm/input.h"
+#include "tm/clean.h"
 #include "tm/outputs.h"
 #include "tm/observer.h"
 #include "tm/profile.h"
@@ -211,6 +212,8 @@ int main(int argc, char **argv)
 
     if (argc > 1 && strcmp(argv[1], "validate") == 0)
         return tm_validate_main(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "clean") == 0)
+        return tm_clean_main(argc, argv);
     if (argc > 1 && strcmp(argv[1], "profile") == 0)
         return profile_command(argc, argv);
     parse_result = parse_options(argc, argv, &options);

@@ -10,6 +10,24 @@ trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
 mkdir -p "$tmp_dir/repo/.tm/results"
 "$tm_bin" --root "$tmp_dir/repo" -- /bin/true
+mkdir -p "$tmp_dir/repo/.tm/results/command/verification" \
+    "$tmp_dir/repo/.tm/trust" "$tmp_dir/repo/.tm/blobs/sha256"
+printf record >"$tmp_dir/repo/.tm/results/command/verification/one.tm.json"
+printf keep >"$tmp_dir/repo/.tm/results/command/verification/notes.txt"
+printf keep >"$tmp_dir/repo/.tm/trust/policy.json"
+printf keep >"$tmp_dir/repo/.tm/blobs/sha256/blob"
+printf outside >"$tmp_dir/outside.tm.json"
+ln -s "$tmp_dir/outside.tm.json" \
+    "$tmp_dir/repo/.tm/results/command/verification/link.tm.json"
+"$tm_bin" clean --root "$tmp_dir/repo"
+test -f "$tmp_dir/repo/.tm/results/command/verification/one.tm.json"
+"$tm_bin" clean --root "$tmp_dir/repo" --records
+test ! -e "$tmp_dir/repo/.tm/results/command/verification/one.tm.json"
+test -f "$tmp_dir/repo/.tm/results/command/verification/notes.txt"
+test -L "$tmp_dir/repo/.tm/results/command/verification/link.tm.json"
+test "$(cat "$tmp_dir/outside.tm.json")" = outside
+test -f "$tmp_dir/repo/.tm/trust/policy.json"
+test -f "$tmp_dir/repo/.tm/blobs/sha256/blob"
 set +e
 "$tm_bin" --root "$tmp_dir/missing-root" -- sh -c \
     'touch "$1"' sh "$tmp_dir/invalid-root-child" \
