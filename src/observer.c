@@ -624,7 +624,6 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
         }
         return;
     case 267: /* readlinkat */
-    case 322: /* execveat */
         if (read_tracee_string(task->pid, registers->rsi, raw_path,
                                sizeof(raw_path)) == 0) {
             task_path(task->pid, (int)registers->rdi, raw_path,
@@ -632,6 +631,16 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
         } else {
             mark_observer_failure();
         }
+        return;
+    case 322: /* execveat: support pathname lookup only */
+        if (registers->r8 != 0 ||
+            read_tracee_string(task->pid, registers->rsi, raw_path,
+                               sizeof(raw_path)) < 0 || raw_path[0] == '\0') {
+            reject_unsupported_syscall(number);
+            return;
+        }
+        task_path(task->pid, (int)registers->rdi, raw_path,
+                  task->pending_path, sizeof(task->pending_path));
         return;
     case 437: { /* openat2 */
         struct open_how how;
@@ -899,6 +908,7 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 58:  /* vfork: descendants are traced */
     case 59:  /* execve is captured by note_syscall */
     case 267: /* readlinkat is captured by note_syscall */
+    case 322: /* execveat path is captured by note_syscall */
     case 437: /* openat2 request validated by note_syscall */
     case 60:  /* exit */
     case 231: /* exit_group */

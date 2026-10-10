@@ -10,6 +10,7 @@ descriptor_dup_probe=${DESCRIPTOR_DUP_PROBE:-./build/descriptor_dup_probe}
 clone3_probe=${CLONE3_PROBE:-./build/clone3_probe}
 cwd_probe=${CWD_PROBE:-./build/cwd_probe}
 path_error_probe=${PATH_ERROR_PROBE:-./build/path_error_probe}
+execveat_probe=${EXECVEAT_PROBE:-./build/execveat_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -413,6 +414,16 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         2>"$tmp_dir/network-syscalls.err"
     grep -q 'socket or network operation observed' "$tmp_dir/network-syscalls.err"
     grep -q 'observer eligibility: blocked' "$tmp_dir/network-syscalls.err"
+    "$tm_bin" --explain -- "$execveat_probe" \
+        2>"$tmp_dir/execveat.err"
+    if grep -q 'unsupported syscall(s):.*322' "$tmp_dir/execveat.err"; then
+        printf '%s\n' 'pathname execveat was unexpectedly rejected' >&2
+        exit 1
+    fi
+    "$tm_bin" --explain -- "$execveat_probe" empty-path \
+        2>"$tmp_dir/execveat-empty-path.err"
+    grep -q 'unsupported syscall(s):.*322' \
+        "$tmp_dir/execveat-empty-path.err"
     python_bin=$(command -v python3 || true)
     if [ -n "$python_bin" ]; then
         "$tm_bin" --explain -- "$python_bin" -c \
