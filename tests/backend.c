@@ -58,6 +58,7 @@ int main(void)
                        marker_path, NULL};
     struct tm_profile *profile = NULL;
     struct tm_observer_report observer_report = {0};
+    struct tm_observed_input_manifest observed_inputs = {0};
     int command_result = -1, status = 1, base_descriptor = -1;
     int high_descriptor = -1;
     mode_t original_umask = 0;
@@ -136,7 +137,8 @@ int main(void)
     restore_umask = 1;
 
     if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
-                       0, &observer_report, &command_result) != 1 ||
+                       0, &observer_report, &observed_inputs,
+                       &command_result) != 1 ||
         command_result != 0) {
         stream = fopen(log_path, "r");
         if (stream != NULL) {
@@ -189,7 +191,8 @@ int main(void)
     if (tm_profile_load(profile_path, &profile) < 0) goto done;
     command_result = -1;
     if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
-                       0, NULL, &command_result) != 0 || command_result != -1) {
+                       0, NULL, NULL, &command_result) != 0 ||
+        command_result != -1) {
         fprintf(stderr, "backend accepted a symlinked profile input root\n");
         goto done;
     }

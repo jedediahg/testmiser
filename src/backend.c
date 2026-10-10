@@ -633,7 +633,9 @@ int tm_backend_run(const struct tm_profile *profile,
                    const char *runtime_root, const char *repository_root,
                    const char *const *output_roots, size_t output_root_count,
                    char **command, int explain,
-                   struct tm_observer_report *report, int *command_result)
+                   struct tm_observer_report *report,
+                   struct tm_observed_input_manifest *observed_inputs,
+                   int *command_result)
 {
     struct argument_vector arguments = {0};
     struct tm_snapshot *snapshot = NULL;
@@ -643,8 +645,10 @@ int tm_backend_run(const struct tm_profile *profile,
     int repository_fd = -1, built, result = 0;
 
     if (profile == NULL || runtime_root == NULL || repository_root == NULL ||
-        command == NULL || command[0] == NULL || command_result == NULL)
+        command == NULL || command[0] == NULL || command_result == NULL ||
+        report == NULL || observed_inputs == NULL)
         return 0;
+    memset(observed_inputs, 0, sizeof(*observed_inputs));
     if (output_root_count != 0) {
         if (explain)
             fprintf(stderr,
@@ -702,6 +706,47 @@ int tm_backend_run(const struct tm_profile *profile,
             "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; cache reuse remains disabled\n");
     result = run_bubblewrap(&arguments, explain, report, command,
                             working_directory, command_result);
+    if (result > 0 && *command_result == 0 &&
+        tm_observer_report_allows_reuse(report)) {
+        int *readable_roots = input_count == 0 ? NULL :
+            calloc(input_count, sizeof(*readable_roots));
+        int capture_result = input_count == 0 ?
+            (report->candidate_count == 0 ? 0 : -1) :
+            (readable_roots == NULL ? -1 : 0);
+        if (input_count == 0 && report->candidate_count != 0)
+            errno = EXDEV;
+        if (capture_result == 0) {
+            for (index = 0; index < input_count; index++) {
+                readable_roots[index] = tm_snapshot_open_root_readable(
+                    snapshot, index);
+                if (readable_roots[index] < 0) {
+                    capture_result = -1;
+                    break;
+                }
+            }
+        }
+        if (capture_result == 0 && input_count > 0)
+            capture_result = tm_observer_capture_snapshot_inputs(report,
+                input_paths, readable_roots, input_count, observed_inputs);
+        if (readable_roots != NULL) {
+            for (index = 0; index < input_count; index++)
+                if (readable_roots[index] >= 0) close(readable_roots[index]);
+            free(readable_roots);
+        }
+        if (capture_result < 0) {
+            tm_observed_input_manifest_clear(observed_inputs);
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_UNSUPPORTED;
+            report->stable_input_view = 0;
+            if (explain)
+                fprintf(stderr,
+                    "tm: reuse rejected: observed inputs could not be captured from pinned snapshots (%s)\n",
+                    strerror(errno));
+        } else if (explain) {
+            fprintf(stderr,
+                "tm: captured %zu observed inputs from pinned snapshots (diagnostic only; reuse remains disabled)\n",
+                observed_inputs->count);
+        }
+    }
 done:
     if (repository_fd >= 0) close(repository_fd);
     free_arguments(&arguments);

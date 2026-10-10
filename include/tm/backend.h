@@ -2,6 +2,7 @@
 #define TM_BACKEND_H
 
 #include "tm/observer.h"
+#include "tm/observed_inputs.h"
 
 struct tm_profile;
 
@@ -12,6 +13,8 @@ int tm_backend_run(const struct tm_profile *profile,
                    const char *runtime_root, const char *repository_root,
                    const char *const *output_roots, size_t output_root_count,
                    char **command, int explain,
-                   struct tm_observer_report *report, int *command_result);
+                   struct tm_observer_report *report,
+                   struct tm_observed_input_manifest *inputs,
+                   int *command_result);
 
 #endif

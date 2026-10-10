@@ -370,6 +370,7 @@ int main(int argc, char **argv)
     struct tm_profile *profile = NULL;
     struct tm_trust_policy *trust_policy = NULL;
     struct tm_observer_report observer_report = {0};
+    struct tm_observed_input_manifest observed_inputs = {0};
     char **child_environment = NULL;
     const char *force_environment;
     const char *runtime_root = NULL;
@@ -577,7 +578,7 @@ int main(int argc, char **argv)
             tm_backend_run(profile, runtime_root, repository_root,
                 options.output_paths, options.output_count,
                 &argv[options.command_index], options.explain,
-                &observer_report, &backend_result) : 0;
+                &observer_report, &observed_inputs, &backend_result) : 0;
         if (backend_used > 0) {
             result = backend_result;
         } else {
@@ -611,6 +612,7 @@ int main(int argc, char **argv)
                     "tm: reuse rejected: declared input changed or became unsafe: %s\n",
                     explicit_inputs[index].path);
     }
+    tm_observed_input_manifest_clear(&observed_inputs);
     if (options.explain)
         for (index = 0; index < unavailable_input_count; index++)
             fprintf(stderr,
