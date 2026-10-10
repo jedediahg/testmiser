@@ -18,6 +18,135 @@
 #include "tm/digest.h"
 
 static int put_string(struct tm_json_value *object, const char *key,
+                      const char *value);
+static int put_integer(struct tm_json_value *object, const char *key,
+                       uint64_t value);
+
+static struct tm_json_value *clone_json(const struct tm_json_value *value)
+{
+    unsigned char *bytes = NULL;
+    size_t length = 0;
+    struct tm_json_value *copy = NULL;
+    if (value == NULL || tm_json_canonicalize(value, &bytes, &length) < 0 ||
+        tm_json_parse(bytes, length, &copy) < 0) {
+        free(bytes);
+        return NULL;
+    }
+    free(bytes);
+    return copy;
+}
+
+static int descriptor_context_valid(const struct tm_json_value *descriptor)
+{
+    return tm_json_typeof(descriptor) == TM_JSON_OBJECT &&
+        tm_json_typeof(tm_json_object_get(descriptor, "available")) ==
+            TM_JSON_INTEGER &&
+        tm_json_typeof(tm_json_object_get(descriptor, "file_type")) ==
+            TM_JSON_INTEGER &&
+        tm_json_typeof(tm_json_object_get(descriptor, "tty")) ==
+            TM_JSON_INTEGER;
+}
+
+int tm_context_project_bubblewrap(const struct tm_json_value *host_context,
+                                  const char *backend_contract,
+                                  struct tm_json_value **profile_context)
+{
+    struct tm_json_value *projected = NULL, *descriptors = NULL;
+    size_t index;
+    int is_v2;
+    if (tm_json_typeof(host_context) != TM_JSON_OBJECT ||
+        backend_contract == NULL || profile_context == NULL ||
+        (strcmp(backend_contract, "bubblewrap-linux-x86_64-v1") != 0 &&
+         strcmp(backend_contract, "bubblewrap-linux-x86_64-v2") != 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    *profile_context = NULL;
+    is_v2 = strcmp(backend_contract, "bubblewrap-linux-x86_64-v2") == 0;
+    {
+        const struct tm_json_value *descriptors = tm_json_object_get(
+            host_context, "standard_descriptors");
+        if ((is_v2 && (tm_json_typeof(tm_json_object_get(host_context,
+                 "effective_uid")) != TM_JSON_INTEGER ||
+             tm_json_typeof(tm_json_object_get(host_context,
+                 "effective_gid")) != TM_JSON_INTEGER)) ||
+            tm_json_typeof(tm_json_object_get(host_context, "umask")) !=
+                TM_JSON_INTEGER ||
+            tm_json_typeof(descriptors) != TM_JSON_OBJECT ||
+            !descriptor_context_valid(tm_json_object_get(descriptors, "fd0")) ||
+            !descriptor_context_valid(tm_json_object_get(descriptors, "fd1")) ||
+            !descriptor_context_valid(tm_json_object_get(descriptors, "fd2"))) {
+            errno = EINVAL;
+            return -1;
+        }
+    }
+    projected = tm_json_new_object();
+    if (projected == NULL) return -1;
+    for (index = 0; index < tm_json_size(host_context); index++) {
+        const char *key = tm_json_object_key_at(host_context, index);
+        const struct tm_json_value *value =
+            tm_json_object_value_at(host_context, index);
+        struct tm_json_value *copy;
+        if ((is_v2 && (strcmp(key, "effective_uid") == 0 ||
+                       strcmp(key, "effective_gid") == 0)) ||
+            strcmp(key, "umask") == 0 ||
+            strcmp(key, "standard_descriptors") == 0)
+            continue;
+        copy = clone_json(value);
+        if (copy == NULL || tm_json_object_set(projected, key, copy) < 0) {
+            tm_json_free(copy);
+            goto fail;
+        }
+    }
+    {
+        const struct tm_json_value *host_descriptors =
+            tm_json_object_get(host_context, "standard_descriptors");
+        struct tm_json_value *stdin_descriptor = tm_json_new_object();
+        descriptors = tm_json_new_object();
+        if (stdin_descriptor == NULL || descriptors == NULL) {
+            tm_json_free(stdin_descriptor);
+            goto fail;
+        }
+        if (put_integer(stdin_descriptor, "available", 1) < 0 ||
+            put_integer(stdin_descriptor, "file_type", (uint64_t)S_IFCHR) < 0 ||
+            put_integer(stdin_descriptor, "tty", 0) < 0) {
+            tm_json_free(stdin_descriptor);
+            goto fail;
+        }
+        if (tm_json_object_set(descriptors, "fd0", stdin_descriptor) < 0) {
+            tm_json_free(stdin_descriptor);
+            goto fail;
+        }
+        stdin_descriptor = NULL;
+        for (index = 1; index <= 2; index++) {
+            char key[8];
+            struct tm_json_value *copy;
+            (void)snprintf(key, sizeof(key), "fd%zu", index);
+            copy = clone_json(tm_json_object_get(host_descriptors, key));
+            if (copy == NULL || tm_json_object_set(descriptors, key, copy) < 0) {
+                tm_json_free(copy);
+                goto fail;
+            }
+        }
+        if ((is_v2 && (put_integer(projected, "effective_uid", 0) < 0 ||
+                       put_integer(projected, "effective_gid", 0) < 0)) ||
+            put_integer(projected, "umask", 022) < 0 ||
+            tm_json_object_set(projected, "standard_descriptors",
+                               descriptors) < 0)
+            goto fail;
+        descriptors = NULL;
+    }
+    if (put_string(projected, "backend_contract", backend_contract) < 0)
+        goto fail;
+    *profile_context = projected;
+    return 0;
+fail:
+    tm_json_free(descriptors);
+    tm_json_free(projected);
+    return -1;
+}
+
+static int put_string(struct tm_json_value *object, const char *key,
                       const char *value)
 {
     struct tm_json_value *json = tm_json_new_string(value);

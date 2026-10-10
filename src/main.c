@@ -480,10 +480,14 @@ int main(int argc, char **argv)
             struct tm_json_value *environment =
                 environment_json(child_environment);
             struct tm_json_value *execution_context = NULL;
+            struct tm_json_value *profile_context = NULL;
             char context_fingerprint[72];
             if (environment == NULL ||
                 tm_context_capture_linux(&execution_context) < 0 ||
-                tm_context_fingerprint(environment, execution_context,
+                tm_context_project_bubblewrap(execution_context,
+                    tm_profile_backend_contract(profile),
+                    &profile_context) < 0 ||
+                tm_context_fingerprint(environment, profile_context,
                                       context_fingerprint) < 0) {
                 fprintf(stderr,
                     "tm: reuse rejected: Linux execution context could not be fingerprinted\n");
@@ -491,6 +495,7 @@ int main(int argc, char **argv)
                 fprintf(stderr, "tm: context fingerprint: %s (diagnostic only; reuse remains disabled)\n",
                         context_fingerprint);
             }
+            tm_json_free(profile_context);
             tm_json_free(execution_context);
             tm_json_free(environment);
         }

@@ -13,4 +13,10 @@ int tm_context_fingerprint(const struct tm_json_value *environment,
  * returns an error rather than silently omitting an identity input. */
 int tm_context_capture_linux(struct tm_json_value **execution_context);
 
+/* Project host context fields that the selected Bubblewrap contract
+ * normalizes, retaining the captured values for inherited context. */
+int tm_context_project_bubblewrap(const struct tm_json_value *host_context,
+                                  const char *backend_contract,
+                                  struct tm_json_value **profile_context);
+
 #endif
