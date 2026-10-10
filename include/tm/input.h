@@ -3,6 +3,10 @@
 
 #include "tm/verification.h"
 
+/* Capture a stable regular file below root_fd as a sha256-prefixed digest.
+ * Symlink traversal and unsupported paths fail closed. */
+int tm_input_capture_file(int root_fd, const char *path, char digest[72]);
+
 /* Compare one recorded input with the current repository view rooted at an
  * already-open directory. Return 0 for a match, 1 for changed state, -1 for
  * unsafe, unsupported, or failed inspection. Symlink traversal is rejected;

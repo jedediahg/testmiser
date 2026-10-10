@@ -17,6 +17,17 @@ status=$?
 set -e
 test "$status" -eq 125
 test ! -e "$tmp_dir/invalid-root-child"
+mkdir -p "$tmp_dir/repo/tests"
+printf original >"$tmp_dir/repo/tests/explicit.txt"
+"$tm_bin" --explain --root "$tmp_dir/repo" --input tests/explicit.txt -- \
+    sh -c 'printf changed > "$1"' sh "$tmp_dir/repo/tests/explicit.txt" \
+    2>"$tmp_dir/input-changed.err"
+grep -q 'declared input changed or became unsafe: tests/explicit.txt' \
+    "$tmp_dir/input-changed.err"
+"$tm_bin" --explain --root "$tmp_dir/repo" --input tests/missing.txt -- \
+    sh -c 'exit 0' 2>"$tmp_dir/input-missing.err"
+grep -q 'declared input could not be captured: tests/missing.txt' \
+    "$tmp_dir/input-missing.err"
 "$tm_bin" validate --root "$tmp_dir/repo" >"$tmp_dir/validate-empty.out"
 mkdir -p "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 printf '{}\n' >"$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bad.tm.json"

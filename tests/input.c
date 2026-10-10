@@ -27,7 +27,7 @@ int main(void)
 {
     char directory[] = "/tmp/tm-input-test-XXXXXX";
     char alpha[256], link_path[256], sub[256], nested[256];
-    char file_hex[65], file_digest[72];
+    char file_hex[65], file_digest[72], captured_digest[72];
     int root = -1, status = 1;
     struct tm_input_observation input;
 
@@ -42,6 +42,13 @@ int main(void)
     snprintf(file_digest, sizeof(file_digest), "sha256:%s", file_hex);
     root = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (root < 0) goto done;
+    if (tm_input_capture_file(root, "alpha", captured_digest) != 0 ||
+        strcmp(captured_digest, file_digest) != 0 ||
+        tm_input_capture_file(root, "link/alpha", captured_digest) == 0 ||
+        tm_input_capture_file(root, "../alpha", captured_digest) == 0) {
+        fprintf(stderr, "safe explicit input capture failed\n");
+        goto done;
+    }
 
     input = (struct tm_input_observation){"alpha", TM_INPUT_FILE,
                                           file_digest, NULL, 0};

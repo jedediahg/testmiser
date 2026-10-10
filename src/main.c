@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 
+#include "tm/input.h"
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/repo.h"
@@ -11,12 +14,16 @@
 #include "tm/trust.h"
 #include "tm/validate.h"
 
+#define TM_MAX_EXPLICIT_INPUTS 128
+
 struct options {
     int force;
     int explain;
     const char *profile_path;
     const char *trust_policy_path;
     const char *root_path;
+    const char *input_paths[TM_MAX_EXPLICIT_INPUTS];
+    size_t input_count;
     int command_index;
 };
 
@@ -51,7 +58,7 @@ static void free_environment(char **environment)
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tm [--root DIR] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
+    fprintf(stream, "Usage: tm [--root DIR] [--input PATH ...] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
@@ -59,6 +66,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "  --profile FILE       select an approved profile (currently uncached)\n");
     fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
     fprintf(stream, "  --root DIR           set repository root (default: nearest .git)\n");
+    fprintf(stream, "  --input PATH         declare a repository-relative input file\n");
     fprintf(stream, "  --help     show this help\n");
 }
 
@@ -90,6 +98,7 @@ static int parse_options(int argc, char **argv, struct options *options)
     options->profile_path = NULL;
     options->trust_policy_path = NULL;
     options->root_path = NULL;
+    options->input_count = 0;
     options->command_index = -1;
 
     for (index = 1; index < argc; index++) {
@@ -101,6 +110,26 @@ static int parse_options(int argc, char **argv, struct options *options)
             options->force = 1;
         } else if (strcmp(argv[index], "--explain") == 0) {
             options->explain = 1;
+        } else if (strcmp(argv[index], "--input") == 0) {
+            const char *input_path;
+            size_t input_index;
+            if (index + 1 >= argc ||
+                strncmp(argv[index + 1], "--", 2) == 0 ||
+                options->input_count == TM_MAX_EXPLICIT_INPUTS) {
+                fprintf(stderr, "tm: missing or too many --input values\n");
+                return -1;
+            }
+            input_path = argv[++index];
+            if (input_path[0] == '\0') {
+                fprintf(stderr, "tm: --input path must not be empty\n");
+                return -1;
+            }
+            for (input_index = 0; input_index < options->input_count;
+                 input_index++)
+                if (strcmp(options->input_paths[input_index], input_path) == 0)
+                    break;
+            if (input_index == options->input_count)
+                options->input_paths[options->input_count++] = input_path;
         } else if (strcmp(argv[index], "--profile") == 0 ||
                    strcmp(argv[index], "--trust-policy") == 0 ||
                    strcmp(argv[index], "--root") == 0) {
@@ -142,6 +171,11 @@ int main(int argc, char **argv)
     struct tm_trust_policy *trust_policy = NULL;
     char **child_environment = NULL;
     char *repository_root = NULL;
+    struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
+    char explicit_input_digests[TM_MAX_EXPLICIT_INPUTS][72];
+    const char *unavailable_inputs[TM_MAX_EXPLICIT_INPUTS];
+    size_t explicit_input_count = 0, unavailable_input_count = 0, index;
+    int repository_fd = -1;
     int parse_result;
     int result;
 
@@ -192,9 +226,39 @@ int main(int argc, char **argv)
         tm_trust_policy_free(trust_policy);
         return TM_EXIT_INTERNAL_ERROR;
     }
+    if (options.input_count > 0) {
+        repository_fd = open(repository_root,
+                              O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        for (index = 0; index < options.input_count; index++) {
+            const char *path = options.input_paths[index];
+            if (repository_fd >= 0 &&
+                tm_input_capture_file(repository_fd, path,
+                    explicit_input_digests[explicit_input_count]) == 0) {
+                explicit_inputs[explicit_input_count] =
+                    (struct tm_input_observation){path, TM_INPUT_FILE,
+                        explicit_input_digests[explicit_input_count], NULL, 0};
+                explicit_input_count++;
+            } else {
+                unavailable_inputs[unavailable_input_count++] = path;
+            }
+        }
+    }
     (void) options.force;
     result = tm_observe_and_run(&argv[options.command_index], options.explain,
                                 child_environment, repository_root);
+    for (index = 0; index < explicit_input_count; index++) {
+        if (tm_input_matches(repository_fd, &explicit_inputs[index]) != 0 &&
+            options.explain)
+            fprintf(stderr,
+                    "tm: reuse rejected: declared input changed or became unsafe: %s\n",
+                    explicit_inputs[index].path);
+    }
+    if (options.explain)
+        for (index = 0; index < unavailable_input_count; index++)
+            fprintf(stderr,
+                    "tm: reuse rejected: declared input could not be captured: %s\n",
+                    unavailable_inputs[index]);
+    if (repository_fd >= 0) close(repository_fd);
     free_environment(child_environment);
     free(repository_root);
     tm_profile_free(profile);
