@@ -24,7 +24,8 @@ repeats producer/consumer reuse, invalidation, and state reversion with
 and requires exactly one execution. Set `TM_ACCEPTANCE_SHARED_STORE` to an
 existing absolute directory to test a mounted store; the script creates and
 removes a unique private subdirectory there. By default it creates a private
-temporary store.
+temporary store. The gate also checks that `TM_COORDINATION_MODE=strict`
+refuses to launch when the shared execution slot is unavailable.
 For a common CI store, configure the GitHub repository variable and GitLab CI
 variable with this name and mount the same protected directory on both runner
 pools. Provision a deterministic public profile that permits

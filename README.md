@@ -114,12 +114,15 @@ participating machines to exchange signed records and output blobs. The root
 must be owned by the invoking user and not be group/world-writable; all clients
 must use the same numeric UID because `tm` creates private `0700` store
 directories. On filesystems with coherent `flock`, clients serialize
-equivalent cold misses and recheck the store after waiting. If the shared lock
-is unavailable, `tm` falls back to per-user locking and duplicate work is
-possible. This does not provide leases, fencing, or partition-safe
-coordination; mount availability, durability, and access control remain
-operator responsibilities. Never expose producer signing keys to untrusted
-test jobs.
+equivalent cold misses and recheck the store after waiting. By default,
+`tm` uses available coordination and falls back to per-user locking if the
+shared lock is unavailable, so duplicate work is possible. Set
+`TM_COORDINATION_MODE=strict` to require a configured shared store and refuse
+to launch unless the shared execution slot is acquired. Strict mode currently
+uses filesystem `flock`; it does not provide lease fencing or partition
+safety. Mount availability, coherent locking, durability, and access control
+remain operator responsibilities. Never expose producer signing keys to
+untrusted test jobs.
 
 ## Intended usage
 

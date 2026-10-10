@@ -172,6 +172,16 @@ merge-request base SHA and ensure the job has enough Git history for the
 three-dot comparison. A missing trust policy must fail strict validation;
 never downgrade it to a successful no-op.
 
+For jobs where overlapping cold runs are unacceptable, set
+`TM_COORDINATION_MODE=strict` and configure a coherent shared filesystem in
+`TM_SHARED_STORE`. In this mode `tm` returns 125 before launching the command
+if it cannot open the shared store or acquire the execution slot. The current
+implementation uses blocking `flock`; it has no leases or fencing tokens and
+does not prove that an abandoned remote owner has stopped. Use this mode only
+on storage whose locking behavior is established for every client. Omit the
+variable for the default available mode, which allows duplicate execution
+when shared coordination is unavailable.
+
 Do not put the key in a normal GitLab variable available to arbitrary jobs.
 The `tm` supervisor keeps the key out of the test process, but it cannot
 protect a secret from malicious CI shell commands that run outside `tm`.
@@ -205,9 +215,10 @@ namespaces and ptrace and is a release gate, not an optional local test.
 The repo's current CI validates this repository's evidence and runs its own
 tests; that does not prove a separate project's test job is integrated.
 Cross-worktree behavior has an acceptance script, but the full portable gate
-must pass on the target runner. Shared filesystem coordination can still
-duplicate cold runs if locking is unavailable and is not partition-safe.
-Remote result stores, strict distributed coordination, cross-provider
-acceptance, and a general-purpose installation package are not implemented.
+must pass on the target runner. Available-mode shared filesystem coordination
+can duplicate cold runs if locking is unavailable; strict mode fails before
+launch in that case, but neither mode is partition-safe or uses leases/fencing.
+Remote result stores, cross-provider acceptance, and a general-purpose
+installation package are not implemented.
 Treat this as a controlled pilot until the target project's GitLab producer
 and consumer flow has passed the checks above.

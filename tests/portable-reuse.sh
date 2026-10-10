@@ -64,6 +64,34 @@ chmod 0755 "$work/producer/build/portable-reuse-probe"
 printf '%s\n' 'unchanged-input' >"$work/producer/build/portable-input.txt"
 mkdir -p "$work/producer/build/reports"
 
+# Strict mode must fail before launching when the shared execution slot cannot
+# be opened; it must not fall back to the per-user worktree lock.
+mkdir -m 0700 -p "$work/cache-strict"
+set +e
+(
+    cd "$work/producer"
+    env -u TM_SHARED_STORE -u TM_FORCE \
+        TM_COORDINATION_MODE=strict \
+        TM_SHARED_STORE="$work/missing-strict-store" \
+        XDG_CACHE_HOME="$work/cache-strict" \
+        TM_RUNTIME_ROOT="$runtime_root" \
+        "$tm_bin" --root . --profile "$profile" \
+        --trust-policy "$trust_policy" --output build/reports --explain -- \
+        ./build/portable-reuse-probe build/portable-input.txt \
+        build/reports/strict-mode.txt "$id"
+) >"$work/strict.out" 2>"$work/strict.err"
+strict_status=$?
+set -e
+if [[ "$strict_status" -ne 125 || \
+      -e "$work/producer/build/reports/strict-mode.txt" || \
+      -s "$work/strict.out" ]] ||
+   ! grep -q 'strict coordination unavailable; command was not launched' \
+       "$work/strict.err"; then
+    cat "$work/strict.err" >&2
+    printf '%s\n' 'Strict coordination failed open or launched the command.' >&2
+    exit 1
+fi
+
 run_tm() {
     local checkout=$1 cache=$2
     local shared_store_for_run=${4:-}

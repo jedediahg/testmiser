@@ -216,7 +216,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "       tm attempt resolve --repository-id ID --command-fingerprint SHA256\n");
     fprintf(stream, "                         --profile-digest SHA256 --context-digest SHA256\n");
     fprintf(stream, "                         (--fingerprint SHA256 | --all)\n");
-    fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
+    fprintf(stream, "Run a verification command; reuse requires an approved, completely observed profile.\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
     fprintf(stream, "  TM_FORCE=1 has the same effect as --force\n");
@@ -227,6 +227,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "  --root DIR           set repository root (default: nearest .git)\n");
     fprintf(stream, "  --input PATH         declare a repository-relative input file\n");
     fprintf(stream, "  --output PATH        declare a repository-relative output root\n");
+    fprintf(stream, "  TM_COORDINATION_MODE=available|strict (strict requires TM_SHARED_STORE)\n");
     fprintf(stream, "  --help     show this help\n");
 }
 
@@ -611,6 +612,7 @@ int main(int argc, char **argv)
     int explicit_inputs_unchanged = 1;
     int cache_hit = 0;
     int invocation_lock_acquired = 0;
+    int strict_coordination = 0;
     int attempt_state_ready = 0, attempt_started = 0;
     int parse_result;
     int result;
@@ -648,6 +650,26 @@ int main(int argc, char **argv)
     force_environment = getenv("TM_FORCE");
     if (force_environment != NULL && strcmp(force_environment, "1") == 0)
         options.force = 1;
+    {
+        const char *coordination_mode = getenv("TM_COORDINATION_MODE");
+        if (coordination_mode != NULL && coordination_mode[0] != '\0') {
+            if (strcmp(coordination_mode, "available") == 0) {
+                strict_coordination = 0;
+            } else if (strcmp(coordination_mode, "strict") == 0) {
+                strict_coordination = 1;
+                if (getenv("TM_SHARED_STORE") == NULL ||
+                    getenv("TM_SHARED_STORE")[0] == '\0') {
+                    fprintf(stderr,
+                        "tm: strict coordination requires TM_SHARED_STORE\n");
+                    return TM_EXIT_INTERNAL_ERROR;
+                }
+            } else {
+                fprintf(stderr,
+                    "tm: TM_COORDINATION_MODE must be 'available' or 'strict'\n");
+                return TM_EXIT_INTERNAL_ERROR;
+            }
+        }
+    }
 
     if (options.signing_key_path != NULL &&
         (options.profile_path == NULL || options.trust_policy_path == NULL)) {
@@ -891,13 +913,21 @@ int main(int argc, char **argv)
                     tm_profile_digest(profile), context_fingerprint,
                     &invocation_lock) == 0) {
                 invocation_lock_acquired = 1;
+            } else if (strict_coordination) {
+                fprintf(stderr,
+                    "tm: strict coordination could not acquire the shared execution slot (%s)\n",
+                    strerror(errno));
             } else if (options.explain) {
                 fprintf(stderr, "tm: shared-store invocation lock unavailable; concurrent cold runs may duplicate work\n");
             }
             close(lock_store_fd);
             lock_store_fd = -1;
+        } else if (strict_coordination) {
+            fprintf(stderr,
+                "tm: strict coordination could not open TM_SHARED_STORE (%s)\n",
+                strerror(errno));
         }
-        if (!invocation_lock_acquired &&
+        if (!strict_coordination && !invocation_lock_acquired &&
             tm_lock_acquire_default(tm_profile_repository_id(profile),
                 command_fingerprint, tm_profile_digest(profile),
                 context_fingerprint, &invocation_lock) == 0) {
@@ -933,9 +963,15 @@ int main(int argc, char **argv)
                         fprintf(stderr, "tm: reuse rejected: execution context changed while waiting for the invocation lock\n");
                 }
             }
-        } else if (!invocation_lock_acquired && options.explain) {
+        } else if (!strict_coordination && !invocation_lock_acquired && options.explain) {
             fprintf(stderr, "tm: invocation lock unavailable; concurrent cold runs may duplicate work\n");
         }
+    }
+    if (strict_coordination && !invocation_lock_acquired) {
+        fprintf(stderr,
+            "tm: strict coordination unavailable; command was not launched\n");
+        result = TM_EXIT_INTERNAL_ERROR;
+        goto cleanup;
     }
     if (invocation_lock_acquired && profile != NULL &&
         tm_profile_is_deterministic(profile) &&
@@ -1200,6 +1236,7 @@ int main(int argc, char **argv)
                                           NULL);
         }
     }
+cleanup:
     tm_observed_input_manifest_clear(&observed_inputs);
     tm_output_manifest_clear(&output_manifest);
     tm_attempt_state_clear(&attempt_state);

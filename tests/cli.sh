@@ -19,6 +19,36 @@ trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 test "$("$tm_bin" --version)" = 'tm 0.1'
 "$tm_bin" --help >"$tmp_dir/help.out" 2>&1
 grep -q -- '--profile FILE.*controlled reuse' "$tmp_dir/help.out"
+grep -q 'TM_COORDINATION_MODE=available|strict' "$tmp_dir/help.out"
+set +e
+env -u TM_SHARED_STORE TM_COORDINATION_MODE=strict \
+    "$tm_bin" -- /bin/sh -c 'touch "$1"' sh \
+    "$tmp_dir/strict-must-not-run" >"$tmp_dir/strict.out" 2>"$tmp_dir/strict.err"
+strict_status=$?
+set -e
+test "$strict_status" -eq 125
+test ! -e "$tmp_dir/strict-must-not-run"
+grep -q 'strict coordination requires TM_SHARED_STORE' "$tmp_dir/strict.err"
+mkdir -m 0700 "$tmp_dir/shared-store"
+set +e
+TM_COORDINATION_MODE=strict TM_SHARED_STORE="$tmp_dir/shared-store" \
+    "$tm_bin" -- /bin/sh -c 'touch "$1"' sh \
+    "$tmp_dir/strict-profile-required" \
+    >"$tmp_dir/strict-profile.out" 2>"$tmp_dir/strict-profile.err"
+strict_profile_status=$?
+set -e
+test "$strict_profile_status" -eq 125
+test ! -e "$tmp_dir/strict-profile-required"
+grep -q 'strict coordination unavailable; command was not launched' \
+    "$tmp_dir/strict-profile.err"
+set +e
+env TM_COORDINATION_MODE=unknown "$tm_bin" -- /bin/true \
+    >"$tmp_dir/coordination-mode.out" 2>"$tmp_dir/coordination-mode.err"
+coordination_mode_status=$?
+set -e
+test "$coordination_mode_status" -eq 125
+grep -q "TM_COORDINATION_MODE must be 'available' or 'strict'" \
+    "$tmp_dir/coordination-mode.err"
 if "$tm_bin" attempt resolve >/dev/null 2>&1; then
     printf '%s\n' 'attempt resolve accepted missing scope arguments' >&2
     exit 1
