@@ -10,7 +10,9 @@
 #include "tm/input.h"
 #include "tm/backend.h"
 #include "tm/clean.h"
+#include "tm/context.h"
 #include "tm/identity.h"
+#include "tm/json.h"
 #include "tm/outputs.h"
 #include "tm/observer.h"
 #include "tm/profile.h"
@@ -124,6 +126,31 @@ static void free_environment(char **environment)
     for (index = 0; environment[index] != NULL; index++)
         free(environment[index]);
     free(environment);
+}
+
+static struct tm_json_value *environment_json(char *const *environment)
+{
+    struct tm_json_value *object = tm_json_new_object();
+    size_t index;
+    if (object == NULL) return NULL;
+    for (index = 0; environment != NULL && environment[index] != NULL;
+         index++) {
+        char *separator = strchr(environment[index], '=');
+        struct tm_json_value *value;
+        char *name;
+        if (separator == NULL) { tm_json_free(object); return NULL; }
+        name = strndup(environment[index], (size_t)(separator - environment[index]));
+        if (name == NULL) { tm_json_free(object); return NULL; }
+        value = tm_json_new_string(separator + 1);
+        if (value == NULL || tm_json_object_set(object, name, value) < 0) {
+            tm_json_free(value);
+            free(name);
+            tm_json_free(object);
+            return NULL;
+        }
+        free(name);
+    }
+    return object;
 }
 
 static int verify_selected_runtime(const struct tm_profile *profile,
@@ -432,6 +459,24 @@ int main(int argc, char **argv)
             tm_profile_free(profile);
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
+        }
+        if (options.explain) {
+            struct tm_json_value *environment =
+                environment_json(child_environment);
+            struct tm_json_value *execution_context = NULL;
+            char context_fingerprint[72];
+            if (environment == NULL ||
+                tm_context_capture_linux(&execution_context) < 0 ||
+                tm_context_fingerprint(environment, execution_context,
+                                      context_fingerprint) < 0) {
+                fprintf(stderr,
+                    "tm: reuse rejected: Linux execution context could not be fingerprinted\n");
+            } else {
+                fprintf(stderr, "tm: context fingerprint: %s (diagnostic only; reuse remains disabled)\n",
+                        context_fingerprint);
+            }
+            tm_json_free(execution_context);
+            tm_json_free(environment);
         }
     }
     if (tm_repo_root(options.root_path, &repository_root) < 0) {

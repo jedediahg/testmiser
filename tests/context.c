@@ -25,6 +25,7 @@ int main(void)
         "{\"kernel\":\"6.8\",\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"backend\":\"bwrap-v1\"}");
     char first[72], second[72], changed[72];
     int status = 1;
+    struct tm_json_value *captured = NULL;
 
     if (environment == NULL || reordered == NULL || empty == NULL ||
         bad_env == NULL || bad_context == NULL || context == NULL ||
@@ -35,7 +36,13 @@ int main(void)
         tm_context_fingerprint(empty, context, changed) < 0 ||
         strcmp(first, changed) == 0 ||
         tm_context_fingerprint(bad_env, context, changed) == 0 ||
-        tm_context_fingerprint(environment, bad_context, changed) == 0) {
+        tm_context_fingerprint(environment, bad_context, changed) == 0 ||
+        tm_context_capture_linux(&captured) < 0 ||
+        tm_json_typeof(captured) != TM_JSON_OBJECT ||
+        tm_json_object_get(captured, "kernel_release") == NULL ||
+        tm_json_object_get(captured, "cpu_flags") == NULL ||
+        tm_json_object_get(captured, "resource_limits") == NULL ||
+        tm_json_object_get(captured, "supplementary_groups") == NULL) {
         fprintf(stderr, "context fingerprint vector or validation failed\n");
         goto done;
     }
@@ -47,5 +54,6 @@ done:
     tm_json_free(bad_env);
     tm_json_free(bad_context);
     tm_json_free(context);
+    tm_json_free(captured);
     return status;
 }

@@ -161,6 +161,8 @@ test "$status" -eq 17
 grep -q 'portable backend is not enforced' "$tmp_dir/profile-approved.err"
 grep -q '^tm: command fingerprint: sha256:[0-9a-f]\{64\}$' \
     "$tmp_dir/profile-approved.err"
+grep -q '^tm: context fingerprint: sha256:[0-9a-f]\{64\} (diagnostic only; reuse remains disabled)$' \
+    "$tmp_dir/profile-approved.err"
 "$tm_bin" --profile "$tmp_dir/profile.json" \
     --trust-policy "$tmp_dir/policy.json" --input tests/fixture.json \
     -- /bin/true
