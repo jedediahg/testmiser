@@ -8,6 +8,18 @@
 #define TM_OBSERVER_MAX_CANDIDATES 512
 #define TM_OBSERVER_PATH_SIZE 1024
 
+enum tm_observer_ineligibility {
+    TM_OBSERVER_INELIGIBLE_NETWORK = 1U << 0,
+    TM_OBSERVER_INELIGIBLE_MUTATION = 1U << 1,
+    TM_OBSERVER_INELIGIBLE_METADATA = 1U << 2,
+    TM_OBSERVER_INELIGIBLE_DIRECTORY = 1U << 3,
+    TM_OBSERVER_INELIGIBLE_DESCRIPTOR = 1U << 4,
+    TM_OBSERVER_INELIGIBLE_UNSUPPORTED = 1U << 5,
+    TM_OBSERVER_INELIGIBLE_OBSERVER_FAILURE = 1U << 6,
+    TM_OBSERVER_INELIGIBLE_DESCENDANT = 1U << 7,
+    TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT = 1U << 8
+};
+
 struct tm_observer_candidate {
     char kind[32];
     char path[TM_OBSERVER_PATH_SIZE];
@@ -17,7 +29,13 @@ struct tm_observer_candidate {
 struct tm_observer_report {
     size_t candidate_count;
     struct tm_observer_candidate candidates[TM_OBSERVER_MAX_CANDIDATES];
+    unsigned int ineligibility_reasons;
+    int observation_complete;
 };
+
+/* True only when syscall observation completed and found no unsupported or
+ * nondeterministic effects. This is necessary, but not sufficient, for reuse. */
+int tm_observer_report_allows_reuse(const struct tm_observer_report *report);
 
 int tm_observe_and_run(char **command, int explain, char *const environment[],
                        const char *repository_root,

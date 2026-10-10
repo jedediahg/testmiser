@@ -390,6 +390,8 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         2>"$tmp_dir/external-candidate.err"
     grep -q 'observed input candidate: .*: <external>' \
         "$tmp_dir/external-candidate.err"
+    grep -q 'observer eligibility: blocked' \
+        "$tmp_dir/external-candidate.err"
     if grep -Fq '/etc/hostname' "$tmp_dir/external-candidate.err"; then
         printf '%s\n' 'explain output leaked an external host path' >&2
         exit 1
@@ -404,6 +406,7 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
     "$tm_bin" --explain -- "$network_syscall_probe" \
         2>"$tmp_dir/network-syscalls.err"
     grep -q 'socket or network operation observed' "$tmp_dir/network-syscalls.err"
+    grep -q 'observer eligibility: blocked' "$tmp_dir/network-syscalls.err"
     python_bin=$(command -v python3 || true)
     if [ -n "$python_bin" ]; then
         "$tm_bin" --explain -- "$python_bin" -c \

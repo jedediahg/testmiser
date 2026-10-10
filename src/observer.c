@@ -109,6 +109,8 @@ struct observer_state {
     int saw_directory;
     int saw_external_descriptor;
     int saw_observer_failure;
+    int saw_outliving_descendant;
+    int saw_external_path;
     size_t candidate_count;
     size_t unsupported_count;
     long unsupported_syscalls[TM_MAX_UNSUPPORTED];
@@ -468,6 +470,7 @@ static void candidate_path(const char *kind, const char *path)
     int formatted;
 
     relative_path = tm_repo_relative_path(observer.repository_root, path);
+    if (relative_path == NULL) observer.saw_external_path = 1;
     display_path = relative_path == NULL ? "<external>" : relative_path;
     formatted = snprintf(candidate, sizeof(candidate), "%s: %s", kind,
                          display_path);
@@ -852,6 +855,9 @@ static void report_reasons(void)
     if (observer.saw_external_descriptor) {
         fprintf(stderr, "tm: reuse rejected: inherited or untracked descriptor provenance is not modeled\n");
     }
+    if (observer.saw_external_path) {
+        fprintf(stderr, "tm: reuse rejected: external filesystem path is outside the repository input model\n");
+    }
     if (observer.saw_unknown_syscall) {
         size_t unsupported_index;
         fprintf(stderr, "tm: reuse rejected: unsupported syscall(s):");
@@ -949,6 +955,7 @@ static void detach_descendants(void)
     if (observer.live_tasks == 0) {
         return;
     }
+    observer.saw_outliving_descendant = 1;
     fprintf(stderr, "tm: reuse rejected: descendant outlived the command\n");
     for (index = 0; index < TM_MAX_TASKS; index++) {
         if (tasks[index].active && tasks[index].pid != observer.direct_pid) {
@@ -1129,10 +1136,32 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     if (!observer.direct_finished) {
         return collect_traced_child(child);
     }
+    copy_candidate_report(report);
     if (explain) {
         report_reasons();
     }
-    copy_candidate_report(report);
+    if (report != NULL) {
+        if (observer.saw_network)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_NETWORK;
+        if (observer.saw_mutation)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_MUTATION;
+        if (observer.saw_metadata)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_METADATA;
+        if (observer.saw_directory)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_DIRECTORY;
+        if (observer.saw_external_descriptor)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_DESCRIPTOR;
+        if (observer.saw_unknown_syscall)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_UNSUPPORTED;
+        if (observer.saw_observer_failure)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_OBSERVER_FAILURE;
+        if (observer.saw_outliving_descendant)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_DESCENDANT;
+        if (observer.saw_external_path)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT;
+        report->observation_complete = !observer.saw_observer_failure &&
+            !observer.saw_outliving_descendant;
+    }
     if (WIFEXITED(observer.direct_status)) {
         return WEXITSTATUS(observer.direct_status);
     }
