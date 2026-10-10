@@ -18,7 +18,7 @@ int main(void)
     char git_path[256] = {0}, nested_path[256] = {0};
     char worktree_path[256] = {0}, worktree_subdir[256] = {0};
     char fallback_child[256] = {0};
-    char original[4096];
+    char original[4096] = {0};
     char *resolved = NULL, *relative = NULL;
     int marker_fd = -1, status = 1, stage = 1;
 
@@ -85,7 +85,11 @@ done:
     if (marker_fd >= 0) close(marker_fd);
     free(relative);
     free(resolved);
-    (void)chdir(original);
+    if (original[0] != '\0' && chdir(original) < 0) {
+        fprintf(stderr, "could not restore test working directory: %s\n",
+                strerror(errno));
+        status = 1;
+    }
     if (worktree_path[0] != '\0') unlink(worktree_path);
     if (worktree_subdir[0] != '\0') rmdir(worktree_subdir);
     if (fallback_child[0] != '\0') rmdir(fallback_child);
