@@ -1376,6 +1376,32 @@ int tm_result_find_matching_snapshot_inputs(
         record_length, record_id);
 }
 
+int tm_result_find_matching_snapshot_inputs_and_restore(
+    int store_root_fd, int repository_root_fd, int blob_store_root_fd,
+    const char *command_fingerprint, const char *profile_digest,
+    const char *runtime_digest, const char *context_digest,
+    const struct tm_trust_policy *trust_policy,
+    const char *const *snapshot_root_paths,
+    const int *snapshot_root_descriptors, size_t snapshot_root_count,
+    const char *const *output_roots, size_t output_root_count,
+    unsigned char **record, size_t *record_length, char record_id[72])
+{
+    const char *const empty_roots[] = {NULL};
+    if (snapshot_root_count > 10000 ||
+        (snapshot_root_count > 0 &&
+         (snapshot_root_paths == NULL || snapshot_root_descriptors == NULL)) ||
+        (output_root_count > 0 && output_roots == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
+    return result_find_matching_inputs(store_root_fd, repository_root_fd,
+        snapshot_root_paths == NULL ? empty_roots : snapshot_root_paths,
+        snapshot_root_descriptors, snapshot_root_count, command_fingerprint,
+        profile_digest, runtime_digest, context_digest, trust_policy,
+        blob_store_root_fd, output_roots, output_root_count, record,
+        record_length, record_id);
+}
+
 int tm_result_find_matching_inputs_and_restore(
     int store_root_fd, int repository_root_fd, int blob_store_root_fd,
     const char *command_fingerprint, const char *profile_digest,

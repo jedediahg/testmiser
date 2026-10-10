@@ -381,6 +381,8 @@ static int find_profile_cache_hit(int repository_fd,
                                   const char *command_fingerprint,
                                   const char *context_fingerprint,
                                   const struct tm_trust_policy *trust_policy,
+                                  const char *const *output_roots,
+                                  size_t output_root_count,
                                   char record_id[72])
 {
     struct tm_snapshot *snapshot = NULL;
@@ -411,10 +413,12 @@ static int find_profile_cache_hit(int repository_fd,
     preflight = tm_backend_preflight(profile, runtime_root, repository_root,
                                      snapshot);
     if (preflight != 1) goto done;
-    found = tm_result_find_matching_snapshot_inputs(repository_fd,
+    found = tm_result_find_matching_snapshot_inputs_and_restore(repository_fd,
+        repository_fd, repository_fd,
         command_fingerprint, tm_profile_digest(profile),
         tm_profile_runtime_digest(profile), context_fingerprint,
         trust_policy, root_paths, root_descriptors, root_count,
+        output_roots, output_root_count,
         &record, &record_length, record_id);
     if (found == 0) found = 0;
     else found = 1;
@@ -712,13 +716,14 @@ int main(int argc, char **argv)
     if (!options.force && profile != NULL &&
         tm_profile_is_deterministic(profile) &&
         strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
-        options.output_count == 0 && options.input_count == 0 &&
+        options.input_count == 0 &&
         reusable_context && command_fingerprint[0] != '\0' &&
         repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
         char candidate_id[72];
         if (find_profile_cache_hit(repository_fd, profile, runtime_root,
                 repository_root, command_fingerprint, context_fingerprint,
-                trust_policy, candidate_id) == 0) {
+                trust_policy, options.output_paths, options.output_count,
+                candidate_id) == 0) {
             cache_hit = 1;
             result = 0;
             if (options.explain)

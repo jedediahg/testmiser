@@ -305,10 +305,12 @@ static int test_output_lookup(
     };
     struct tm_verification_identity output_identity = *identity;
     struct tm_output_manifest manifest = {0};
+    struct tm_snapshot *input_snapshot = NULL;
     unsigned char *record = NULL, *found = NULL;
     size_t record_length = 0, found_length = 0;
     char blob_digest[72] = {0};
     int rootfd = -1, clonefd = -1, clone_testsfd = -1, clone_distfd = -1;
+    int snapshot_rootfd = -1;
     int sharedfd = -1, testsfd = -1, distfd = -1, filefd = -1;
     int result = -1;
     if (tm_command_fingerprint(&command_identity, command_fingerprint) < 0)
@@ -358,6 +360,23 @@ static int test_output_lookup(
             trust, roots, 1, &found, &found_length, record_id) != 0 ||
         found_length != record_length || memcmp(found, record, record_length) != 0)
         goto done;
+    {
+        const char *snapshot_paths[] = {"tests"};
+        int snapshot_roots[1];
+        if (tm_snapshot_create(clonefd, snapshot_paths, 1,
+                &input_snapshot) < 0 ||
+            (snapshot_rootfd = tm_snapshot_open_root_readable(
+                input_snapshot, 0)) < 0) goto done;
+        snapshot_roots[0] = snapshot_rootfd;
+        if (tm_result_find_matching_snapshot_inputs_and_restore(sharedfd,
+                clonefd, sharedfd, command_fingerprint,
+                output_identity.profile_digest, output_identity.runtime_digest,
+                output_identity.context_digest, trust, snapshot_paths,
+                snapshot_roots, 1, roots, 1, &found, &found_length,
+                record_id) != 0 || found_length != record_length ||
+            memcmp(found, record, record_length) != 0) goto done;
+        free(found); found = NULL;
+    }
     clone_distfd = openat(clonefd, "dist", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     filefd = clone_distfd < 0 ? -1 :
         openat(clone_distfd, "report.txt", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -395,6 +414,8 @@ static int test_output_lookup(
     result = 0;
 done:
     if (filefd >= 0) close(filefd);
+    if (snapshot_rootfd >= 0) close(snapshot_rootfd);
+    tm_snapshot_free(input_snapshot);
     if (rootfd >= 0) close(rootfd);
     if (clonefd >= 0) close(clonefd);
     if (clone_testsfd >= 0) close(clone_testsfd);
