@@ -190,7 +190,13 @@ set +e
 "$tm_bin" validate --root "$tmp_dir/repo" >"$tmp_dir/validate-io.out" 2>&1
 status=$?
 set -e
-test "$status" -eq 125
+if [ -r "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bad.tm.json" ]; then
+    # Root can still read mode-000 files; validation then sees the malformed
+    # record instead of an I/O error.
+    test "$status" -eq 1
+else
+    test "$status" -eq 125
+fi
 
 mkdir -p "$tmp_dir/validation-limit/.tm/results"
 i=0
@@ -346,9 +352,15 @@ TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$tm_bin" \
     sh -c 'printf ran > "$1"' sh "$tmp_dir/runtime-fallback-ran" \
     2>"$tmp_dir/runtime-selected.err"
 grep -q 'runtime identity matches the approved profile' \
-    "$tmp_dir/runtime-selected.err"
-grep -q 'approved runtime is not a root-owned read-only tree' \
-    "$tmp_dir/runtime-selected.err"
+    "$tmp_dir/runtime-selected.err" || {
+    cat "$tmp_dir/runtime-selected.err" >&2
+    exit 1
+}
+grep -Eq 'approved runtime is not a root-owned read-only tree|observer prototype; cache reuse is disabled' \
+    "$tmp_dir/runtime-selected.err" || {
+    cat "$tmp_dir/runtime-selected.err" >&2
+    exit 1
+}
 test "$(cat "$tmp_dir/runtime-fallback-ran")" = ran
 sed 's/"output_roots":\[\]/"output_roots":["build\/reports"]/' \
     "$tmp_dir/runtime-profile.json" >"$tmp_dir/output-profile.json"

@@ -164,6 +164,12 @@ static int compare_names(const void *left, const void *right)
     return strcmp(*(char *const *)left, *(char *const *)right);
 }
 
+/* GCC 12's analyzer loses ownership when read_names() transfers its sorted
+ * allocation through output parameters to callers that free every element. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
+#endif
 static int read_names(int directory_fd, char ***names_out, size_t *count_out)
 {
     struct name_node {
@@ -240,6 +246,9 @@ static void free_names(char **names, size_t count)
     while (count > 0) free(names[--count]);
     free(names);
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static int append_path(const char *parent, const char *name, char **path)
 {
@@ -617,6 +626,11 @@ static int copy_root(int source_fd, int destination_directory,
     return result;
 }
 
+/* GCC 12 also misses free_names() ownership on the recursive error path. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
+#endif
 static int remove_tree(int directory_fd)
 {
     char **names = NULL;
@@ -648,6 +662,9 @@ fail:
     }
     return -1;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 int tm_snapshot_create(int repository_fd, const char *const *paths,
                        size_t path_count, struct tm_snapshot **output)
