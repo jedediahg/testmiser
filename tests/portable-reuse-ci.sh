@@ -25,10 +25,6 @@ if ! bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net \
     --unshare-uts --unshare-cgroup --uid 0 --gid 0 --ro-bind / / \
     -- /usr/bin/true; then
     message='Bubblewrap profile namespaces are unavailable; signed cross-worktree acceptance did not run.'
-    if [[ "${TM_ALLOW_BACKEND_UNAVAILABLE:-0}" == 1 ]]; then
-        printf '::warning::%s\n' "$message"
-        exit 0
-    fi
     printf '%s\n' "$message" >&2
     exit 1
 fi

@@ -52,8 +52,15 @@ same gate on a shell runner tagged `linux-bwrap`. Since these jobs install
 packages with `sudo` and execute repository code, any self-hosted runner must
 be isolated and disposable, without persistent credentials or shared writable
 state. The GitLab worker also needs passwordless `sudo` and Bubblewrap
-user/network namespace support. For local diagnosis only,
-`TM_ALLOW_BACKEND_UNAVAILABLE=1` lets the helper warn and exit successfully;
-never set it on an acceptance CI job. The private key is generated inside the
-acceptance job and used only for the producer; the consumer receives only the
-profile and public trust policy.
+user/network namespace support. The CI entrypoint always fails when those
+namespaces are unavailable; a host variable cannot downgrade the release gate
+to a warning. For local diagnosis, run the Bubblewrap preflight directly:
+
+```sh
+bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net \
+  --unshare-uts --unshare-cgroup --uid 0 --gid 0 --ro-bind / / \
+  -- /usr/bin/true
+```
+
+The private key is generated inside the acceptance job and used only for the
+producer; the consumer receives only the profile and public trust policy.
