@@ -135,6 +135,17 @@ int main(void)
     tm_trust_policy_free(policy);
     policy = NULL;
     if (write_policy(path,
+          "{\"schema_version\":1,\"repositories\":[{"
+          "\"repository_id\":\"Bad Repo\",\"minimum_trust_epoch\":1,"
+          "\"allowed_semantics\":[2],\"profiles\":[],\"keys\":[],"
+          "\"revoked_key_ids\":[]}]}") < 0 ||
+        tm_trust_policy_load(path, &policy) == 0) {
+        fprintf(stderr, "trust policy accepted a noncanonical repository ID\n");
+        goto done;
+    }
+    tm_trust_policy_free(policy);
+    policy = NULL;
+    if (write_policy(path,
           "{\"schema_version\":1,\"schema_version\":1,\"repositories\":[]}") == 0 &&
         tm_trust_policy_load(path, &policy) == 0) {
         fprintf(stderr, "trust policy accepted duplicate JSON keys\n");

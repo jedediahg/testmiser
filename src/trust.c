@@ -52,6 +52,23 @@ static int valid_digest(const char *digest)
     return 1;
 }
 
+static int valid_repository_id(const char *value)
+{
+    size_t index;
+    size_t length;
+
+    if (value == NULL || (length = strlen(value)) == 0 || length > 128 ||
+        !((value[0] >= 'a' && value[0] <= 'z') ||
+          (value[0] >= '0' && value[0] <= '9'))) return 0;
+    for (index = 1; index < length; index++) {
+        if (!((value[index] >= 'a' && value[index] <= 'z') ||
+              (value[index] >= '0' && value[index] <= '9') ||
+              value[index] == '.' || value[index] == '_' ||
+              value[index] == '-')) return 0;
+    }
+    return 1;
+}
+
 static int unique_string_array(const struct tm_json_value *array,
                                int require_digest)
 {
@@ -169,7 +186,7 @@ static int validate_repositories(const struct tm_json_value *repositories)
         profiles = field(repository, "profiles");
         keys = field(repository, "keys");
         revoked = field(repository, "revoked_key_ids");
-        if (repository_id == NULL || repository_id[0] == '\0' ||
+        if (!valid_repository_id(repository_id) ||
             tm_json_typeof(minimum) != TM_JSON_INTEGER ||
             tm_json_typeof(semantics) != TM_JSON_ARRAY ||
             tm_json_size(semantics) == 0 ||
