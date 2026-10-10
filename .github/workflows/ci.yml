@@ -36,7 +36,7 @@ jobs:
             echo "Result-only change: validating trusted evidence without running unrelated tests."
           else
             TM_REQUIRE_PTRACE=1 make clean test
-            TM_REQUIRE_PTRACE=1 make clean test CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
+            TM_REQUIRE_PTRACE=1 make analyze
           fi
 
           if [[ "$has_results" == true ]]; then

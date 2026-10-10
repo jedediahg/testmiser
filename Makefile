@@ -1,6 +1,7 @@
 CC ?= cc
 CPPFLAGS ?= -Iinclude
 CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Werror -O2
+ANALYZER_CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer
 LDFLAGS ?=
 LDLIBS ?= -lcrypto
 
@@ -9,9 +10,13 @@ TARGET := $(BUILD_DIR)/tm
 SOURCES := src/main.c src/backend.c src/observer.c src/observer_report.c src/observed_inputs.c src/digest.c src/attestation.c src/key.c src/identity.c src/context.c src/input.c src/verification.c src/json.c src/result.c src/outputs.c src/trust.c src/validate.c src/profile.c src/repo.c src/clean.c src/lock.c src/local_store.c src/runtime.c src/snapshot.c src/attempt.c
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
-.PHONY: all test clean
+.PHONY: all analyze test clean
 
 all: $(TARGET)
+
+analyze:
+	$(MAKE) BUILD_DIR=$(BUILD_DIR)/analyzer clean
+	$(MAKE) BUILD_DIR=$(BUILD_DIR)/analyzer all CFLAGS='$(ANALYZER_CFLAGS)'
 
 test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_DIR)/metadata_probe $(BUILD_DIR)/descriptor_dup_probe $(BUILD_DIR)/clone3_probe $(BUILD_DIR)/cwd_probe $(BUILD_DIR)/path_error_probe $(BUILD_DIR)/network_syscall_probe $(BUILD_DIR)/execveat_probe $(BUILD_DIR)/getcwd_probe $(BUILD_DIR)/readlink_probe $(BUILD_DIR)/context_probe $(BUILD_DIR)/failing_read_probe $(BUILD_DIR)/mprotect_probe $(BUILD_DIR)/output_probe $(BUILD_DIR)/test_digest $(BUILD_DIR)/test_attestation $(BUILD_DIR)/test_identity $(BUILD_DIR)/test_context $(BUILD_DIR)/test_input $(BUILD_DIR)/test_verification $(BUILD_DIR)/test_json $(BUILD_DIR)/test_result $(BUILD_DIR)/test_outputs $(BUILD_DIR)/test_trust $(BUILD_DIR)/test_profile $(BUILD_DIR)/test_repo $(BUILD_DIR)/test_lock $(BUILD_DIR)/test_local_store $(BUILD_DIR)/test_runtime $(BUILD_DIR)/test_backend $(BUILD_DIR)/test_observer_report $(BUILD_DIR)/test_observer_start $(BUILD_DIR)/test_observed_inputs $(BUILD_DIR)/test_key $(BUILD_DIR)/test_attempt $(BUILD_DIR)/portable-reuse-probe
 	bash tests/tm_result_diff.sh

@@ -17,8 +17,12 @@ Requirements: a C11 compiler and GNU Make on Linux.
 ```sh
 make          # build build/tm
 make test     # run command-line integration checks
+make analyze  # compile the application with GCC's static analyzer
 make clean    # remove generated build files
 ```
+
+The analyzer build is isolated under `build/analyzer/`, so it does not replace
+the tested optimized binary or rebuild test probes with analyzer flags.
 
 Build requires a C11 compiler, GNU Make, and OpenSSL development
 headers/libraries (EVP, `-lcrypto`).
