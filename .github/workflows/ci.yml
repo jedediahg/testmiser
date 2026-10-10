@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       results_only: ${{ steps.verify.outputs.results_only }}
+      tests_required: ${{ steps.verify.outputs.tests_required }}
     env:
       TM_REQUIRE_PTRACE: "1"
     steps:
@@ -28,6 +29,15 @@ jobs:
         run: |
           results_only=false
           has_results=false
+          tests_required=true
+          if [[ -n "$TM_DIFF_BASE" ]] && \
+            git cat-file -e "$TM_DIFF_BASE^{commit}" 2>/dev/null; then
+            if git diff --quiet "$TM_DIFF_BASE" "$TM_DIFF_HEAD" -- \
+              src include tests scripts docs/spec Makefile \
+              .gitlab-ci.yml .github/workflows/ci.yml; then
+              tests_required=false
+            fi
+          fi
           if bash scripts/tm-result-diff.sh any "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
             has_results=true
             if bash scripts/tm-result-diff.sh only "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
@@ -35,12 +45,15 @@ jobs:
             fi
           fi
           echo "results_only=$results_only" >> "$GITHUB_OUTPUT"
+          echo "tests_required=$tests_required" >> "$GITHUB_OUTPUT"
 
           if [[ "$results_only" == true ]]; then
             echo "Result-only change: validating trusted evidence without running unrelated tests."
-          else
+          elif [[ "$tests_required" == true ]]; then
             TM_REQUIRE_PTRACE=1 make clean test
             TM_REQUIRE_PTRACE=1 make analyze
+          else
+            echo "Documentation or unrelated change: skipping source tests and analysis."
           fi
 
           if [[ "$has_results" == true ]]; then
@@ -49,7 +62,7 @@ jobs:
 
   portable-acceptance:
     needs: test
-    if: needs.test.outputs.results_only != 'true'
+    if: needs.test.outputs.tests_required == 'true'
     runs-on: ${{ vars.TM_PORTABLE_ACCEPTANCE_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4

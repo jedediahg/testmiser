@@ -18,6 +18,18 @@ stages:
 test:
   stage: test
   interruptible: true
+  rules:
+    - changes:
+        - .tm/results/**/*
+        - .tm/blobs/**/*
+        - src/**/*
+        - include/**/*
+        - tests/**/*
+        - scripts/**/*
+        - docs/spec/**/*
+        - Makefile
+        - .gitlab-ci.yml
+        - .github/workflows/ci.yml
   before_script:
     - apt-get update
     - apt-get install --yes --no-install-recommends build-essential libssl-dev ca-certificates git
