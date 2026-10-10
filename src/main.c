@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "tm/input.h"
+#include "tm/outputs.h"
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/repo.h"
@@ -15,6 +16,7 @@
 #include "tm/validate.h"
 
 #define TM_MAX_EXPLICIT_INPUTS 128
+#define TM_MAX_EXPLICIT_OUTPUTS 128
 
 struct options {
     int force;
@@ -24,6 +26,8 @@ struct options {
     const char *root_path;
     const char *input_paths[TM_MAX_EXPLICIT_INPUTS];
     size_t input_count;
+    const char *output_paths[TM_MAX_EXPLICIT_OUTPUTS];
+    size_t output_count;
     int command_index;
 };
 
@@ -58,7 +62,7 @@ static void free_environment(char **environment)
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tm [--root DIR] [--input PATH ...] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
+    fprintf(stream, "Usage: tm [--root DIR] [--input PATH ...] [--output PATH ...] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
@@ -68,6 +72,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
     fprintf(stream, "  --root DIR           set repository root (default: nearest .git)\n");
     fprintf(stream, "  --input PATH         declare a repository-relative input file\n");
+    fprintf(stream, "  --output PATH        declare a repository-relative output root\n");
     fprintf(stream, "  --help     show this help\n");
 }
 
@@ -100,6 +105,7 @@ static int parse_options(int argc, char **argv, struct options *options)
     options->trust_policy_path = NULL;
     options->root_path = NULL;
     options->input_count = 0;
+    options->output_count = 0;
     options->command_index = -1;
 
     for (index = 1; index < argc; index++) {
@@ -131,6 +137,22 @@ static int parse_options(int argc, char **argv, struct options *options)
                     break;
             if (input_index == options->input_count)
                 options->input_paths[options->input_count++] = input_path;
+        } else if (strcmp(argv[index], "--output") == 0) {
+            const char *output_path;
+            size_t output_index;
+            if (index + 1 >= argc ||
+                strncmp(argv[index + 1], "--", 2) == 0 ||
+                options->output_count == TM_MAX_EXPLICIT_OUTPUTS) {
+                fprintf(stderr, "tm: missing or too many --output values\n");
+                return -1;
+            }
+            output_path = argv[++index];
+            for (output_index = 0; output_index < options->output_count;
+                 output_index++)
+                if (strcmp(options->output_paths[output_index], output_path) == 0)
+                    break;
+            if (output_index == options->output_count)
+                options->output_paths[options->output_count++] = output_path;
         } else if (strcmp(argv[index], "--profile") == 0 ||
                    strcmp(argv[index], "--trust-policy") == 0 ||
                    strcmp(argv[index], "--root") == 0) {
@@ -159,6 +181,11 @@ static int parse_options(int argc, char **argv, struct options *options)
     if (options->command_index < 0 || options->command_index >= argc) {
         fprintf(stderr, "tm: expected -- followed by a command\n");
         print_usage(stderr);
+        return -1;
+    }
+    if (tm_output_roots_validate(options->output_paths,
+                                 options->output_count) < 0) {
+        fprintf(stderr, "tm: invalid or overlapping --output roots\n");
         return -1;
     }
 
@@ -255,6 +282,8 @@ int main(int argc, char **argv)
     }
     if (options.force && options.explain)
         fprintf(stderr, "tm: force requested; command will execute\n");
+    if (options.explain && options.output_count > 0 && profile == NULL)
+        fprintf(stderr, "tm: reuse rejected: --output requires an approved enforced profile\n");
     result = tm_observe_and_run(&argv[options.command_index], options.explain,
                                 child_environment, repository_root);
     for (index = 0; index < explicit_input_count; index++) {

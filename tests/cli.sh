@@ -28,6 +28,26 @@ grep -q 'declared input changed or became unsafe: tests/explicit.txt' \
     sh -c 'exit 0' 2>"$tmp_dir/input-missing.err"
 grep -q 'declared input could not be captured: tests/missing.txt' \
     "$tmp_dir/input-missing.err"
+"$tm_bin" --explain --root "$tmp_dir/repo" --output build/reports -- \
+    /bin/true 2>"$tmp_dir/output-declaration.err"
+grep -q -- '--output requires an approved enforced profile' \
+    "$tmp_dir/output-declaration.err"
+set +e
+"$tm_bin" --root "$tmp_dir/repo" --output build --output build/reports -- \
+    sh -c 'touch "$1"' sh "$tmp_dir/invalid-output-child" \
+    >"$tmp_dir/overlapping-output.err" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+test ! -e "$tmp_dir/invalid-output-child"
+set +e
+"$tm_bin" --root "$tmp_dir/repo" --output ../outside -- \
+    sh -c 'touch "$1"' sh "$tmp_dir/traversal-output-child" \
+    >"$tmp_dir/traversal-output.err" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+test ! -e "$tmp_dir/traversal-output-child"
 "$tm_bin" validate --root "$tmp_dir/repo" >"$tmp_dir/validate-empty.out"
 mkdir -p "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 printf '{}\n' >"$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bad.tm.json"

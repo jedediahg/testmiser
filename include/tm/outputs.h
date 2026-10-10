@@ -19,6 +19,9 @@ struct tm_output_manifest {
     size_t count;
 };
 
+/* Validate canonical, non-overlapping repository-relative output roots. */
+int tm_output_roots_validate(const char *const *roots, size_t root_count);
+
 /* Initialize manifest to {0}; capture is stable only when the caller supplies
  * an isolated output view. Blobs are durably published under
  * .tm/blobs/sha256/<hex-digest>. Published orphan blobs are harmless. */

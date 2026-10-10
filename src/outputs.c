@@ -631,24 +631,37 @@ static int roots_overlap(const char *left, const char *right)
            (right[length] == '\0' || right[length] == '/');
 }
 
+int tm_output_roots_validate(const char *const *roots, size_t root_count)
+{
+    size_t i, j;
+    if ((root_count > 0 && roots == NULL) || root_count > OUTPUT_ROOT_LIMIT) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (i = 0; i < root_count; i++) {
+        if (!valid_relative_path(roots[i])) { errno = EINVAL; return -1; }
+        for (j = 0; j < i; j++)
+            if (roots_overlap(roots[i], roots[j]) ||
+                roots_overlap(roots[j], roots[i])) {
+                errno = EINVAL;
+                return -1;
+            }
+    }
+    return 0;
+}
+
 int tm_outputs_capture(int repository_root_fd, const char *const *roots,
                        size_t root_count, struct tm_output_manifest *manifest)
 {
     int blob_fd = -1, result = -1, saved;
-    size_t i, j;
+    size_t i;
     if (repository_root_fd < 0 || manifest == NULL ||
         (root_count > 0 && roots == NULL) || root_count > OUTPUT_ROOT_LIMIT) {
         errno = EINVAL; return -1;
     }
     tm_output_manifest_clear(manifest);
     if (root_count == 0) return 0;
-    for (i = 0; i < root_count; i++) {
-        if (!valid_relative_path(roots[i])) { errno = EINVAL; goto done; }
-        for (j = 0; j < i; j++)
-            if (roots_overlap(roots[i], roots[j]) || roots_overlap(roots[j], roots[i])) {
-                errno = EINVAL; goto done;
-            }
-    }
+    if (tm_output_roots_validate(roots, root_count) < 0) goto done;
     blob_fd = blob_directory(repository_root_fd);
     if (blob_fd < 0) goto done;
     for (i = 0; i < root_count; i++) {
