@@ -14,7 +14,8 @@
 #include "tm/trust.h"
 
 static int test_store(const unsigned char *record, size_t length,
-                      const char *expected_id)
+                      const char *expected_id,
+                      const struct tm_trust_policy *trust)
 {
     char root[] = "/tmp/tm-result-store-XXXXXX";
     char outside[] = "/tmp/tm-result-outside-XXXXXX";
@@ -23,17 +24,42 @@ static int test_store(const unsigned char *record, size_t length,
     char record_id[72];
     struct stat st;
     unsigned char *stored = NULL;
+    unsigned char *found = NULL;
     size_t used = 0;
+    size_t found_length = 0;
     int rootfd = -1, tmfd = -1, resultsfd = -1, commandfd = -1;
     int verifyfd = -1, fd = -1, result = -1;
     if (mkdtemp(root) == NULL || mkdtemp(outside) == NULL) goto done;
     rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (rootfd < 0 || tm_result_inspect(record, length, &summary, record_id) < 0 ||
         strcmp(record_id, expected_id) != 0 ||
+        mkdirat(rootfd, "tests", 0700) < 0) goto done;
+    fd = openat(rootfd, "tests/a", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                0600);
+    if (fd < 0) goto done;
+    { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+    if (
         tm_result_store(rootfd, record, length, record_id) != 0 ||
         tm_result_store(rootfd, record, length, record_id) != 0 ||
         snprintf(filename, sizeof(filename), "%s.tm.json", record_id + 7) >=
             (int)sizeof(filename)) goto done;
+    if (tm_result_find(rootfd,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            summary.verification_fingerprint, trust, &found, &found_length,
+            record_id) != 0 || found_length != length ||
+        memcmp(found, record, length) != 0 || strcmp(record_id, expected_id) != 0)
+        goto done;
+    free(found); found = NULL;
+    fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
+    if (fd < 0 || write(fd, "changed", 7) != 7) goto done;
+    { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+    if (tm_result_find(rootfd,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            summary.verification_fingerprint, trust, &found, &found_length,
+            record_id) != 1 || found != NULL) goto done;
+    fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
+    if (fd < 0) goto done;
+    { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
     tmfd = openat(rootfd, ".tm", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (tmfd < 0) goto done;
     resultsfd = openat(tmfd, "results", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
@@ -86,6 +112,7 @@ static int test_store(const unsigned char *record, size_t length,
     result = 0;
 done:
     if (fd >= 0) close(fd);
+    free(found);
     if (verifyfd >= 0) close(verifyfd);
     if (commandfd >= 0) close(commandfd);
     if (resultsfd >= 0) close(resultsfd);
@@ -104,6 +131,8 @@ done:
     }
     snprintf(path, sizeof(path), "%s/.tm", root);
     rmdir(path);
+    snprintf(path, sizeof(path), "%s/tests/a", root); unlink(path);
+    snprintf(path, sizeof(path), "%s/tests", root); rmdir(path);
     rmdir(root); rmdir(outside);
     free(stored);
     tm_result_summary_clear(&summary);
@@ -201,10 +230,6 @@ int main(void)
         goto fail;
     }
     tm_result_summary_clear(&summary);
-    if (test_store(record, record_length, expected_id) != 0) {
-        fprintf(stderr, "portable result publication checks failed\n");
-        goto fail;
-    }
     {
         const struct tm_input_observation ordered_inputs[] = {
             {"tests/a", TM_INPUT_FILE,
@@ -285,6 +310,10 @@ int main(void)
             "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             verified_id) == 0) {
         fprintf(stderr, "trusted verifier ignored current fingerprint\n");
+        goto fail;
+    }
+    if (test_store(record, record_length, expected_id, trust) != 0) {
+        fprintf(stderr, "portable result storage/lookup checks failed\n");
         goto fail;
     }
 

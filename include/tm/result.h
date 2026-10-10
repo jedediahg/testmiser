@@ -42,6 +42,14 @@ int tm_result_create(const struct tm_verification_identity *identity,
 int tm_result_store(int repository_root_fd, const unsigned char *record,
                     size_t record_length, char record_id[72]);
 
+/* Find a trusted result for exact command and verification fingerprints.
+ * Return 0 with owned record bytes on hit, 1 on miss, or -1 on error. */
+int tm_result_find(int repository_root_fd, const char *command_fingerprint,
+                   const char *verification_fingerprint,
+                   const struct tm_trust_policy *trust_policy,
+                   unsigned char **record, size_t *record_length,
+                   char record_id[72]);
+
 /* Authenticate and scope-check an output-free record using an
  * operator-approved key/policy. Nonempty outputs are rejected. */
 int tm_result_verify(const unsigned char *record, size_t record_length,

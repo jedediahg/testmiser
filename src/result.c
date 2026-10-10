@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -800,6 +801,157 @@ int tm_result_verify_inputs_match(
 done:
     tm_result_summary_clear(&summary);
     return status;
+}
+
+static int read_candidate(int directory, const char *name,
+                          unsigned char **record, size_t *record_length)
+{
+    struct stat before, after;
+    unsigned char *bytes;
+    size_t used = 0;
+    int fd = openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    if (fstat(fd, &before) < 0 || !S_ISREG(before.st_mode) ||
+        before.st_size < 2 || before.st_size > 16 * 1024 * 1024) {
+        close(fd);
+        errno = EINVAL;
+        return -1;
+    }
+    bytes = malloc((size_t)before.st_size);
+    if (bytes == NULL) { close(fd); return -1; }
+    while (used < (size_t)before.st_size) {
+        ssize_t count = read(fd, bytes + used, (size_t)before.st_size - used);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            free(bytes); close(fd); errno = EIO; return -1;
+        }
+        used += (size_t)count;
+    }
+    if (fstat(fd, &after) < 0 || before.st_dev != after.st_dev ||
+        before.st_ino != after.st_ino || before.st_size != after.st_size ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
+        free(bytes); close(fd); errno = EBUSY; return -1;
+    }
+    close(fd);
+    *record = bytes;
+    *record_length = used;
+    return 0;
+}
+
+static int candidate_filename(const char *name)
+{
+    size_t i;
+    if (strlen(name) != 72 || strcmp(name + 64, ".tm.json") != 0) return 0;
+    for (i = 0; i < 64; i++)
+        if (!((name[i] >= '0' && name[i] <= '9') ||
+              (name[i] >= 'a' && name[i] <= 'f'))) return 0;
+    return 1;
+}
+
+static int open_existing_directory(int parent, const char *name)
+{
+    return openat(parent, name,
+                  O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+}
+
+int tm_result_find(int repository_root_fd, const char *command_fingerprint,
+                   const char *verification_fingerprint,
+                   const struct tm_trust_policy *trust_policy,
+                   unsigned char **record, size_t *record_length,
+                   char record_id[72])
+{
+    int tmfd = -1, resultsfd = -1, commandfd = -1, verificationfd = -1;
+    int duplicate = -1, result = 1, saved;
+    DIR *directory = NULL;
+    struct dirent *entry;
+    if (repository_root_fd < 0 || !valid_sha256(command_fingerprint) ||
+        !valid_sha256(verification_fingerprint) || trust_policy == NULL ||
+        record == NULL || record_length == NULL || record_id == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    *record = NULL;
+    *record_length = 0;
+    record_id[0] = '\0';
+    tmfd = open_existing_directory(repository_root_fd, ".tm");
+    if (tmfd < 0) goto absent_or_error;
+    resultsfd = open_existing_directory(tmfd, "results");
+    if (resultsfd < 0) goto absent_or_error;
+    commandfd = open_existing_directory(resultsfd, command_fingerprint + 7);
+    if (commandfd < 0) goto absent_or_error;
+    verificationfd = open_existing_directory(commandfd,
+                                                verification_fingerprint + 7);
+    if (verificationfd < 0) goto absent_or_error;
+    duplicate = dup(verificationfd);
+    if (duplicate < 0) { result = -1; goto done; }
+    directory = fdopendir(duplicate);
+    if (directory == NULL) {
+        close(duplicate);
+        duplicate = -1;
+        result = -1;
+        goto done;
+    }
+    duplicate = -1;
+    for (;;) {
+        struct tm_result_summary summary = {0};
+        unsigned char *candidate = NULL;
+        size_t candidate_length = 0;
+        char candidate_id[72];
+        char expected_name[80];
+        int matches = 0;
+        errno = 0;
+        entry = readdir(directory);
+        if (entry == NULL) {
+            if (errno != 0) result = -1;
+            break;
+        }
+        if (!candidate_filename(entry->d_name)) continue;
+        if (read_candidate(verificationfd, entry->d_name, &candidate,
+                          &candidate_length) < 0) continue;
+        if (tm_result_inspect(candidate, candidate_length, &summary,
+                              candidate_id) == 0 &&
+            strcmp(summary.command_id, command_fingerprint + 7) == 0 &&
+            strcmp(summary.verification_id,
+                   verification_fingerprint + 7) == 0 &&
+            snprintf(expected_name, sizeof(expected_name), "%s.tm.json",
+                     candidate_id + 7) < (int)sizeof(expected_name) &&
+            strcmp(entry->d_name, expected_name) == 0 &&
+            tm_result_verify_inputs_match(candidate, candidate_length,
+                trust_policy, repository_root_fd, candidate_id) == 0)
+            matches = 1;
+        tm_result_summary_clear(&summary);
+        if (matches) {
+            *record = candidate;
+            *record_length = candidate_length;
+            memcpy(record_id, candidate_id, sizeof(candidate_id));
+            candidate = NULL;
+            result = 0;
+            free(candidate);
+            break;
+        }
+        free(candidate);
+    }
+    if (directory != NULL) {
+        closedir(directory);
+        directory = NULL;
+    }
+    goto done;
+absent_or_error:
+    if (errno == ENOENT || errno == ENOTDIR || errno == ELOOP) result = 1;
+    else result = -1;
+done:
+    saved = errno;
+    if (directory != NULL) closedir(directory);
+    if (duplicate >= 0) close(duplicate);
+    if (verificationfd >= 0) close(verificationfd);
+    if (commandfd >= 0) close(commandfd);
+    if (resultsfd >= 0) close(resultsfd);
+    if (tmfd >= 0) close(tmfd);
+    errno = saved;
+    return result;
 }
 
 int tm_result_verify(const unsigned char *record, size_t record_length,
