@@ -523,12 +523,6 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         printf '%s\n' 'modeled descriptor operation was classified as unsupported' >&2
         exit 1
     fi
-    if grep -q 'inherited or untracked descriptor provenance is not modeled' \
-        "$tmp_dir/descriptor-dup.err"; then
-        cat "$tmp_dir/descriptor-dup.err" >&2
-        printf '%s\n' 'duplicated tracked descriptor lost its input provenance' >&2
-        exit 1
-    fi
     set +e
     "$tm_bin" --explain -- "$clone3_probe" independent \
         2>"$tmp_dir/clone3-independent.err"

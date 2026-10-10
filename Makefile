@@ -169,7 +169,7 @@ $(BUILD_DIR)/test_observer_report: tests/observer_report.c src/observer_report.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/observer_report.c src/observer_report.c
 
-$(BUILD_DIR)/test_observer_start: tests/observer_start.c src/observer.c src/observer_report.c src/repo.c include/tm/observer.h
+$(BUILD_DIR)/test_observer_start: tests/observer_start.c src/observer.c src/observer_report.c src/repo.c include/tm/observer.h | $(BUILD_DIR)/getcwd_probe $(BUILD_DIR)/descriptor_dup_probe
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/observer_start.c src/observer.c src/observer_report.c src/repo.c
 

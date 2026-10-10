@@ -1,8 +1,10 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include "tm/observer.h"
@@ -18,6 +20,7 @@ int main(void)
     struct tm_observer_report failed_report = {0};
     struct tm_observer_report mprotect_report = {0};
     struct tm_observer_report getcwd_report = {0};
+    struct tm_observer_report descriptor_report = {0};
     char repository[4096], output_path[4200] = {0};
     char escape_path[4200] = {0};
     char failed_input_path[4200] = {0};
@@ -32,8 +35,18 @@ int main(void)
     char *mprotect_command[] = {"./build/mprotect_probe",
         "build/tm-observer-mprotect-input", NULL};
     char *getcwd_command[] = {"./build/getcwd_probe", NULL};
+    char *descriptor_command[] = {"./build/descriptor_dup_probe", "Makefile", NULL};
     size_t index, executable_count = 0;
-    int result = tm_observe_and_run_with_fds(command, 0, NULL, "/workspace",
+    int result;
+    if (syscall(SYS_close_range, 3U, ~0U, 0U) < 0) {
+        perror("close inherited descriptors for observer test");
+        return 1;
+    }
+    if (getcwd(repository, sizeof(repository)) == NULL) {
+        fprintf(stderr, "could not determine observer test repository\n");
+        return 1;
+    }
+    result = tm_observe_and_run_with_fds(command, 0, NULL, "/workspace",
         NULL, 0, 0, 0, "/bin/true", 0, NULL, 0, &report);
     if (report.candidate_count == 0 &&
         (report.ineligibility_reasons &
@@ -64,6 +77,15 @@ int main(void)
         fprintf(stderr,
             "observer treated getcwd as unmodeled filesystem metadata (reasons=0x%08x)\n",
             getcwd_report.ineligibility_reasons);
+        return 1;
+    }
+    if (tm_observe_and_run(descriptor_command, 0, NULL, repository,
+            &descriptor_report) != 0 ||
+        (descriptor_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_DESCRIPTOR) != 0) {
+        fprintf(stderr,
+            "observer lost descriptor provenance across dup operations (reasons=0x%08x)\n",
+            descriptor_report.ineligibility_reasons);
         return 1;
     }
     if (snprintf(output_path, sizeof(output_path), "%s/%s", repository,
