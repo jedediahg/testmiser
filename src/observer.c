@@ -643,6 +643,17 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
             mark_observer_failure();
         }
         return;
+    case 435: { /* clone3: inspect the descriptor-sharing flag */
+        uint64_t flags;
+        if (registers->rsi < sizeof(flags) ||
+            read_tracee_memory(task->pid, registers->rdi, &flags,
+                               sizeof(flags)) < 0) {
+            reject_unsupported_syscall(number);
+            return;
+        }
+        task->shares_descriptors = (flags & CLONE_FILES) != 0;
+        return;
+    }
     case 3: /* close */
         task->pending_descriptor = (int)registers->rdi;
         if (task->pending_descriptor < 3 ||
@@ -817,6 +828,9 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 56:  /* clone: descendants are traced */
         task->shares_descriptors =
             (((unsigned long)regs->rdi & CLONE_FILES) != 0);
+        if (task->shares_descriptors) reject_unsupported_syscall(number);
+        return;
+    case 435: /* clone3: shared descriptor tables are unsupported */
         if (task->shares_descriptors) reject_unsupported_syscall(number);
         return;
     case 57:  /* fork: descendants are traced */

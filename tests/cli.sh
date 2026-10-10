@@ -7,6 +7,7 @@ openat2_probe=${OPENAT2_PROBE:-./build/openat2_probe}
 open_mode_probe=${OPEN_MODE_PROBE:-./build/open_mode_probe}
 network_syscall_probe=${NETWORK_SYSCALL_PROBE:-./build/network_syscall_probe}
 descriptor_dup_probe=${DESCRIPTOR_DUP_PROBE:-./build/descriptor_dup_probe}
+clone3_probe=${CLONE3_PROBE:-./build/clone3_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -457,6 +458,26 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         "$tmp_dir/descriptor-dup.err"; then
         printf '%s\n' 'duplicated tracked descriptor lost its input provenance' >&2
         exit 1
+    fi
+    set +e
+    "$tm_bin" --explain -- "$clone3_probe" independent \
+        2>"$tmp_dir/clone3-independent.err"
+    status=$?
+    set -e
+    if [ "$status" -ne 77 ]; then
+        test "$status" -eq 0
+        if grep -q 'unsupported syscall(s):.*435' \
+            "$tmp_dir/clone3-independent.err"; then
+            printf '%s\n' 'independent clone3 was classified as unsupported' >&2
+            exit 1
+        fi
+        set +e
+        "$tm_bin" --explain -- "$clone3_probe" shared \
+            2>"$tmp_dir/clone3-shared.err"
+        status=$?
+        set -e
+        test "$status" -eq 0
+        grep -q 'unsupported syscall(s):.*435' "$tmp_dir/clone3-shared.err"
     fi
 fi
 
