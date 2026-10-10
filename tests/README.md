@@ -8,7 +8,10 @@ JSON/JCS behavior, signed output-free record creation/inspection/trust
 verification, protected trust-policy loading/authorization, output manifests,
 and independent Ed25519 producers. The result vectors require two different
 approved keys to produce distinct record IDs for the same verification ID and
-both records to pass trust verification. Run all checks with `make test`;
+both records to pass trust verification. The ptrace observer test uses a
+read-only shared mapping to ensure an attempted `mprotect(PROT_WRITE)` upgrade
+is rejected independently of writable file-open detection. Run all checks with
+`make test`;
 OpenSSL EVP development files are required. When ptrace is unavailable, the
 CLI suite checks the uncached fallback.
 
