@@ -13,10 +13,14 @@ int main(void)
     struct tm_observer_report report = {0};
     struct tm_observer_report controlled_report = {0};
     struct tm_observer_report output_report = {0};
+    struct tm_observer_report traversal_report = {0};
     char repository[4096], output_path[4200] = {0};
+    char escape_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
     char *output_command[] = {"/bin/sh", "-c",
         "mkdir build/tm-observer-output-test/sub && printf data > build/tm-observer-output-test/sub/report", NULL};
+    char *traversal_command[] = {"/bin/sh", "-c",
+        "printf escape > build/tm-observer-output-test/../tm-observer-output-escape", NULL};
     size_t index, executable_count = 0;
     int result = tm_observe_and_run_with_fds(command, 0, NULL, "/workspace",
         NULL, 0, 0, 0, "/bin/true", 0, NULL, 0, &report);
@@ -44,6 +48,8 @@ int main(void)
     if (getcwd(repository, sizeof(repository)) == NULL ||
         snprintf(output_path, sizeof(output_path), "%s/%s", repository,
                  output_roots[0]) >= (int)sizeof(output_path) ||
+        snprintf(escape_path, sizeof(escape_path), "%s/build/tm-observer-output-escape",
+                 repository) >= (int)sizeof(escape_path) ||
         tm_observe_and_run_with_fds(output_command, 0, NULL, repository,
             NULL, 0, 0, 0, NULL, 1, output_roots, 1, &output_report) != 0 ||
         (output_report.ineligibility_reasons &
@@ -61,6 +67,17 @@ int main(void)
         }
         return 1;
     }
+    (void)unlink(escape_path);
+    if (tm_observe_and_run_with_fds(traversal_command, 0, NULL, repository,
+            NULL, 0, 0, 0, NULL, 1, output_roots, 1,
+            &traversal_report) != 0 ||
+        (traversal_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_MUTATION) == 0) {
+        fprintf(stderr, "observer accepted traversal outside declared output\n");
+        (void)unlink(escape_path);
+        return 1;
+    }
+    (void)unlink(escape_path);
     {
         char report_path[4300], directory_path[4300];
         if (snprintf(report_path, sizeof(report_path), "%s/sub/report",

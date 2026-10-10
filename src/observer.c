@@ -148,8 +148,22 @@ static int path_is_declared_output(const char *path)
         int length = snprintf(root, sizeof(root), "%s/%s",
             observer.repository_root, observer.output_roots[index]);
         if (length < 0 || (size_t)length >= sizeof(root)) continue;
-        if (strncmp(path, root, (size_t)length) == 0 &&
-            (path[length] == '\0' || path[length] == '/')) return 1;
+        if (strncmp(path, root, (size_t)length) == 0) {
+            const char *component = path + length;
+            if (*component == '\0') return 1;
+            if (*component++ != '/') continue;
+            while (*component != '\0') {
+                const char *end = strchr(component, '/');
+                size_t component_length = end == NULL ? strlen(component) :
+                    (size_t)(end - component);
+                if (component_length == 0 ||
+                    (component_length == 1 && component[0] == '.') ||
+                    (component_length == 2 && component[0] == '.' &&
+                     component[1] == '.')) break;
+                if (end == NULL) return 1;
+                component = end + 1;
+            }
+        }
     }
     return 0;
 }
