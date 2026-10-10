@@ -2,9 +2,11 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include "tm/backend.h"
@@ -37,7 +39,8 @@ int main(void)
     char *command[] = {"/bin/sh", "-c", "printf called >> \"$1\"", "sh",
                        marker_path, NULL};
     struct tm_profile *profile = NULL;
-    int command_result = -1, status = 1;
+    int command_result = -1, status = 1, base_descriptor = -1;
+    int high_descriptor = -1;
     char log_contents[64] = {0}, marker_contents[64] = {0};
     FILE *stream;
 
@@ -52,6 +55,23 @@ int main(void)
     if (repository_root == NULL || write_file(profile_path, profile_json) < 0 ||
         setenv("TM_FAKE_BWRAP_LOG", log_path, 1) < 0 ||
         tm_profile_load(profile_path, &profile) < 0) goto done;
+    {
+        struct rlimit descriptor_limit;
+        if (getrlimit(RLIMIT_NOFILE, &descriptor_limit) < 0) goto done;
+        if (descriptor_limit.rlim_cur > 65536) {
+            char descriptor_text[32];
+            base_descriptor = open("/dev/null", O_RDONLY);
+            if (base_descriptor < 0) goto done;
+            high_descriptor = fcntl(base_descriptor, F_DUPFD, 65536);
+            close(base_descriptor);
+            base_descriptor = -1;
+            if (high_descriptor < 65536 ||
+                snprintf(descriptor_text, sizeof(descriptor_text), "%d",
+                         high_descriptor) >= (int)sizeof(descriptor_text) ||
+                setenv("TM_FAKE_BWRAP_FD", descriptor_text, 1) < 0)
+                goto done;
+        }
+    }
 
     if (tm_backend_run(profile, temporary, repository_root, NULL, 0, command,
                        0, NULL, &command_result) != 1 || command_result != 0) {
@@ -86,6 +106,8 @@ int main(void)
     }
     status = 0;
 done:
+    if (base_descriptor >= 0) close(base_descriptor);
+    if (high_descriptor >= 0) close(high_descriptor);
     tm_profile_free(profile);
     free(repository_root);
     if (profile_path[0] != '\0') unlink(profile_path);

@@ -7,6 +7,11 @@ fail() {
     exit 90
 }
 
+if [ "${TM_FAKE_BWRAP_FD+x}" = x ] &&
+    [ -e "/proc/$$/fd/$TM_FAKE_BWRAP_FD" ]; then
+    fail "inherited descriptor $TM_FAKE_BWRAP_FD reached Bubblewrap"
+fi
+
 unshare_all=no
 die_with_parent=no
 overlay_source=no

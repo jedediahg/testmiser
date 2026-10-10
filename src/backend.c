@@ -1,12 +1,16 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -23,6 +27,53 @@
 #endif
 #define GUEST_WORKSPACE "/workspace"
 #define GUEST_METADATA "/workspace/.tm"
+
+static int close_child_descriptors(void)
+{
+#ifdef SYS_close_range
+    if (syscall(SYS_close_range, 3U, UINT_MAX, 0U) == 0) return 0;
+#endif
+    {
+        DIR *directory = opendir("/proc/self/fd");
+        if (directory != NULL) {
+            struct dirent *entry;
+            int scan_descriptor = dirfd(directory), failed = 0;
+            for (;;) {
+                char *end;
+                long descriptor;
+                errno = 0;
+                entry = readdir(directory);
+                if (entry == NULL) {
+                    if (errno != 0) failed = 1;
+                    break;
+                }
+                descriptor = strtol(entry->d_name, &end, 10);
+                if (*entry->d_name == '\0' || *end != '\0' ||
+                    descriptor <= STDERR_FILENO || descriptor == scan_descriptor)
+                    continue;
+                if (descriptor <= INT_MAX) (void)close((int)descriptor);
+            }
+            if (closedir(directory) < 0) failed = 1;
+            if (!failed) return 0;
+        }
+    }
+    {
+        struct rlimit limit;
+        rlim_t upper;
+        rlim_t descriptor;
+        if (getrlimit(RLIMIT_NOFILE, &limit) < 0) return -1;
+        upper = limit.rlim_cur;
+        if (upper == RLIM_INFINITY) {
+            long configured = sysconf(_SC_OPEN_MAX);
+            if (configured < 0) return -1;
+            upper = (rlim_t)configured;
+        }
+        for (descriptor = 3; descriptor < upper && descriptor <= INT_MAX;
+             descriptor++)
+            (void)close((int)descriptor);
+    }
+    return 0;
+}
 
 struct argument_vector {
     char **items;
@@ -272,10 +323,8 @@ static int run_probe(const struct argument_vector *arguments,
     child = fork();
     if (child < 0) goto unavailable;
     if (child == 0) {
-        long max_fd = sysconf(_SC_OPEN_MAX);
-        int fd, null_fd;
-        if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
-        for (fd = 3; fd < max_fd; fd++) (void)close(fd);
+        int null_fd;
+        if (close_child_descriptors() < 0) _exit(125);
         null_fd = open("/dev/null", O_RDWR);
         if (null_fd < 0 || dup2(null_fd, STDERR_FILENO) < 0) _exit(125);
         if (null_fd != STDERR_FILENO) close(null_fd);
@@ -300,10 +349,8 @@ static int run_bubblewrap(const struct argument_vector *arguments,
     int status = 0;
     if (child < 0) return 0;
     if (child == 0) {
-        long max_fd = sysconf(_SC_OPEN_MAX);
-        int fd, null_fd;
-        if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
-        for (fd = 3; fd < max_fd; fd++) (void)close(fd);
+        int null_fd;
+        if (close_child_descriptors() < 0) _exit(125);
         null_fd = open("/dev/null", O_RDONLY);
         if (null_fd < 0 || dup2(null_fd, STDIN_FILENO) < 0) _exit(125);
         if (null_fd != STDIN_FILENO) close(null_fd);
