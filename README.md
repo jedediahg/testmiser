@@ -124,6 +124,11 @@ safety. Mount availability, coherent locking, durability, and access control
 remain operator responsibilities. Never expose producer signing keys to
 untrusted test jobs.
 
+For unprofiled/native commands, `tm` removes its control variables
+`TM_SHARED_STORE`, `TM_RUNTIME_ROOT`, `TM_COORDINATION_MODE`, and `TM_FORCE`
+from the child environment while preserving ordinary application variables.
+Approved-profile commands receive only the profile's declared environment.
+
 ## Intended usage
 
 `tm clean --root DIR --records` removes regular `.tm.json` records under that

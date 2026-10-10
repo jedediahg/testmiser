@@ -33,6 +33,8 @@
 #define TM_MAX_EXPLICIT_INPUTS 128
 #define TM_MAX_EXPLICIT_OUTPUTS 128
 
+extern char **environ;
+
 struct options {
     int force;
     int explain;
@@ -48,6 +50,41 @@ struct options {
 };
 
 static void free_environment(char **environment);
+
+static int is_supervisor_environment_entry(const char *entry)
+{
+    static const char *const names[] = {
+        "TM_SHARED_STORE", "TM_RUNTIME_ROOT", "TM_COORDINATION_MODE",
+        "TM_FORCE"
+    };
+    size_t index;
+    for (index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+        size_t length = strlen(names[index]);
+        if (strncmp(entry, names[index], length) == 0 && entry[length] == '=')
+            return 1;
+    }
+    return 0;
+}
+
+static char **inherited_child_environment(void)
+{
+    size_t count = 0, output = 0, index;
+    char **environment;
+    while (environ != NULL && environ[count] != NULL) count++;
+    environment = calloc(count + 1, sizeof(*environment));
+    if (environment == NULL) return NULL;
+    for (index = 0; index < count; index++) {
+        if (is_supervisor_environment_entry(environ[index])) continue;
+        environment[output] = strdup(environ[index]);
+        if (environment[output] == NULL) {
+            while (output > 0) free(environment[--output]);
+            free(environment);
+            return NULL;
+        }
+        output++;
+    }
+    return environment;
+}
 
 static char **profile_environment(const struct tm_profile *profile)
 {
@@ -812,6 +849,13 @@ int main(int argc, char **argv)
             tm_json_free(profile_context);
             tm_json_free(execution_context);
             tm_json_free(environment);
+        }
+    } else {
+        child_environment = inherited_child_environment();
+        if (child_environment == NULL) {
+            fprintf(stderr, "tm: cannot construct child environment\n");
+            tm_trust_policy_free(trust_policy);
+            return TM_EXIT_INTERNAL_ERROR;
         }
     }
     if (tm_repo_root(options.root_path, &repository_root) < 0) {

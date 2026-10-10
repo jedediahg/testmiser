@@ -49,6 +49,16 @@ set -e
 test "$coordination_mode_status" -eq 125
 grep -q "TM_COORDINATION_MODE must be 'available' or 'strict'" \
     "$tmp_dir/coordination-mode.err"
+TM_SHARED_STORE="$tmp_dir/supervisor-store" \
+TM_RUNTIME_ROOT="$tmp_dir/supervisor-runtime" \
+TM_COORDINATION_MODE=available TM_FORCE=1 \
+TM_CLI_PRESERVE=visible \
+    "$tm_bin" -- /bin/sh -c \
+    'test -z "${TM_SHARED_STORE+x}" &&
+     test -z "${TM_RUNTIME_ROOT+x}" &&
+     test -z "${TM_COORDINATION_MODE+x}" &&
+     test -z "${TM_FORCE+x}" &&
+     test "$TM_CLI_PRESERVE" = visible && test -n "$PATH"'
 if "$tm_bin" attempt resolve >/dev/null 2>&1; then
     printf '%s\n' 'attempt resolve accepted missing scope arguments' >&2
     exit 1
