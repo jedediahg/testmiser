@@ -33,13 +33,23 @@ if [[ ! -x "$probe" ]]; then
 fi
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+shared_store_cleanup=
+cleanup() {
+    rm -rf -- "$work"
+    if [[ -n "$shared_store_cleanup" ]]; then
+        rm -rf -- "$shared_store_cleanup"
+    fi
+}
+trap cleanup EXIT HUP INT TERM
 if [[ -n "${TM_ACCEPTANCE_SHARED_STORE:-}" ]]; then
-    shared_store=$TM_ACCEPTANCE_SHARED_STORE
-    if [[ "$shared_store" != /* || ! -d "$shared_store" ]]; then
+    shared_store_root=$TM_ACCEPTANCE_SHARED_STORE
+    if [[ "$shared_store_root" != /* || ! -d "$shared_store_root" ]]; then
         printf '%s\n' 'TM_ACCEPTANCE_SHARED_STORE must name an existing absolute directory.' >&2
         exit 2
     fi
+    shared_store_cleanup=$(mktemp -d \
+        "$shared_store_root/.tm-acceptance.XXXXXX")
+    shared_store=$shared_store_cleanup
 else
     shared_store=$work/shared-store
     mkdir -m 0700 "$shared_store"
