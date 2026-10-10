@@ -17,10 +17,12 @@ int main(void)
     struct tm_observer_report traversal_report = {0};
     struct tm_observer_report failed_report = {0};
     struct tm_observer_report mprotect_report = {0};
+    struct tm_observer_report getcwd_report = {0};
     char repository[4096], output_path[4200] = {0};
     char escape_path[4200] = {0};
     char failed_input_path[4200] = {0};
     char mprotect_input_path[4200] = {0};
+    char getcwd_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
     char *output_command[] = {"/bin/sh", "-c",
         "mkdir build/tm-observer-output-test/sub && printf data > build/tm-observer-output-test/sub/report", NULL};
@@ -30,6 +32,7 @@ int main(void)
         "build/tm-observer-failed-input", "23", NULL};
     char *mprotect_command[] = {"./build/mprotect_probe",
         "build/tm-observer-mprotect-input", NULL};
+    char *getcwd_command[] = {getcwd_path, NULL};
     size_t index, executable_count = 0;
     int result = tm_observe_and_run_with_fds(command, 0, NULL, "/workspace",
         NULL, 0, 0, 0, "/bin/true", 0, NULL, 0, &report);
@@ -55,7 +58,21 @@ int main(void)
         return 1;
     }
     if (getcwd(repository, sizeof(repository)) == NULL ||
-        snprintf(output_path, sizeof(output_path), "%s/%s", repository,
+        snprintf(getcwd_path, sizeof(getcwd_path), "%s/build/getcwd_probe",
+                 repository) >= (int)sizeof(getcwd_path)) {
+        fprintf(stderr, "could not resolve getcwd probe path\n");
+        return 1;
+    }
+    if (tm_observe_and_run_with_fds(getcwd_command, 0, NULL, repository,
+            NULL, 0, 0, 0, getcwd_path, 0, NULL, 0, &getcwd_report) != 0 ||
+        (getcwd_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_METADATA) != 0) {
+        fprintf(stderr,
+            "observer treated getcwd as unmodeled filesystem metadata (reasons=0x%08x)\n",
+            getcwd_report.ineligibility_reasons);
+        return 1;
+    }
+    if (snprintf(output_path, sizeof(output_path), "%s/%s", repository,
                  output_roots[0]) >= (int)sizeof(output_path) ||
         snprintf(escape_path, sizeof(escape_path), "%s/build/tm-observer-output-escape",
                  repository) >= (int)sizeof(escape_path) ||
