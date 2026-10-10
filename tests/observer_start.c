@@ -27,7 +27,7 @@ int main(void)
     char mprotect_input_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
     char *output_command[] = {"/bin/sh", "-c",
-        "mkdir build/tm-observer-output-test/sub && printf data > build/tm-observer-output-test/sub/report", NULL};
+        "mkdir -p build/tm-observer-output-test/sub && printf data > build/tm-observer-output-test/sub/report", NULL};
     char *traversal_command[] = {"/bin/sh", "-c",
         "printf escape > build/tm-observer-output-test/../tm-observer-output-escape", NULL};
     char *failed_command[] = {"./build/failing_read_probe",
@@ -91,12 +91,17 @@ int main(void)
     if (snprintf(output_path, sizeof(output_path), "%s/%s", repository,
                  output_roots[0]) >= (int)sizeof(output_path) ||
         snprintf(escape_path, sizeof(escape_path), "%s/build/tm-observer-output-escape",
-                 repository) >= (int)sizeof(escape_path) ||
-        tm_observe_and_run_with_fds(output_command, 0, NULL, repository,
-            NULL, 0, 0, 0, NULL, 1, output_roots, 1, &output_report) != 0 ||
-        (output_report.ineligibility_reasons &
+                 repository) >= (int)sizeof(escape_path)) {
+        fprintf(stderr, "could not construct output fixture paths\n");
+        return 1;
+    }
+    result = tm_observe_and_run_with_fds(output_command, 0, NULL, repository,
+        NULL, 0, 0, 0, NULL, 1, output_roots, 1, &output_report);
+    if (result != 0 || (output_report.ineligibility_reasons &
          TM_OBSERVER_INELIGIBLE_MUTATION) != 0) {
-        fprintf(stderr, "observer did not classify declared output writes\n");
+        fprintf(stderr,
+            "observer did not classify declared output writes (result=%d, reasons=0x%08x)\n",
+            result, output_report.ineligibility_reasons);
         if (output_path[0] != '\0') {
             char report_path[4300];
             if (snprintf(report_path, sizeof(report_path), "%s/sub/report",
