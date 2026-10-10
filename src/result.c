@@ -1363,6 +1363,12 @@ int tm_result_find_matching_snapshot_inputs(
     char record_id[72])
 {
     const char *const empty_roots[] = {NULL};
+    if (root_count > 10000 ||
+        (root_count > 0 &&
+         (root_paths == NULL || root_descriptors == NULL))) {
+        errno = EINVAL;
+        return -1;
+    }
     return result_find_matching_inputs(store_root_fd, -1,
         root_paths == NULL ? empty_roots : root_paths,
         root_descriptors, root_count, command_fingerprint, profile_digest,

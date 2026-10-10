@@ -362,9 +362,13 @@ int tm_observed_inputs_match_snapshots(
                 selected = root_index;
             }
         }
-        if (selected == SIZE_MAX || capture_one(&current,
-                root_descriptors[selected], &candidate, relative) < 0) {
+        if (selected == SIZE_MAX) {
             result = 1;
+            goto done;
+        }
+        if (capture_one(&current, root_descriptors[selected], &candidate,
+                        relative) < 0) {
+            result = errno == ENOMEM || errno == EOVERFLOW ? -1 : 1;
             goto done;
         }
     }
