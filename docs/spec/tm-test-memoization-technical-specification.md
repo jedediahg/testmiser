@@ -188,12 +188,15 @@ State destinations MUST reject traversal and symlink escapes. Portable records c
 
 # 8. Portable Signed Record Format
 
-Use a closed, versioned JSON schema. Schema/semantics version 2 supersedes the previous local-HMAC draft; version 1 records MUST NOT authorize portable reuse. The following is schematic; placeholders are not valid persisted digests or signatures:
+Use a closed, versioned JSON schema. Schema version 3 carries the producing `tm_version`; it retains verification semantics version 2, which supersedes the previous local-HMAC draft. Version 1 records MUST NOT authorize portable reuse. `tm_version` is signed producer metadata and does not participate in verification identity; compatibility is governed by `tm_semantics_version`. The following is schematic; placeholders are not valid persisted digests or signatures:
+
+`tm_version` uses dot-separated nonnegative decimal components (for example, `0.1`); it identifies the producer release, while `schema_version` identifies the sidecar layout.
 
 ```json
 {
   "payload": {
-    "schema_version": 2,
+    "schema_version": 3,
+    "tm_version": "0.1",
     "tm_semantics_version": 2,
     "repository_id": "example-project",
     "trust_epoch": 1,
@@ -921,7 +924,7 @@ No disconnected or partition-tolerant exactly-once claim is made. With healthy c
 
 # 40. SHA-256
 
-SHA-256 MUST be the standard content hash for schema version 2.
+SHA-256 MUST be the standard content hash for schema version 3.
 
 Format:
 

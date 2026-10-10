@@ -17,6 +17,7 @@
 #include "tm/json.h"
 #include "tm/input.h"
 #include "tm/result.h"
+#include "tm/tm.h"
 #include "tm/trust.h"
 
 #define TM_RESULT_RECORD_LIMIT (4U * 1024U * 1024U)
@@ -25,6 +26,30 @@
 static const unsigned char result_signature_domain[] = "tm-result-v2";
 static unsigned long result_store_sequence;
 static int valid_sha256(const char *digest);
+
+static int valid_tm_version(const char *version)
+{
+    size_t index, length;
+    unsigned int components = 1;
+    int component_start = 1;
+    if (version == NULL) return 0;
+    length = strlen(version);
+    if (length < 3 || length > 32) return 0;
+    for (index = 0; index < length; index++) {
+        if (version[index] == '.') {
+            if (component_start) return 0;
+            components++;
+            component_start = 1;
+        } else if (version[index] >= '0' && version[index] <= '9') {
+            if (component_start && version[index] == '0' &&
+                index + 1 < length && version[index + 1] != '.') return 0;
+            component_start = 0;
+        } else {
+            return 0;
+        }
+    }
+    return !component_start && components >= 2;
+}
 
 static int signature_message(const unsigned char *payload, size_t payload_size,
                              unsigned char **message, size_t *message_size)
@@ -282,7 +307,8 @@ static struct tm_json_value *make_payload(
         goto fail;
     }
     result = NULL;
-    if (object_put(payload, "schema_version", tm_json_new_integer(2)) < 0 ||
+    if (object_put(payload, "schema_version", tm_json_new_integer(3)) < 0 ||
+        object_put(payload, "tm_version", json_string(TM_VERSION)) < 0 ||
         object_put(payload, "tm_semantics_version",
                    tm_json_new_integer(2)) < 0 ||
         object_put(payload, "trust_epoch",
@@ -729,6 +755,7 @@ void tm_result_summary_clear(struct tm_result_summary *summary)
     size_t i;
     if (summary == NULL) return;
     free(summary->repository_id);
+    free(summary->tm_version);
     free(summary->profile_digest);
     free(summary->key_id);
     free(summary->verification_fingerprint);
@@ -814,9 +841,10 @@ int tm_result_inspect(const unsigned char *record, size_t record_length,
         !expect_object_size(envelope, 2)) goto invalid;
     payload = tm_json_object_get(envelope, "payload");
     attestation = tm_json_object_get(envelope, "attestation");
-    if (!expect_object_size(payload, 10) ||
+    if (!expect_object_size(payload, 11) ||
         !expect_object_size(attestation, 3) ||
-        tm_json_integer_value(tm_json_object_get(payload, "schema_version")) != 2 ||
+        tm_json_integer_value(tm_json_object_get(payload, "schema_version")) != 3 ||
+        !valid_tm_version(get_string(payload, "tm_version")) ||
         tm_json_integer_value(tm_json_object_get(payload,
                                                 "tm_semantics_version")) != 2)
         goto invalid;
@@ -865,10 +893,12 @@ int tm_result_inspect(const unsigned char *record, size_t record_length,
                                 ignored_signature) < 0) goto invalid;
     key_id = get_string(attestation, "key_id");
     summary->repository_id = copy_string(repository_id);
+    summary->tm_version = copy_string(get_string(payload, "tm_version"));
     summary->profile_digest = copy_string(profile_digest);
     summary->key_id = copy_string(key_id);
     summary->verification_fingerprint = copy_string(verification_fingerprint);
-    if (summary->repository_id == NULL || summary->profile_digest == NULL ||
+    if (summary->tm_version == NULL || summary->repository_id == NULL ||
+        summary->profile_digest == NULL ||
         summary->key_id == NULL || summary->verification_fingerprint == NULL) {
         errno = ENOMEM;
         goto done;
@@ -1216,12 +1246,13 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
     }
     payload = tm_json_object_get(envelope, "payload");
     attestation = tm_json_object_get(envelope, "attestation");
-    if (!expect_object_size(payload, 10) ||
+    if (!expect_object_size(payload, 11) ||
         !expect_object_size(attestation, 3)) {
         errno = EBADMSG;
         goto done;
     }
-    if (tm_json_integer_value(tm_json_object_get(payload, "schema_version")) != 2 ||
+    if (tm_json_integer_value(tm_json_object_get(payload, "schema_version")) != 3 ||
+        !valid_tm_version(get_string(payload, "tm_version")) ||
         tm_json_integer_value(tm_json_object_get(payload,
                                                 "tm_semantics_version")) != 2) {
         errno = EPROTONOSUPPORT;

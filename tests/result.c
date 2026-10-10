@@ -375,7 +375,7 @@ int main(void)
         "sha256:ba299d5d7bd04d93e635617e6d2e496248711a9fa93bf4360a98c706ad201622"
     };
     const char *expected_id =
-        "sha256:b81ff39af68adb02529c1c48e1b810d304e87383951c76c8b37273f002751290";
+        "sha256:1b7606c1405e680b8c0ccc04144fb3600f385dc4825b2581e4d0282e13f7c1ea";
     EVP_PKEY *private_key = EVP_PKEY_new_raw_private_key_ex(
         NULL, "ED25519", NULL, seed, sizeof(seed));
     unsigned char *record = NULL;
@@ -413,6 +413,7 @@ int main(void)
                          verified_id) != 0 ||
         strcmp(verified_id, expected_id) != 0 ||
         tm_result_inspect(record, record_length, &summary, verified_id) != 0 ||
+        strcmp(summary.tm_version, "0.1") != 0 ||
         strcmp(summary.repository_id, "sample") != 0 ||
         strcmp(summary.command_id,
                "0000000000000000000000000000000000000000000000000000000000000000") != 0 ||
@@ -425,6 +426,23 @@ int main(void)
         fprintf(stderr, "signed result golden vector failed\n");
         goto fail;
     }
+    tampered = malloc(record_length);
+    if (tampered == NULL) goto fail;
+    memcpy(tampered, record, record_length);
+    {
+        char *tool_version = strstr((char *)tampered,
+                                    "\"tm_version\":\"0.1\"");
+        if (tool_version == NULL) goto fail;
+        tool_version[strlen("\"tm_version\":\"")] = 'x';
+        if (tm_result_inspect(tampered, record_length, &summary,
+                              verified_id) == 0) {
+            tm_result_summary_clear(&summary);
+            fprintf(stderr, "invalid sidecar producer version was accepted\n");
+            goto fail;
+        }
+    }
+    free(tampered);
+    tampered = NULL;
     tm_result_summary_clear(&summary);
     {
         struct tm_output_entry entries[] = {

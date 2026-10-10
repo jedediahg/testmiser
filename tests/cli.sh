@@ -9,6 +9,8 @@ network_syscall_probe=${NETWORK_SYSCALL_PROBE:-./build/network_syscall_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
+test "$("$tm_bin" --version)" = 'tm 0.1'
+
 mkdir -p "$tmp_dir/repo/.tm/results"
 "$tm_bin" --root "$tmp_dir/repo" -- /bin/true
 mkdir -p "$tmp_dir/repo/.tm/results/command/verification" \

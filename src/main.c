@@ -98,6 +98,7 @@ static int verify_selected_runtime(const struct tm_profile *profile,
 static void print_usage(FILE *stream)
 {
     fprintf(stream, "Usage: tm [--root DIR] [--input PATH ...] [--output PATH ...] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
+    fprintf(stream, "       tm --version\n");
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
@@ -291,6 +292,10 @@ int main(int argc, char **argv)
     int parse_result;
     int result;
 
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("tm %s\n", TM_VERSION);
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "validate") == 0)
         return tm_validate_main(argc, argv);
     if (argc > 1 && strcmp(argv[1], "clean") == 0)

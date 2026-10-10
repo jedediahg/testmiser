@@ -19,6 +19,7 @@ struct tm_result_policy {
 };
 
 struct tm_result_summary {
+    char *tm_version;
     char *repository_id;
     char *profile_digest;
     char *key_id;
@@ -33,15 +34,15 @@ struct tm_result_summary {
     size_t output_count;
 };
 
-/* Build a signed v2 success record with an empty output manifest. The returned
- * JSON ends with exactly one LF. */
+/* Build a schema-v3 signed success record (semantics v2) with an empty output
+ * manifest. The returned JSON ends with exactly one LF. */
 int tm_result_create(const struct tm_verification_identity *identity,
                      uint64_t trust_epoch, EVP_PKEY *private_key,
                      unsigned char **record, size_t *record_length,
                      char record_id[72]);
 
-/* Build a signed v2 success record with a captured output manifest. The
- * referenced blob store must remain available for a future restore. */
+/* Build a schema-v3 signed success record with a captured output manifest.
+ * The referenced blob store must remain available for a future restore. */
 int tm_result_create_with_outputs(
     const struct tm_verification_identity *identity, uint64_t trust_epoch,
     EVP_PKEY *private_key, const struct tm_output_manifest *outputs,
