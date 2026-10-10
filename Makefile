@@ -6,18 +6,19 @@ LDLIBS ?= -lcrypto
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/tm
-SOURCES := src/main.c src/observer.c src/digest.c src/attestation.c src/identity.c
+SOURCES := src/main.c src/observer.c src/digest.c src/attestation.c src/identity.c src/verification.c
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
 .PHONY: all test clean
 
 all: $(TARGET)
 
-test: $(TARGET) $(BUILD_DIR)/test_digest $(BUILD_DIR)/test_attestation $(BUILD_DIR)/test_identity
+test: $(TARGET) $(BUILD_DIR)/test_digest $(BUILD_DIR)/test_attestation $(BUILD_DIR)/test_identity $(BUILD_DIR)/test_verification
 	TM_BIN=./$(TARGET) sh tests/cli.sh
 	./$(BUILD_DIR)/test_digest
 	./$(BUILD_DIR)/test_attestation
 	./$(BUILD_DIR)/test_identity
+	./$(BUILD_DIR)/test_verification
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -33,6 +34,10 @@ $(BUILD_DIR)/test_attestation: tests/attestation.c src/attestation.c src/digest.
 $(BUILD_DIR)/test_identity: tests/identity.c src/identity.c src/digest.c include/tm/identity.h include/tm/digest.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/identity.c src/identity.c src/digest.c $(LDLIBS)
+
+$(BUILD_DIR)/test_verification: tests/verification.c src/verification.c src/digest.c include/tm/verification.h include/tm/digest.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/verification.c src/verification.c src/digest.c $(LDLIBS)
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(BUILD_DIR)
