@@ -270,3 +270,26 @@ const char *tm_profile_digest(const struct tm_profile *profile)
 {
     return profile == NULL ? NULL : profile->digest;
 }
+
+size_t tm_profile_environment_count(const struct tm_profile *profile)
+{
+    if (profile == NULL) return 0;
+    return tm_json_size(get(profile->document, "environment"));
+}
+
+const char *tm_profile_environment_name(const struct tm_profile *profile,
+                                        size_t index)
+{
+    if (profile == NULL) return NULL;
+    return tm_json_object_key_at(get(profile->document, "environment"), index);
+}
+
+const char *tm_profile_environment_value(const struct tm_profile *profile,
+                                         size_t index)
+{
+    const struct tm_json_value *value;
+    if (profile == NULL) return NULL;
+    value = tm_json_object_value_at(get(profile->document, "environment"),
+                                    index);
+    return tm_json_string_value(value);
+}

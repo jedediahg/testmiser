@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tm/observer.h"
@@ -16,6 +17,35 @@ struct options {
     const char *trust_policy_path;
     int command_index;
 };
+
+static char **profile_environment(const struct tm_profile *profile)
+{
+    size_t count = tm_profile_environment_count(profile), index;
+    char **environment = calloc(count + 1, sizeof(*environment));
+    if (environment == NULL) return NULL;
+    for (index = 0; index < count; index++) {
+        const char *name = tm_profile_environment_name(profile, index);
+        const char *value = tm_profile_environment_value(profile, index);
+        size_t length = strlen(name) + strlen(value) + 2;
+        environment[index] = malloc(length);
+        if (environment[index] == NULL) {
+            while (index > 0) free(environment[--index]);
+            free(environment);
+            return NULL;
+        }
+        (void)snprintf(environment[index], length, "%s=%s", name, value);
+    }
+    return environment;
+}
+
+static void free_environment(char **environment)
+{
+    size_t index;
+    if (environment == NULL) return;
+    for (index = 0; environment[index] != NULL; index++)
+        free(environment[index]);
+    free(environment);
+}
 
 static void print_usage(FILE *stream)
 {
@@ -103,6 +133,7 @@ int main(int argc, char **argv)
     struct options options;
     struct tm_profile *profile = NULL;
     struct tm_trust_policy *trust_policy = NULL;
+    char **child_environment = NULL;
     int parse_result;
     int result;
 
@@ -136,10 +167,19 @@ int main(int argc, char **argv)
             return TM_EXIT_INTERNAL_ERROR;
         }
         if (options.explain)
-            fprintf(stderr, "tm: RUN: profile approved; portable backend is unavailable, so reuse is disabled\n");
+            fprintf(stderr, "tm: RUN: profile approved and its environment applied; portable backend is not enforced, so reuse is disabled\n");
+        child_environment = profile_environment(profile);
+        if (child_environment == NULL) {
+            fprintf(stderr, "tm: cannot construct profile environment\n");
+            tm_profile_free(profile);
+            tm_trust_policy_free(trust_policy);
+            return TM_EXIT_INTERNAL_ERROR;
+        }
     }
     (void) options.force;
-    result = tm_observe_and_run(&argv[options.command_index], options.explain);
+    result = tm_observe_and_run(&argv[options.command_index], options.explain,
+                                child_environment);
+    free_environment(child_environment);
     tm_profile_free(profile);
     tm_trust_policy_free(trust_policy);
     return result;

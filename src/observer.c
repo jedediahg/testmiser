@@ -21,6 +21,8 @@
 #include "tm/observer.h"
 #include "tm/tm.h"
 
+extern char **environ;
+
 #if defined(__linux__) && defined(__x86_64__)
 
 #define TM_MAX_TASKS 4096
@@ -596,8 +598,9 @@ static int collect_traced_child(pid_t child)
     }
 }
 
-static void exec_command(char **command)
+static void exec_command(char **command, char *const environment[])
 {
+    if (environment != NULL) environ = (char **)environment;
     execvp(command[0], command);
     if (errno == ENOENT || errno == ENOTDIR) {
         fprintf(stderr, "tm: command not found: %s\n", command[0]);
@@ -784,7 +787,7 @@ static int trace_child(pid_t child, int explain)
     return TM_EXIT_INTERNAL_ERROR;
 }
 
-int tm_observe_and_run(char **command, int explain)
+int tm_observe_and_run(char **command, int explain, char *const environment[])
 {
     pid_t child = fork();
 
@@ -799,20 +802,21 @@ int tm_observe_and_run(char **command, int explain)
                         "tm: observer unavailable: %s; running uncached\n",
                         strerror(errno));
             }
-            exec_command(command);
+            exec_command(command, environment);
         }
         raise(SIGSTOP);
-        exec_command(command);
+        exec_command(command, environment);
     }
     return trace_child(child, explain);
 }
 
 #else
 
-int tm_observe_and_run(char **command, int explain)
+int tm_observe_and_run(char **command, int explain, char *const environment[])
 {
     pid_t child = fork();
     int status;
+    if (environment != NULL) environ = (char **)environment;
 
     if (explain) {
         fprintf(stderr,

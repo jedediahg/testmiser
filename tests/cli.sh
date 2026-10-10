@@ -48,7 +48,18 @@ set +e
 status=$?
 set -e
 test "$status" -eq 17
-grep -q 'portable backend is unavailable' "$tmp_dir/profile-approved.err"
+grep -q 'portable backend is not enforced' "$tmp_dir/profile-approved.err"
+sed 's/"LANG":"C"/"LANG":"C","PATH":"\/usr\/bin:\/bin"/' \
+    "$tmp_dir/profile.json" >"$tmp_dir/env-profile.json"
+env_profile_digest=$("$tm_bin" profile digest "$tmp_dir/env-profile.json" | cut -d ' ' -f 2)
+printf '{"schema_version":1,"repositories":[{"repository_id":"sample","minimum_trust_epoch":1,"allowed_semantics":[2],"profiles":["%s"],"keys":[],"revoked_key_ids":[]}]}' \
+    "$env_profile_digest" >"$tmp_dir/env-policy.json"
+chmod 600 "$tmp_dir/env-policy.json"
+TM_PROFILE_TEST_SECRET=host-secret "$tm_bin" --profile "$tmp_dir/env-profile.json" \
+    --trust-policy "$tmp_dir/env-policy.json" -- /bin/sh -c \
+    'printf "%s|%s|%s\n" "$LANG" "$PATH" "${TM_PROFILE_TEST_SECRET-unset}"' \
+    >"$tmp_dir/profile-env.out"
+test "$(cat "$tmp_dir/profile-env.out")" = 'C|/usr/bin:/bin|unset'
 sed 's/"LANG":"C"/"LANG":"C.UTF-8"/' "$tmp_dir/profile.json" >"$tmp_dir/unapproved-profile.json"
 set +e
 "$tm_bin" --profile "$tmp_dir/unapproved-profile.json" --trust-policy "$tmp_dir/policy.json" \
