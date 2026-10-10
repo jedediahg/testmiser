@@ -979,11 +979,13 @@ static int open_existing_directory(int parent, const char *name)
                   O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
 }
 
-int tm_result_find(int repository_root_fd, const char *command_fingerprint,
-                   const char *verification_fingerprint,
-                   const struct tm_trust_policy *trust_policy,
-                   unsigned char **record, size_t *record_length,
-                   char record_id[72])
+static int result_find(int repository_root_fd, const char *command_fingerprint,
+                       const char *verification_fingerprint,
+                       const struct tm_trust_policy *trust_policy,
+                       const char *const *output_roots,
+                       size_t output_root_count, int restore_outputs,
+                       unsigned char **record, size_t *record_length,
+                       char record_id[72])
 {
     int tmfd = -1, resultsfd = -1, commandfd = -1, verificationfd = -1;
     int duplicate = -1, result = 1, saved;
@@ -1035,7 +1037,6 @@ int tm_result_find(int repository_root_fd, const char *command_fingerprint,
                           &candidate_length) < 0) continue;
         if (tm_result_inspect(candidate, candidate_length, &summary,
                               candidate_id) == 0 &&
-            summary.output_count == 0 &&
             strcmp(summary.command_id, command_fingerprint + 7) == 0 &&
             strcmp(summary.verification_id,
                    verification_fingerprint + 7) == 0 &&
@@ -1043,8 +1044,18 @@ int tm_result_find(int repository_root_fd, const char *command_fingerprint,
                      candidate_id + 7) < (int)sizeof(expected_name) &&
             strcmp(entry->d_name, expected_name) == 0 &&
             tm_result_verify_inputs_match(candidate, candidate_length,
-                trust_policy, repository_root_fd, candidate_id) == 0)
-            matches = 1;
+                trust_policy, repository_root_fd, candidate_id) == 0) {
+            if (summary.output_count == 0) {
+                matches = output_root_count == 0;
+            } else if (restore_outputs && output_roots != NULL &&
+                       output_root_count > 0 &&
+                       tm_outputs_restore(repository_root_fd, output_roots,
+                           output_root_count,
+                           &(struct tm_output_manifest){summary.outputs,
+                                                        summary.output_count}) == 0) {
+                matches = 1;
+            }
+        }
         tm_result_summary_clear(&summary);
         if (matches) {
             *record = candidate;
@@ -1075,6 +1086,33 @@ done:
     if (tmfd >= 0) close(tmfd);
     errno = saved;
     return result;
+}
+
+int tm_result_find(int repository_root_fd, const char *command_fingerprint,
+                   const char *verification_fingerprint,
+                   const struct tm_trust_policy *trust_policy,
+                   unsigned char **record, size_t *record_length,
+                   char record_id[72])
+{
+    return result_find(repository_root_fd, command_fingerprint,
+        verification_fingerprint, trust_policy, NULL, 0, 0,
+        record, record_length, record_id);
+}
+
+int tm_result_find_and_restore(
+    int repository_root_fd, const char *command_fingerprint,
+    const char *verification_fingerprint,
+    const struct tm_trust_policy *trust_policy,
+    const char *const *output_roots, size_t output_root_count,
+    unsigned char **record, size_t *record_length, char record_id[72])
+{
+    if (output_root_count > 0 && output_roots == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    return result_find(repository_root_fd, command_fingerprint,
+        verification_fingerprint, trust_policy, output_roots,
+        output_root_count, 1, record, record_length, record_id);
 }
 
 int tm_result_verify(const unsigned char *record, size_t record_length,

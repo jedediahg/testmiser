@@ -11,6 +11,7 @@
 #include <openssl/evp.h>
 
 #include "tm/result.h"
+#include "tm/identity.h"
 #include "tm/trust.h"
 
 static int test_store(const unsigned char *record, size_t length,
@@ -167,6 +168,118 @@ done:
     rmdir(clone);
     free(stored);
     tm_result_summary_clear(&summary);
+    return result;
+}
+
+static int test_output_lookup(
+    const struct tm_verification_identity *identity, EVP_PKEY *private_key,
+    const struct tm_trust_policy *trust)
+{
+    const char *argv[] = {"make", "test"};
+    const char *input_paths[] = {"tests/a", "tests/missing"};
+    char root[] = "/tmp/tm-result-output-XXXXXX";
+    char path[768], record_id[72] = {0};
+    const char *roots[] = {"dist"};
+    char command_fingerprint[72], verification_fingerprint[72];
+    struct tm_command_identity command_identity = {
+        "sample", argv, 2, "subdir", input_paths, 2, roots, 1
+    };
+    struct tm_verification_identity output_identity = *identity;
+    struct tm_output_manifest manifest = {0};
+    unsigned char *record = NULL, *found = NULL;
+    size_t record_length = 0, found_length = 0;
+    char blob_digest[72] = {0};
+    int rootfd = -1, testsfd = -1, distfd = -1, filefd = -1;
+    int result = -1;
+    if (tm_command_fingerprint(&command_identity, command_fingerprint) < 0)
+        goto done;
+    output_identity.command_fingerprint = command_fingerprint;
+    if (tm_verification_fingerprint(&output_identity,
+                                    verification_fingerprint) < 0) goto done;
+    if (mkdtemp(root) == NULL) goto done;
+    rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (rootfd < 0 || mkdirat(rootfd, "tests", 0700) < 0 ||
+        mkdirat(rootfd, "dist", 0700) < 0) goto done;
+    testsfd = openat(rootfd, "tests", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    distfd = openat(rootfd, "dist", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (testsfd < 0 || distfd < 0) goto done;
+    filefd = openat(testsfd, "a", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (filefd < 0 || close(filefd) < 0) { filefd = -1; goto done; }
+    filefd = -1;
+    filefd = openat(distfd, "report.txt", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (filefd < 0 || write(filefd, "artifact", 8) != 8 || close(filefd) < 0) {
+        filefd = -1; goto done;
+    }
+    filefd = -1;
+    if (tm_outputs_capture(rootfd, roots, 1, &manifest) < 0 ||
+        tm_result_create_with_outputs(&output_identity, 3, private_key, &manifest,
+            &record, &record_length, record_id) < 0 ||
+        tm_result_store(rootfd, record, record_length, record_id) < 0)
+        goto done;
+    if (manifest.count != 2) goto done;
+    memcpy(blob_digest, manifest.entries[1].digest, sizeof(blob_digest));
+    if (tm_result_find(rootfd, command_fingerprint, verification_fingerprint,
+            trust, &found, &found_length, record_id) != 1 || found != NULL)
+        goto done;
+    if (unlinkat(distfd, "report.txt", 0) < 0 ||
+        (filefd = openat(distfd, "stale.txt",
+            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600)) < 0 ||
+        write(filefd, "stale", 5) != 5 || close(filefd) < 0) {
+        filefd = -1; goto done;
+    }
+    filefd = -1;
+    close(distfd); distfd = -1;
+    if (tm_result_find_and_restore(rootfd, command_fingerprint,
+            verification_fingerprint,
+            trust, roots, 1, &found, &found_length, record_id) != 0 ||
+        found_length != record_length || memcmp(found, record, record_length) != 0)
+        goto done;
+    distfd = openat(rootfd, "dist", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (distfd < 0 ||
+        fstatat(distfd, "stale.txt", &(struct stat){0}, AT_SYMLINK_NOFOLLOW) == 0 ||
+        errno != ENOENT) goto done;
+    filefd = openat(distfd, "report.txt", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    {
+        char bytes[8];
+        if (filefd < 0 || read(filefd, bytes, sizeof(bytes)) != sizeof(bytes) ||
+            memcmp(bytes, "artifact", sizeof(bytes)) != 0) goto done;
+    }
+    result = 0;
+done:
+    if (filefd >= 0) close(filefd);
+    if (rootfd >= 0) close(rootfd);
+    if (testsfd >= 0) close(testsfd);
+    if (distfd >= 0) close(distfd);
+    free(found);
+    free(record);
+    tm_output_manifest_clear(&manifest);
+    if (root[0] != '\0') {
+        char result_dir[768], command_dir[768], record_path[768];
+        (void)snprintf(path, sizeof(path), "%s/tests/a", root); (void)unlink(path);
+        (void)snprintf(path, sizeof(path), "%s/tests", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/dist/report.txt", root); (void)unlink(path);
+        (void)snprintf(path, sizeof(path), "%s/dist/stale.txt", root); (void)unlink(path);
+        (void)snprintf(path, sizeof(path), "%s/dist", root); (void)rmdir(path);
+        if (blob_digest[0] != '\0') {
+            (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256/%s", root, blob_digest + 7);
+            (void)unlink(path);
+        }
+        (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm/blobs", root); (void)rmdir(path);
+        (void)snprintf(command_dir, sizeof(command_dir), "%s/.tm/results/%s",
+                       root, command_fingerprint + 7);
+        (void)snprintf(result_dir, sizeof(result_dir),
+            "%s/.tm/results/%s/%s", root, command_fingerprint + 7,
+            verification_fingerprint + 7);
+        (void)snprintf(record_path, sizeof(record_path),
+            "%s/.tm/results/%s/%s/%s.tm.json", root,
+            command_fingerprint + 7, verification_fingerprint + 7,
+            record_id[0] == '\0' ? "" : record_id + 7);
+        (void)unlink(record_path); (void)rmdir(result_dir); (void)rmdir(command_dir);
+        (void)snprintf(path, sizeof(path), "%s/.tm/results", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm", root); (void)rmdir(path);
+        (void)rmdir(root);
+    }
     return result;
 }
 
@@ -371,6 +484,10 @@ int main(void)
     }
     if (test_store(record, record_length, expected_id, trust) != 0) {
         fprintf(stderr, "portable result storage/lookup checks failed\n");
+        goto fail;
+    }
+    if (test_output_lookup(&identity, private_key, trust) != 0) {
+        fprintf(stderr, "trusted output result restore lookup failed\n");
         goto fail;
     }
 

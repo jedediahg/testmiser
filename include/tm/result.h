@@ -60,6 +60,16 @@ int tm_result_find(int repository_root_fd, const char *command_fingerprint,
                    unsigned char **record, size_t *record_length,
                    char record_id[72]);
 
+/* Find and authenticate a result, check its declared inputs, restore the
+ * caller's declared output roots, and return a hit only after restoration.
+ * Output roots must be the same declarations bound into command_fingerprint. */
+int tm_result_find_and_restore(
+    int repository_root_fd, const char *command_fingerprint,
+    const char *verification_fingerprint,
+    const struct tm_trust_policy *trust_policy,
+    const char *const *output_roots, size_t output_root_count,
+    unsigned char **record, size_t *record_length, char record_id[72]);
+
 /* Authenticate and scope-check a record, including its declared output
  * manifest, using an operator-approved key/policy. */
 int tm_result_verify(const unsigned char *record, size_t record_length,
