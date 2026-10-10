@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@
 #include <unistd.h>
 
 #if defined(__linux__) && defined(__x86_64__)
+#include <linux/openat2.h>
 #include <sys/ptrace.h>
 #include <sys/user.h>
 #endif
@@ -159,6 +161,25 @@ static int read_tracee_string(pid_t pid, unsigned long address, char *output,
     return -1;
 }
 
+static int read_tracee_memory(pid_t pid, unsigned long address, void *output,
+                              size_t length)
+{
+    size_t copied = 0;
+    unsigned char *bytes = output;
+    while (copied < length) {
+        long word;
+        size_t amount = sizeof(word);
+        if (amount > length - copied) amount = length - copied;
+        errno = 0;
+        word = ptrace(PTRACE_PEEKDATA, pid,
+                      (void *)(address + copied), NULL);
+        if (word == -1 && errno != 0) return -1;
+        memcpy(bytes + copied, &word, amount);
+        copied += amount;
+    }
+    return 0;
+}
+
 static void task_path(pid_t pid, int dirfd, const char *path, char *output,
                       size_t capacity)
 {
@@ -293,9 +314,27 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
             mark_observer_failure();
         }
         return;
-    case 437: /* openat2: structure validation is not implemented */
-        reject_unsupported_syscall(number);
+    case 437: { /* openat2 */
+        struct open_how how;
+        const uint64_t allowed_flags = O_RDONLY | O_CLOEXEC | O_LARGEFILE;
+        if (registers->r10 != sizeof(how) ||
+            read_tracee_memory(task->pid, registers->rdx, &how,
+                               sizeof(how)) < 0 || how.resolve != 0 ||
+            how.mode != 0 || (how.flags & O_ACCMODE) != O_RDONLY ||
+            (how.flags & ~allowed_flags) != 0) {
+            reject_unsupported_syscall(number);
+            return;
+        }
+        if (read_tracee_string(task->pid, registers->rsi, raw_path,
+                               sizeof(raw_path)) == 0) {
+            task_path(task->pid, (int)registers->rdi, raw_path,
+                      task->pending_path, sizeof(task->pending_path));
+            task->flags = (unsigned long)how.flags;
+        } else {
+            mark_observer_failure();
+        }
         return;
+    }
     case 59: /* execve */
         if (read_tracee_string(task->pid, registers->rdi, raw_path,
                                sizeof(raw_path)) == 0) {
@@ -397,6 +436,7 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 57:  /* fork: descendants are traced */
     case 58:  /* vfork: descendants are traced */
     case 59:  /* execve is captured by note_syscall */
+    case 437: /* openat2 request validated by note_syscall */
     case 60:  /* exit */
     case 231: /* exit_group */
     case 273: /* set_robust_list */
@@ -438,13 +478,16 @@ static void syscall_stop(struct task_state *task)
     task->syscall_entry = 0;
     long result = (long)registers.rax;
     if (task->pending_path[0] != '\0' &&
-        (task->syscall_number == 2 || task->syscall_number == 257)) {
+        (task->syscall_number == 2 || task->syscall_number == 257 ||
+         task->syscall_number == 437)) {
         if (result >= 0) {
             int access_mode = (int)(task->flags & O_ACCMODE);
-            if (access_mode != O_WRONLY &&
+            if (access_mode == O_RDONLY && (task->flags & O_PATH) == 0 &&
                 (task->flags & (O_TRUNC | O_CREAT | O_APPEND)) == 0) {
                 candidate_path("opened file", task->pending_path);
-            } else if ((task->flags & (O_TRUNC | O_CREAT | O_APPEND)) != 0) {
+            } else if ((task->flags & O_PATH) != 0) {
+                observer.saw_metadata = 1;
+            } else {
                 observer.saw_mutation = 1;
             }
         } else if (result == -ENOENT || result == -ENOTDIR) {

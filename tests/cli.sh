@@ -2,6 +2,7 @@
 set -eu
 
 tm_bin=${TM_BIN:-./build/tm}
+openat2_probe=${OPENAT2_PROBE:-./build/openat2_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -118,6 +119,14 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
     "$tm_bin" --explain -- /bin/sh -c 'printf x > "$1"' \
         sh "$tmp_dir/child-write" 2>"$tmp_dir/mutation.err"
     grep -q 'filesystem mutation observed' "$tmp_dir/mutation.err"
+fi
+
+if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
+    "$tm_bin" --explain -- "$openat2_probe" 2>"$tmp_dir/openat2.err"; then
+    if grep -q 'unsupported syscall(s):.*437' "$tmp_dir/openat2.err"; then
+        printf '%s\n' 'supported read-only openat2 was classified as unsupported' >&2
+        exit 1
+    fi
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'
