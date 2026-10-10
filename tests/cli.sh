@@ -6,6 +6,7 @@ repo_directory=$(pwd)
 openat2_probe=${OPENAT2_PROBE:-./build/openat2_probe}
 open_mode_probe=${OPEN_MODE_PROBE:-./build/open_mode_probe}
 network_syscall_probe=${NETWORK_SYSCALL_PROBE:-./build/network_syscall_probe}
+descriptor_dup_probe=${DESCRIPTOR_DUP_PROBE:-./build/descriptor_dup_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -443,6 +444,20 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
     "$tm_bin" --explain -- "$open_mode_probe" "$tmp_dir/open-mode-target" \
         2>"$tmp_dir/open-mode.err"
     grep -q 'filesystem mutation observed' "$tmp_dir/open-mode.err"
+    "$tm_bin" --explain -- "$descriptor_dup_probe" "$repo_directory/Makefile" \
+        2>"$tmp_dir/descriptor-dup.err"
+    grep -q 'observed input candidate: read descriptor: Makefile' \
+        "$tmp_dir/descriptor-dup.err"
+    if grep -q 'unsupported syscall(s):.*\(32\|33\|72\|292\)' \
+        "$tmp_dir/descriptor-dup.err"; then
+        printf '%s\n' 'tracked descriptor duplication was classified as unsupported' >&2
+        exit 1
+    fi
+    if grep -q 'inherited or untracked descriptor provenance is not modeled' \
+        "$tmp_dir/descriptor-dup.err"; then
+        printf '%s\n' 'duplicated tracked descriptor lost its input provenance' >&2
+        exit 1
+    fi
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'

@@ -90,6 +90,8 @@ struct task_state {
     unsigned long flags;
     int shares_descriptors;
     int pending_descriptor;
+    int pending_duplication;
+    int pending_close_on_exec;
     char pending_path[TM_PATH_SIZE];
     size_t fd_count;
     struct fd_entry descriptors[TM_MAX_DESCRIPTORS];
@@ -543,6 +545,8 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     task->flags = 0;
     task->shares_descriptors = 0;
     task->pending_descriptor = -1;
+    task->pending_duplication = 0;
+    task->pending_close_on_exec = 0;
 
     switch (number) {
     case 2: /* open */
@@ -640,6 +644,29 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
             tracked_descriptor(task, task->pending_descriptor) == NULL)
             observer.saw_external_descriptor = 1;
         return;
+    case 32: /* dup */
+        task->pending_descriptor = (int)registers->rdi;
+        task->pending_duplication = 1;
+        break;
+    case 33: /* dup2 */
+        task->pending_descriptor = (int)registers->rdi;
+        task->pending_duplication = 1;
+        break;
+    case 292: /* dup3 */
+        task->pending_descriptor = (int)registers->rdi;
+        task->pending_duplication = 1;
+        task->pending_close_on_exec =
+            (((unsigned long)registers->rdx & O_CLOEXEC) != 0);
+        break;
+    case 72: /* fcntl: only descriptor duplication is modeled */
+        if (registers->rsi == F_DUPFD ||
+            registers->rsi == F_DUPFD_CLOEXEC) {
+            task->pending_descriptor = (int)registers->rdi;
+            task->pending_duplication = 1;
+            task->pending_close_on_exec =
+                registers->rsi == F_DUPFD_CLOEXEC;
+        }
+        return;
     default:
         return;
     }
@@ -724,10 +751,21 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 3: /* close: remove provenance at syscall exit */
         return;
     case 29: /* ioctl */
+        reject_unsupported_syscall(number);
+        return;
     case 32: /* dup */
     case 33: /* dup2 */
+    case 292: /* dup3 */
+        if (tracked_descriptor(task, (int)descriptor) == NULL)
+            observer.saw_external_descriptor = 1;
+        return;
     case 72: /* fcntl */
-        reject_unsupported_syscall(number);
+        if (regs->rsi == F_DUPFD || regs->rsi == F_DUPFD_CLOEXEC) {
+            if (tracked_descriptor(task, (int)descriptor) == NULL)
+                observer.saw_external_descriptor = 1;
+        } else {
+            reject_unsupported_syscall(number);
+        }
         return;
     case 9:  /* mmap */
         if (((int)regs->rdx & PROT_WRITE) != 0 &&
@@ -802,6 +840,18 @@ static void syscall_stop(struct task_state *task)
     long result = (long)registers.rax;
     if (task->syscall_number == 3) {
         forget_descriptor(task, task->pending_descriptor);
+    }
+    if (task->pending_duplication && result >= 0) {
+        const char *source = tracked_descriptor(task,
+                                                task->pending_descriptor);
+        int close_on_exec = task->pending_close_on_exec;
+        if (task->syscall_number == 33) close_on_exec = 0;
+        if (source != NULL &&
+            !(task->syscall_number == 33 &&
+              result == task->pending_descriptor) &&
+            remember_descriptor(task, (int)result,
+                close_on_exec ? O_CLOEXEC : 0, source) < 0)
+            mark_observer_failure();
     }
     if (task->pending_path[0] != '\0' &&
         (task->syscall_number == 2 || task->syscall_number == 257 ||
