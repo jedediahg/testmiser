@@ -463,7 +463,12 @@ set +e
 status=$?
 set -e
 test "$status" -eq 17
-sleep 0.2
+descendant_attempt=0
+while [ ! -s "$tmp_dir/descendant.out" ] &&
+      [ "$descendant_attempt" -lt 200 ]; do
+    sleep 0.01
+    descendant_attempt=$((descendant_attempt + 1))
+done
 test "$(cat "$tmp_dir/descendant.out")" = done
 
 set +e
@@ -544,7 +549,7 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
         printf '%s\n' 'read from an observed open descriptor was classified as external' >&2
         exit 1
     fi
-    grep -q 'observed input candidate: executable: ./build/openat2_probe' \
+    grep -q 'observed input candidate: executable: build/openat2_probe' \
         "$tmp_dir/openat2.err"
     if grep -Fq "$PWD/" "$tmp_dir/openat2.err"; then
         printf '%s\n' 'explain output leaked an absolute checkout path' >&2

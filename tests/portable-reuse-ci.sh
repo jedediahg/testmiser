@@ -11,8 +11,12 @@ private_key=$work/producer.pem
 key_json=$work/public-key.json
 
 cleanup() {
-    if [[ -d "$runtime" ]]; then sudo rm -rf -- "$runtime"; fi
-    rm -rf -- "$work"
+    if [[ "${TM_ACCEPTANCE_KEEP_WORK:-}" == 1 ]]; then
+        printf 'Keeping portable CI acceptance workspace: %s\n' "$work" >&2
+    else
+        if [[ -d "$runtime" ]]; then sudo rm -rf -- "$runtime"; fi
+        rm -rf -- "$work"
+    fi
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -30,10 +34,13 @@ if ! bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net \
 fi
 
 make -C "$repo_root" build/tm build/portable-reuse-probe
-sudo install -d -o root -g root -m 0755 "$runtime/bin"
+sudo install -d -o root -g root -m 0755 \
+    "$runtime/bin" "$runtime/workspace" "$runtime/dev" "$runtime/tmp"
 sudo install -o root -g root -m 0755 "$(command -v busybox)" \
     "$runtime/bin/busybox"
 sudo ln -s busybox "$runtime/bin/sh"
+sudo ln -s busybox "$runtime/bin/rm"
+sudo install -o root -g root -m 0666 /dev/null "$runtime/dev/null"
 sudo chmod -R a-w "$runtime"
 
 runtime_digest=$("$tm_bin" runtime digest "$runtime")

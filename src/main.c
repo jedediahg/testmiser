@@ -131,13 +131,13 @@ static char **profile_environment(const struct tm_profile *profile)
         const char *name = tm_profile_environment_name(profile, index);
         const char *value = tm_profile_environment_value(profile, index);
         size_t length = strlen(name) + strlen(value) + 2;
-        environment[index] = malloc(length);
-        if (environment[index] == NULL) {
-            while (index > 0) free(environment[--index]);
-            free(environment);
+        char *entry = malloc(length);
+        if (entry == NULL) {
+            free_environment(environment);
             return NULL;
         }
-        (void)snprintf(environment[index], length, "%s=%s", name, value);
+        environment[index] = entry;
+        (void)snprintf(entry, length, "%s=%s", name, value);
     }
     if (defaults_allowed) {
         size_t default_index;
@@ -153,13 +153,16 @@ static char **profile_environment(const struct tm_profile *profile)
                            name) == 0) break;
             if (env_index != count) continue;
             length = strlen(name) + strlen(value) + 2;
-            environment[index] = malloc(length);
-            if (environment[index] == NULL) {
-                free_environment(environment);
-                return NULL;
+            {
+                char *entry = malloc(length);
+                if (entry == NULL) {
+                    free_environment(environment);
+                    return NULL;
+                }
+                environment[index] = entry;
+                (void)snprintf(entry, length, "%s=%s", name, value);
             }
-            (void)snprintf(environment[index++], length, "%s=%s", name,
-                           value);
+            index++;
         }
     }
     return environment;

@@ -1,45 +1,93 @@
-#define _POSIX_C_SOURCE 200809L
+typedef unsigned long size_t;
 
-#include <errno.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-int main(int argc, char **argv)
+static long syscall3(long number, long first, long second, long third)
 {
-    char input[4096];
-    size_t used = 0;
-    int source, destination, result = 1;
+    register long result __asm__("rax") = number;
+    register long arg1 __asm__("rdi") = first;
+    register long arg2 __asm__("rsi") = second;
+    register long arg3 __asm__("rdx") = third;
+
+    __asm__ volatile("syscall"
+        : "+a"(result)
+        : "D"(arg1), "S"(arg2), "d"(arg3)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static size_t string_length(const char *value)
+{
+    size_t length = 0;
+    while (value[length] != '\0') length++;
+    return length;
+}
+
+static int starts_with(const char *value, const char *prefix)
+{
+    size_t index = 0;
+    while (prefix[index] != '\0') {
+        if (value[index] != prefix[index]) return 0;
+        index++;
+    }
+    return 1;
+}
+
+static int write_all(long descriptor, const char *buffer, size_t length)
+{
+    size_t written = 0;
+    while (written < length) {
+        long result = syscall3(1, descriptor, (long)(buffer + written),
+                               (long)(length - written));
+        if (result == -4) continue;
+        if (result <= 0) return -1;
+        written += (size_t)result;
+    }
+    return 0;
+}
+
+int portable_main(long argc, char **argv)
+{
+    static const char *const forbidden[] = {
+        "CI_JOB_ID=", "CI_PIPELINE_ID=", "CI_PROJECT_DIR=", "CI_JOB_TOKEN=",
+        "GITHUB_RUN_ID=", "GITHUB_WORKSPACE=", "GITHUB_TOKEN="
+    };
+    char input[4096] = {0};
+    size_t used = 0, index;
+    char **environment;
+    long source, destination, result;
+
     if (argc != 4) return 2;
-    if (getenv("CI_JOB_ID") != NULL || getenv("CI_PIPELINE_ID") != NULL ||
-        getenv("CI_PROJECT_DIR") != NULL || getenv("CI_JOB_TOKEN") != NULL ||
-        getenv("GITHUB_RUN_ID") != NULL || getenv("GITHUB_WORKSPACE") != NULL ||
-        getenv("GITHUB_TOKEN") != NULL) return 3;
-    source = open(argv[1], O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    environment = argv + argc + 1;
+    for (; *environment != 0; environment++) {
+        for (index = 0; index < sizeof(forbidden) / sizeof(forbidden[0]);
+             index++)
+            if (starts_with(*environment, forbidden[index])) return 3;
+    }
+
+    source = syscall3(2, (long)argv[1], 0, 0);
     if (source < 0) return 1;
     for (;;) {
-        ssize_t count = read(source, input + used, sizeof(input) - used);
-        if (count < 0 && errno == EINTR) continue;
-        if (count < 0 || (count == 0 && used == sizeof(input))) goto done;
-        if (count == 0) break;
-        used += (size_t)count;
+        result = syscall3(0, source, (long)(input + used),
+                          (long)(sizeof(input) - used));
+        if (result == -4) continue;
+        if (result < 0 || (result == 0 && used == sizeof(input))) return 1;
+        if (result == 0) break;
+        used += (size_t)result;
     }
-    if (used == 0 || input[used - 1] != '\n') goto done;
-    input[used - 1] = '\0';
-    destination = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC |
-                                  O_NOFOLLOW, 0644);
-    if (destination < 0) goto done;
-    if (dprintf(destination, "%s:%s\n", argv[3], input) < 0) {
-        close(destination);
-        goto done;
-    }
-    if (close(destination) < 0 || dprintf(STDOUT_FILENO, "%s:%s\n",
-                                          argv[3], input) < 0)
-        goto done;
-    result = 0;
-done:
-    close(source);
-    return result;
+    if (used == 0 || input[used - 1] != '\n') return 1;
+    used--;
+
+    destination = syscall3(2, (long)argv[2], 1 | 0100 | 01000 | 02000000 |
+                           0400000, 0644);
+    if (destination < 0) return 1;
+    if (write_all(destination, argv[3], string_length(argv[3])) < 0 ||
+        write_all(destination, ":", 1) < 0 ||
+        write_all(destination, input, used) < 0 ||
+        write_all(destination, "\n", 1) < 0 ||
+        write_all(1, argv[3], string_length(argv[3])) < 0 ||
+        write_all(1, ":", 1) < 0 || write_all(1, input, used) < 0 ||
+        write_all(1, "\n", 1) < 0)
+        return 1;
+    (void)syscall3(3, destination, 0, 0);
+    (void)syscall3(3, source, 0, 0);
+    return 0;
 }

@@ -73,9 +73,32 @@ int tm_repo_root(const char *requested, char **output)
     }
 }
 
+static char *normalize_relative_path(const char *path)
+{
+    size_t length = strlen(path), input = 0, output = 0;
+    char *normalized = malloc(length + 1);
+    if (normalized == NULL) return NULL;
+    while (input < length) {
+        size_t start, component_length;
+        while (input < length && path[input] == '/') input++;
+        start = input;
+        while (input < length && path[input] != '/') input++;
+        component_length = input - start;
+        if (component_length == 0 ||
+            (component_length == 1 && path[start] == '.')) continue;
+        if (output != 0) normalized[output++] = '/';
+        memcpy(normalized + output, path + start, component_length);
+        output += component_length;
+    }
+    if (output == 0) normalized[output++] = '.';
+    normalized[output] = '\0';
+    return normalized;
+}
+
 char *tm_repo_relative_path(const char *root, const char *absolute_path)
 {
     size_t root_length;
+    const char *relative;
     if (root == NULL || absolute_path == NULL || absolute_path[0] != '/') {
         errno = EXDEV;
         return NULL;
@@ -83,7 +106,7 @@ char *tm_repo_relative_path(const char *root, const char *absolute_path)
     root_length = strlen(root);
     if (strcmp(root, absolute_path) == 0) return strdup(".");
     if (root_length == 1 && root[0] == '/')
-        return strdup(absolute_path + 1);
+        return normalize_relative_path(absolute_path + 1);
     if (strlen(absolute_path) < root_length ||
         strncmp(root, absolute_path, root_length) != 0 ||
         (absolute_path[root_length] != '\0' &&
@@ -92,5 +115,6 @@ char *tm_repo_relative_path(const char *root, const char *absolute_path)
         return NULL;
     }
     if (absolute_path[root_length] == '\0') return strdup(".");
-    return strdup(absolute_path + root_length + 1);
+    relative = absolute_path + root_length + 1;
+    return normalize_relative_path(relative);
 }

@@ -35,7 +35,11 @@ fi
 work=$(mktemp -d)
 shared_store_cleanup=
 cleanup() {
-    rm -rf -- "$work"
+    if [[ "${TM_ACCEPTANCE_KEEP_WORK:-}" == 1 ]]; then
+        printf 'Keeping portable acceptance workspace: %s\n' "$work" >&2
+    else
+        rm -rf -- "$work"
+    fi
     if [[ -n "$shared_store_cleanup" ]]; then
         rm -rf -- "$shared_store_cleanup"
     fi
@@ -55,7 +59,7 @@ else
     mkdir -m 0700 "$shared_store"
 fi
 id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-git clone --quiet --local "$repo_root" "$work/producer"
+git clone --quiet --no-hardlinks --local "$repo_root" "$work/producer"
 git -C "$work/producer" config user.name 'tm acceptance test'
 git -C "$work/producer" config user.email 'tm-acceptance@localhost'
 mkdir -p "$work/producer/build"
@@ -169,6 +173,9 @@ if [[ "$(cat "$work/producer.out")" != "$id:unchanged-input" ||
     exit 1
 fi
 grep -q '^tm: RUN:' "$work/producer.err"
+if [[ ! -d "$work/producer/.tm/results" ]]; then
+    cat "$work/producer.err" >&2
+fi
 assert_metadata_redacted "$work/producer/.tm/results" \
     "$work/producer" "$work/gitlab-host-home" \
     gitlab-producer-job gitlab-producer-pipeline gitlab-test-token
@@ -176,7 +183,11 @@ git -C "$work/producer" add -f .tm/results .tm/blobs \
     build/portable-input.txt build/portable-reuse-probe
 git -C "$work/producer" commit --quiet -m 'Add portable reuse acceptance evidence'
 
-git clone --quiet --local "$work/producer" "$work/consumer"
+git clone --quiet --no-hardlinks --local "$work/producer" "$work/consumer"
+if [[ -d "$work/consumer/.tm/blobs/sha256" ]]; then
+    find "$work/consumer/.tm/blobs/sha256" -type f \
+        -exec chmod 0444 -- {} +
+fi
 if [[ -e "$work/consumer/build/reports/portable-reuse.txt" ]]; then
     printf '%s\n' 'Consumer unexpectedly received the producer working-tree output.' >&2
     exit 1
@@ -253,7 +264,7 @@ if [[ -s "$work/worktree.out" ]] ||
 fi
 
 shared_id=$id-shared
-git clone --quiet --local "$repo_root" "$work/shared-producer"
+git clone --quiet --no-hardlinks --local "$repo_root" "$work/shared-producer"
 git -C "$work/shared-producer" config user.name 'tm acceptance test'
 git -C "$work/shared-producer" config user.email 'tm-acceptance@localhost'
 mkdir -p "$work/shared-producer/build/reports"
@@ -283,6 +294,9 @@ if [[ "$(cat "$work/shared-producer.out")" != \
     printf '%s\n' 'Shared-store producer did not create the expected output.' >&2
     exit 1
 fi
+if [[ ! -d "$work/shared-producer/.tm/results" ]]; then
+    cat "$work/shared-producer.err" >&2
+fi
 assert_metadata_redacted "$work/shared-producer/.tm/results" \
     "$work/shared-producer" "$work/github-producer-host-home" \
     github-producer-run github-producer-token
@@ -290,7 +304,7 @@ git -C "$work/shared-producer" add -f \
     build/portable-input.txt build/portable-reuse-probe
 git -C "$work/shared-producer" commit --quiet -m \
     'Add shared-store acceptance fixture'
-git clone --quiet --local "$work/shared-producer" "$work/shared-consumer"
+git clone --quiet --no-hardlinks --local "$work/shared-producer" "$work/shared-consumer"
 git -C "$work/shared-consumer" rm --quiet --ignore-unmatch -r \
     .tm/results .tm/blobs
 mkdir -p "$work/shared-consumer/build/reports"
@@ -355,7 +369,7 @@ if [[ -s "$work/shared-restored.out" ]] ||
 fi
 
 concurrent_id=$id-concurrent
-git clone --quiet --local "$repo_root" "$work/concurrent"
+git clone --quiet --no-hardlinks --local "$repo_root" "$work/concurrent"
 git -C "$work/concurrent" config user.name 'tm acceptance test'
 git -C "$work/concurrent" config user.email 'tm-acceptance@localhost'
 mkdir -p "$work/concurrent/build/reports"

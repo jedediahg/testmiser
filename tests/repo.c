@@ -42,6 +42,11 @@ int main(void)
         relative = tm_repo_relative_path(resolved, inside);
         if (relative == NULL || strcmp(relative, "subdir/file.c") != 0)
             goto done;
+        free(relative); relative = NULL;
+        snprintf(inside, sizeof(inside), "%s/./subdir/./file.c", git_root);
+        relative = tm_repo_relative_path(resolved, inside);
+        if (relative == NULL || strcmp(relative, "subdir/file.c") != 0)
+            goto done;
     }
     free(relative); relative = NULL;
     free(resolved); resolved = NULL;

@@ -110,9 +110,10 @@ $(BUILD_DIR)/output_probe: tests/output_probe.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
-$(BUILD_DIR)/portable-reuse-probe: tests/portable_reuse_probe.c
+$(BUILD_DIR)/portable-reuse-probe: tests/portable_reuse_probe.c tests/portable_reuse_start.S
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -static -o $@ $<
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -static -nostdlib -fno-pie \
+		-fno-stack-protector -fno-builtin -no-pie -Wl,-e,_start -o $@ $^
 
 $(BUILD_DIR)/test_digest: tests/digest.c src/digest.c include/tm/digest.h
 	@mkdir -p $(BUILD_DIR)

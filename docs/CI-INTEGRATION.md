@@ -161,6 +161,9 @@ else
 fi
 
 if [[ "$has_results" == true ]]; then
+  if [[ -d .tm/blobs/sha256 ]]; then
+    find .tm/blobs/sha256 -type f -exec chmod 0444 -- {} +
+  fi
   "$TM_BIN" validate --root . \
     --trust-policy "$TM_TRUST_POLICY_FILE" --require-trust
 fi
@@ -170,7 +173,9 @@ This preserves test execution for source changes and unknown diff bases while
 avoiding the suite for an evidence-only commit. Use the provider's correct
 merge-request base SHA and ensure the job has enough Git history for the
 three-dot comparison. A missing trust policy must fail strict validation;
-never downgrade it to a successful no-op.
+never downgrade it to a successful no-op. Git does not preserve read-only
+permission bits for checked-in regular files, so restore immutable blob mode
+`0444` before validation; the helper script performs this normalization.
 
 For jobs where overlapping cold runs are unacceptable, set
 `TM_COORDINATION_MODE=strict` and configure a coherent shared filesystem in

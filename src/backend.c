@@ -850,7 +850,7 @@ static int run_probe(const struct argument_vector *arguments,
         "for scratch do p=\"$scratch/.tm-scratch-probe-$$\"; "
         "(umask 077; : >\"$p\") || exit 94; "
         "rm -f -- \"$p\" || exit 95; done; "
-        "p=/workspace/.tm-profile-probe-$$; "
+        "p=/workspace/.tm/.tm-profile-probe-$$; "
         ": >\"$p\" && rm -f -- \"$p\"";
     struct argument_vector probe = {0};
     size_t index, separator = arguments->count;

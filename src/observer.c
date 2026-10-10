@@ -88,6 +88,7 @@ struct fd_entry {
 struct task_state {
     pid_t pid;
     int active;
+    int in_execution_tree;
     int syscall_entry;
     long syscall_number;
     unsigned long flags;
@@ -355,26 +356,32 @@ static void forget_descriptor(struct task_state *task, int fd)
     }
 }
 
+/* GCC 12's analyzer treats paths retained by the global task table as lost;
+ * forget_descriptor(), finish_task(), and detach_descendants() own cleanup. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
+#endif
 static int remember_descriptor(struct task_state *task, int fd,
                                unsigned long flags, int is_directory,
                                const char *path)
 {
-    char *copy;
+    struct fd_entry *entry;
     if (fd < 0 || fd > 1048576 || path == NULL) return -1;
-    copy = strdup(path);
-    if (copy == NULL) return -1;
     forget_descriptor(task, fd);
-    if (task->fd_count == TM_MAX_DESCRIPTORS) {
-        free(copy);
-        return -1;
-    }
-    task->descriptors[task->fd_count].descriptor = fd;
-    task->descriptors[task->fd_count].flags = flags;
-    task->descriptors[task->fd_count].is_directory = is_directory;
-    task->descriptors[task->fd_count].path = copy;
+    if (task->fd_count == TM_MAX_DESCRIPTORS) return -1;
+    entry = &task->descriptors[task->fd_count];
+    entry->path = strdup(path);
+    if (entry->path == NULL) return -1;
+    entry->descriptor = fd;
+    entry->flags = flags;
+    entry->is_directory = is_directory;
     task->fd_count++;
     return 0;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static int copy_descriptors(struct task_state *destination,
                             const struct task_state *source)
@@ -1060,19 +1067,27 @@ static void syscall_stop(struct task_state *task)
     }
     if (!task->syscall_entry) {
         task->syscall_entry = 1;
-        if (!observer.observation_started) {
+        {
             long number = (long)registers.orig_rax;
-            if (number == 59 || number == 322)
+            if (!task->in_execution_tree) {
+                if (!observer.observation_started &&
+                    (number == 59 || number == 322))
+                    note_syscall(number, &registers, task);
+                return;
+            }
+            if (!observer.observation_started &&
+                (number == 59 || number == 322))
                 note_syscall(number, &registers, task);
-            return;
+            else {
+                note_syscall(number, &registers, task);
+                classify_syscall(number, &registers, 1, task);
+            }
         }
-        note_syscall((long)registers.orig_rax, &registers, task);
-        classify_syscall((long)registers.orig_rax, &registers, 1, task);
         return;
     }
 
     task->syscall_entry = 0;
-    if (!observer.observation_started) return;
+    if (!observer.observation_started || !task->in_execution_tree) return;
     long result = (long)registers.rax;
     if (task->syscall_number == 3) {
         if (result < 0) mark_unmodeled_error();
@@ -1328,8 +1343,11 @@ static void resume_task(pid_t pid, int signal_number)
 {
     if (ptrace(PTRACE_SYSCALL, pid, NULL,
                (void *)(long)signal_number) < 0 && errno != ESRCH) {
+        int saved_error = errno;
         observer.saw_unknown_syscall = 1;
         observer.saw_observer_failure = 1;
+        fprintf(stderr, "tm: observer could not resume process %ld: %s\n",
+                (long)pid, strerror(saved_error));
         (void)ptrace(PTRACE_CONT, pid, NULL, (void *)(long)signal_number);
     }
 }
@@ -1337,12 +1355,22 @@ static void resume_task(pid_t pid, int signal_number)
 static void detach_descendants(void)
 {
     size_t index;
+    int has_tasks = 0;
+    int has_application_descendants = 0;
 
-    if (observer.live_tasks == 0) {
-        return;
+    for (index = 0; index < TM_MAX_TASKS; index++) {
+        if (tasks[index].active && tasks[index].pid != observer.direct_pid) {
+            has_tasks = 1;
+            if (tasks[index].in_execution_tree)
+                has_application_descendants = 1;
+        }
     }
-    observer.saw_outliving_descendant = 1;
-    fprintf(stderr, "tm: reuse rejected: descendant outlived the command\n");
+    if (!has_tasks) return;
+    if (has_application_descendants) {
+        observer.saw_outliving_descendant = 1;
+        fprintf(stderr,
+                "tm: reuse rejected: descendant outlived the command\n");
+    }
     for (index = 0; index < TM_MAX_TASKS; index++) {
         if (tasks[index].active && tasks[index].pid != observer.direct_pid) {
             (void)kill(tasks[index].pid, SIGSTOP);
@@ -1364,10 +1392,7 @@ static void detach_descendants(void)
             }
         }
         if (waited == tasks[index].pid && WIFSTOPPED(status)) {
-            (void)ptrace(PTRACE_DETACH, tasks[index].pid, NULL,
-                         (void *)(long)SIGCONT);
-        } else {
-            (void)kill(tasks[index].pid, SIGCONT);
+            (void)ptrace(PTRACE_DETACH, tasks[index].pid, NULL, NULL);
         }
         {
             size_t descriptor_index;
@@ -1378,6 +1403,12 @@ static void detach_descendants(void)
             tasks[index].fd_count = 0;
         }
         tasks[index].active = 0;
+    }
+    /* Resume only after every tracee is detached. Delivering SIGCONT while
+     * other tracees still have a pending SIGSTOP can leave them stopped. */
+    for (index = 0; index < TM_MAX_TASKS; index++) {
+        if (tasks[index].pid != observer.direct_pid)
+            (void)kill(tasks[index].pid, SIGCONT);
     }
 }
 
@@ -1427,9 +1458,13 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     observer.observation_started = start_after_exec == NULL;
     observer.saw_external_descriptor = inherited_descriptors;
     observer.direct_pid = child;
-    if (add_task(child) == NULL) {
-        mark_report_observer_failure(report);
-        return plain_wait(child);
+    {
+        struct task_state *initial_task = add_task(child);
+        if (initial_task == NULL) {
+            mark_report_observer_failure(report);
+            return plain_wait(child);
+        }
+        initial_task->in_execution_tree = start_after_exec == NULL;
     }
     do {
         waited = waitpid(child, &status, 0);
@@ -1531,7 +1566,11 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                 if (new_task == NULL) {
                     observer.saw_unknown_syscall = 1;
                 } else {
-                    new_task->syscall_entry = 1;
+                    /* The child's first syscall-stop is its next entry; the
+                     * parent-side clone event does not produce a child exit
+                     * stop that should advance this phase. */
+                    new_task->syscall_entry = 0;
+                    new_task->in_execution_tree = task->in_execution_tree;
                     if (event != PTRACE_EVENT_CLONE ||
                         !task->shares_descriptors) {
                         if (copy_descriptors(new_task, task) < 0)
@@ -1546,6 +1585,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                     target_executable_matches(observer.start_after_exec,
                                               task->pending_path)) {
                     observer.observation_started = 1;
+                    task->in_execution_tree = 1;
                     candidate_path("executable", task->pending_path);
                 }
             } else if ((task->syscall_number == 59 ||
