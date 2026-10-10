@@ -1,6 +1,6 @@
 # Specification Review: Implementation Decisions
 
-Current implementation update: `TM_SHARED_STORE` configures an optional filesystem-backed shared result store. The CLI searches it after repository and per-user stores and publishes signed records and output blobs to it. This enables transport only when operators provide a common mount; no remote object-store adapter, distributed coordinator, or cross-provider acceptance proof is implemented. Durable local attempt/quarantine state and explicit resolution are implemented.
+Current implementation update: `TM_SHARED_STORE` configures an optional filesystem-backed shared result store. The CLI searches it after repository and per-user stores and publishes signed records and output blobs to it. This enables transport only when operators provide a common mount; no remote object-store adapter, distributed coordinator, or cross-provider acceptance proof is implemented. `tm validate --require-trust` verifies referenced output blobs for policy-approved records, and CI classifies both `.tm/results/**` and `.tm/blobs/**` changes as evidence-only before strict validation. Durable local attempt/quarantine state and explicit resolution are implemented.
 
 The CLI reports version `0.1`; newly produced signed sidecars use schema version 3 with signed `tm_version` producer metadata and retain verification semantics version 2. The x86-64 observer accepts pathname-based `execveat` calls with zero flags, records the executable path on successful exec, and treats `AT_EMPTY_PATH` or other flagged forms as unsupported.
 

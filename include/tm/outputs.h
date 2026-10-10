@@ -40,6 +40,10 @@ int tm_outputs_restore(int repository_root_fd, const char *const *roots,
 int tm_outputs_restore_from_store(
     int workspace_root_fd, int blob_store_root_fd, const char *const *roots,
     size_t root_count, const struct tm_output_manifest *manifest);
+/* Verify that every file blob referenced by a manifest exists and matches its
+ * signed digest and size, without modifying the workspace. */
+int tm_outputs_verify_store(int blob_store_root_fd,
+                            const struct tm_output_manifest *manifest);
 void tm_output_manifest_clear(struct tm_output_manifest *manifest);
 
 #endif

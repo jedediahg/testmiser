@@ -25,7 +25,7 @@ fi
 has_results=0
 only_results=1
 for path in "${changed_files[@]}"; do
-    if [[ "$path" == .tm/results/* ]]; then
+    if [[ "$path" == .tm/results/* || "$path" == .tm/blobs/* ]]; then
         has_results=1
     else
         only_results=0

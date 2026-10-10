@@ -14,6 +14,7 @@
 #include <openssl/evp.h>
 
 #include "tm/result.h"
+#include "tm/outputs.h"
 #include "tm/repo.h"
 #include "tm/trust.h"
 #include "tm/validate.h"
@@ -114,7 +115,8 @@ static int check_filename(const char *name, const char *record_id)
     return n > 0 && (size_t)n < sizeof(expected) && strcmp(name, expected) == 0;
 }
 
-static int validate_one(int dirfd, const char *name, const char *command_id,
+static int validate_one(int rootfd, int dirfd, const char *name,
+                        const char *command_id,
                         const char *verification_id,
                         const struct tm_trust_policy *policy, int require_trust,
                         unsigned long counts[7], size_t *remaining_bytes)
@@ -153,6 +155,14 @@ static int validate_one(int dirfd, const char *name, const char *command_id,
         fprintf(stderr, "tm validate: %s: %s (trust required)\n", name,
                 status_name(trust));
         valid = 2;
+        goto done;
+    }
+    if (trust == TM_TRUST_APPROVED && summary.output_count > 0 &&
+        tm_outputs_verify_store(rootfd,
+            &(struct tm_output_manifest){summary.outputs,
+                                         summary.output_count}) < 0) {
+        fprintf(stderr, "tm validate: %s: missing or corrupt output blob\n",
+                name);
         goto done;
     }
     printf("%s: valid, %s\n", name, status_name(trust));
@@ -265,7 +275,7 @@ int tm_validate_main(int argc, char **argv)
                 }
                 n = strlen(record_entry->d_name);
                 if (n < 8 || strcmp(record_entry->d_name + n - 8, ".tm.json") != 0) continue;
-                result = validate_one(verifyfd, record_entry->d_name,
+                result = validate_one(rootfd, verifyfd, record_entry->d_name,
                     command_entry->d_name, verification_entry->d_name,
                     policy, require_trust, counts, &remaining_bytes);
                 if (result == 0) saw_invalid = 1;

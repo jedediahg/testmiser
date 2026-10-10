@@ -25,6 +25,17 @@ if (cd "$repo" && bash "$script" only "$base" "$results") &&
     exit 1
 fi
 
+mkdir -p "$repo/.tm/blobs/sha256"
+printf 'blob\n' >"$repo/.tm/blobs/sha256/$(printf 'a%.0s' {1..64})"
+git -C "$repo" add -f .tm/blobs/sha256
+git -C "$repo" commit -qm "add output blob"
+blobs=$(git -C "$repo" rev-parse HEAD)
+if (cd "$repo" && bash "$script" only "$results" "$blobs") &&
+   (cd "$repo" && bash "$script" any "$results" "$blobs"); then :; else
+    echo "blob-only diff was not classified as evidence metadata" >&2
+    exit 1
+fi
+
 printf 'changed\n' >>"$repo/src/main.c"
 git -C "$repo" add .
 git -C "$repo" commit -qm "change source"

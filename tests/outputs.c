@@ -62,8 +62,20 @@ int main(void)
         strcmp(manifest.entries[3].path, "build/reports/sub/b.txt") != 0 ||
         strcmp(manifest.entries[3].digest, digest) != 0) goto done;
 
+    if (tm_outputs_verify_store(root_fd, &manifest) < 0) goto done;
+
     snprintf(blob_path, sizeof(blob_path), "%s/.tm/blobs/sha256/%s", root,
              digest + 7);
+    if (chmod(blob_path, 0644) < 0) goto done;
+    file_fd = open(blob_path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (file_fd < 0 || pwrite(file_fd, "jello", 5, 0) != 5 ||
+        close(file_fd) < 0) goto done;
+    file_fd = -1;
+    if (chmod(blob_path, 0444) < 0 ||
+        tm_outputs_verify_store(root_fd, &manifest) == 0 ||
+        unlink(blob_path) < 0 ||
+        tm_outputs_capture(root_fd, roots, 1, &manifest) < 0 ||
+        tm_outputs_verify_store(root_fd, &manifest) < 0) goto done;
     file_fd = open(blob_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (file_fd < 0 || read(file_fd, bytes, 5) != 5 ||
         memcmp(bytes, "hello", 5) != 0) goto done;

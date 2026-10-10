@@ -448,6 +448,57 @@ done:
     return result;
 }
 
+int tm_outputs_verify_store(int blob_store_root_fd,
+                            const struct tm_output_manifest *manifest)
+{
+    int blob_fd, result = 0;
+    size_t index;
+    if (blob_store_root_fd < 0 || manifest == NULL ||
+        (manifest->count > 0 && manifest->entries == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (manifest->count == 0) return 0;
+    blob_fd = read_blob_directory(blob_store_root_fd);
+    if (blob_fd < 0) return -1;
+    for (index = 0; index < manifest->count; index++) {
+        const struct tm_output_entry *entry = &manifest->entries[index];
+        char name[65];
+        size_t digit;
+        if (entry->kind == TM_OUTPUT_DIRECTORY) continue;
+        if (entry->kind != TM_OUTPUT_FILE ||
+            strnlen(entry->digest, sizeof(entry->digest)) != 71 ||
+            memcmp(entry->digest, "sha256:", 7) != 0) {
+            errno = EINVAL;
+            result = -1;
+            break;
+        }
+        for (digit = 0; digit < 64; digit++) {
+            char value = entry->digest[digit + 7];
+            if (!((value >= '0' && value <= '9') ||
+                  (value >= 'a' && value <= 'f'))) break;
+            name[digit] = value;
+        }
+        if (digit != 64) {
+            errno = EINVAL;
+            result = -1;
+            break;
+        }
+        name[64] = '\0';
+        if (verify_existing_blob(blob_fd, name, entry->digest,
+                                 entry->size) < 0) {
+            result = -1;
+            break;
+        }
+    }
+    {
+        int saved = errno;
+        close(blob_fd);
+        errno = saved;
+    }
+    return result;
+}
+
 static int publish_blob(int blob_fd, int source_fd, const struct stat *before,
                         char digest[72], uint64_t *size)
 {
