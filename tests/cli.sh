@@ -24,6 +24,12 @@ printf original >"$tmp_dir/repo/tests/explicit.txt"
     2>"$tmp_dir/input-changed.err"
 grep -q 'declared input changed or became unsafe: tests/explicit.txt' \
     "$tmp_dir/input-changed.err"
+ln -s explicit.txt "$tmp_dir/repo/tests/link"
+"$tm_bin" --explain --root "$tmp_dir/repo" --input tests/link -- \
+    sh -c 'rm "$1"; ln -s other.txt "$1"' sh \
+    "$tmp_dir/repo/tests/link" 2>"$tmp_dir/input-link-changed.err"
+grep -q 'declared input changed or became unsafe: tests/link' \
+    "$tmp_dir/input-link-changed.err"
 "$tm_bin" --explain --root "$tmp_dir/repo" --input tests/missing.txt -- \
     /bin/true 2>"$tmp_dir/input-missing.err"
 if grep -q 'declared input could not be captured: tests/missing.txt' \

@@ -14,6 +14,10 @@ int tm_input_capture_directory(int root_fd, const char *path, char digest[72]);
 /* Capture whether a canonical path is absent without following symlinks. */
 int tm_input_capture_exists(int root_fd, const char *path, int *exists);
 
+/* Capture a stable relative symlink target. The caller owns *target. Absolute
+ * targets, invalid UTF-8, and targets containing `..` are rejected. */
+int tm_input_capture_symlink(int root_fd, const char *path, char **target);
+
 /* Compare one recorded input with the current repository view rooted at an
  * already-open directory. Return 0 for a match, 1 for changed state, -1 for
  * unsafe, unsupported, or failed inspection. Symlink traversal is rejected;

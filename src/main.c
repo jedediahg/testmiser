@@ -202,6 +202,7 @@ int main(int argc, char **argv)
     char *repository_root = NULL;
     struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
     char explicit_input_digests[TM_MAX_EXPLICIT_INPUTS][72];
+    char *explicit_input_targets[TM_MAX_EXPLICIT_INPUTS] = {0};
     const char *unavailable_inputs[TM_MAX_EXPLICIT_INPUTS];
     size_t explicit_input_count = 0, unavailable_input_count = 0, index;
     int repository_fd = -1;
@@ -279,6 +280,12 @@ int main(int argc, char **argv)
                     explicit_input_digests[explicit_input_count]);
             }
             if (captured < 0 && repository_fd >= 0 &&
+                tm_input_capture_symlink(repository_fd, path,
+                    &explicit_input_targets[explicit_input_count]) == 0) {
+                kind = TM_INPUT_SYMLINK;
+                captured = 0;
+            }
+            if (captured < 0 && repository_fd >= 0 &&
                 tm_input_capture_exists(repository_fd, path, &exists) == 0 &&
                 !exists) {
                 kind = TM_INPUT_EXISTS;
@@ -287,9 +294,9 @@ int main(int argc, char **argv)
             if (captured == 0) {
                 explicit_inputs[explicit_input_count] =
                     (struct tm_input_observation){path, kind,
-                        kind == TM_INPUT_EXISTS ? NULL :
+                        kind == TM_INPUT_EXISTS || kind == TM_INPUT_SYMLINK ? NULL :
                             explicit_input_digests[explicit_input_count],
-                        NULL, 0};
+                        explicit_input_targets[explicit_input_count], 0};
                 explicit_input_count++;
             } else {
                 unavailable_inputs[unavailable_input_count++] = path;
@@ -315,6 +322,8 @@ int main(int argc, char **argv)
                     "tm: reuse rejected: declared input could not be captured: %s\n",
                     unavailable_inputs[index]);
     if (repository_fd >= 0) close(repository_fd);
+    for (index = 0; index < explicit_input_count; index++)
+        free(explicit_input_targets[index]);
     free_environment(child_environment);
     free(repository_root);
     tm_profile_free(profile);

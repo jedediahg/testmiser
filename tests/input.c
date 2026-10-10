@@ -27,10 +27,12 @@ int main(void)
 {
     char directory[] = "/tmp/tm-input-test-XXXXXX";
     char alpha[256], link_path[256], sub[256], nested[256], fifo[256];
+    char absolute_link[256], escaping_link[256];
     char future[256];
     char file_hex[65], file_digest[72], captured_digest[72];
     int root = -1, status = 1;
     struct tm_input_observation input;
+    char *captured_target = NULL;
 
     if (mkdtemp(directory) == NULL) return 1;
     snprintf(alpha, sizeof(alpha), "%s/alpha", directory);
@@ -39,8 +41,12 @@ int main(void)
     snprintf(nested, sizeof(nested), "%s/sub/item", directory);
     snprintf(fifo, sizeof(fifo), "%s/pipe", directory);
     snprintf(future, sizeof(future), "%s/future", directory);
+    snprintf(absolute_link, sizeof(absolute_link), "%s/absolute", directory);
+    snprintf(escaping_link, sizeof(escaping_link), "%s/escaping", directory);
     if (write_file(alpha, "hello\n") < 0 || mkdir(sub, 0700) < 0 ||
-        symlink("alpha", link_path) < 0 || mkfifo(fifo, 0600) < 0 ||
+        symlink("alpha", link_path) < 0 ||
+        symlink("/etc/passwd", absolute_link) < 0 ||
+        symlink("../alpha", escaping_link) < 0 || mkfifo(fifo, 0600) < 0 ||
         tm_sha256_bytes("hello\n", 6, file_hex) < 0) goto done;
     snprintf(file_digest, sizeof(file_digest), "sha256:%s", file_hex);
     root = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -60,6 +66,17 @@ int main(void)
     }
     if (tm_input_capture_file(root, "pipe", captured_digest) == 0) {
         fprintf(stderr, "special file was accepted as regular input\n");
+        goto done;
+    }
+    if (tm_input_capture_symlink(root, "link", &captured_target) != 0 ||
+        strcmp(captured_target, "alpha") != 0) {
+        fprintf(stderr, "safe symlink input capture failed\n");
+        goto done;
+    }
+    free(captured_target); captured_target = NULL;
+    if (tm_input_capture_symlink(root, "absolute", &captured_target) == 0 ||
+        tm_input_capture_symlink(root, "escaping", &captured_target) == 0) {
+        fprintf(stderr, "unsafe symlink input target was accepted\n");
         goto done;
     }
     {
@@ -91,6 +108,12 @@ int main(void)
     input = (struct tm_input_observation){"link", TM_INPUT_SYMLINK,
                                           NULL, "alpha", 0};
     if (tm_input_matches(root, &input) != 0) goto done;
+    if (unlink(link_path) < 0 || symlink("sub/item", link_path) < 0 ||
+        tm_input_matches(root, &input) != 1 || unlink(link_path) < 0 ||
+        symlink("alpha", link_path) < 0) {
+        fprintf(stderr, "symlink target change was not detected\n");
+        goto done;
+    }
     input = (struct tm_input_observation){"sub", TM_INPUT_DIRECTORY,
         "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         NULL, 0};
@@ -116,11 +139,14 @@ int main(void)
     }
     status = 0;
 done:
+    free(captured_target);
     if (root >= 0) close(root);
     unlink(nested);
     unlink(fifo);
     unlink(future);
     unlink(link_path);
+    unlink(absolute_link);
+    unlink(escaping_link);
     unlink(alpha);
     rmdir(sub);
     rmdir(directory);

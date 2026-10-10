@@ -63,6 +63,21 @@ static int valid_relative_path(const char *path)
     }
 }
 
+static int valid_symlink_target(const char *target)
+{
+    const char *part;
+    if (target == NULL || target[0] == '\0' || target[0] == '/' ||
+        !valid_utf8((const unsigned char *)target)) return 0;
+    for (part = target; *part != '\0';) {
+        const char *end = strchr(part, '/');
+        size_t length = end == NULL ? strlen(part) : (size_t)(end - part);
+        if (length == 2 && part[0] == '.' && part[1] == '.') return 0;
+        if (end == NULL) break;
+        part = end + 1;
+    }
+    return 1;
+}
+
 static int same_version(const struct stat *a, const struct stat *b)
 {
     return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
@@ -353,6 +368,48 @@ int tm_input_capture_exists(int root_fd, const char *path, int *exists)
     return 0;
 }
 
+int tm_input_capture_symlink(int root_fd, const char *path, char **target)
+{
+    char *leaf = NULL, *copy = NULL;
+    char buffer[INPUT_PATH_LIMIT + 1];
+    struct stat before, after;
+    ssize_t length;
+    int parent, saved;
+    if (target == NULL) { errno = EINVAL; return -1; }
+    *target = NULL;
+    if (root_fd < 0 || !valid_relative_path(path)) {
+        errno = EINVAL;
+        return -1;
+    }
+    parent = open_parent(root_fd, path, &leaf);
+    if (parent < 0) return -1;
+    if (fstatat(parent, leaf, &before, AT_SYMLINK_NOFOLLOW) < 0) goto fail;
+    if (!S_ISLNK(before.st_mode)) { errno = EINVAL; goto fail; }
+    length = readlinkat(parent, leaf, buffer, sizeof(buffer) - 1);
+    if (length < 0) goto fail;
+    if ((size_t)length >= sizeof(buffer) - 1 ||
+        fstatat(parent, leaf, &after, AT_SYMLINK_NOFOLLOW) < 0 ||
+        !same_version(&before, &after)) {
+        errno = EBUSY;
+        goto fail;
+    }
+    buffer[length] = '\0';
+    if (!valid_symlink_target(buffer)) { errno = EOPNOTSUPP; goto fail; }
+    copy = strdup(buffer);
+    if (copy == NULL) goto fail;
+    *target = copy;
+    close(parent);
+    free(leaf);
+    return 0;
+fail:
+    saved = errno;
+    close(parent);
+    free(leaf);
+    free(copy);
+    errno = saved;
+    return -1;
+}
+
 static int check_one(int root_fd, const struct tm_input_observation *input)
 {
     char *leaf = NULL;
@@ -401,18 +458,8 @@ static int check_one(int root_fd, const struct tm_input_observation *input)
                 fstatat(parent, leaf, &after, AT_SYMLINK_NOFOLLOW) < 0 ||
                 !same_version(&st, &after)) { errno = EBUSY; goto cleanup; }
             target[n] = '\0';
-            if (!valid_utf8((unsigned char *)target) || target[0] == '/') {
+            if (!valid_symlink_target(target)) {
                 errno = EOPNOTSUPP; goto cleanup;
-            }
-            for (const char *part = target; *part != '\0';) {
-                const char *end = strchr(part, '/');
-                size_t part_length = end == NULL ? strlen(part) :
-                                     (size_t)(end - part);
-                if (part_length == 2 && part[0] == '.' && part[1] == '.') {
-                    errno = EOPNOTSUPP; goto cleanup;
-                }
-                if (end == NULL) break;
-                part = end + 1;
             }
             if (input->target == NULL) { errno = EINVAL; goto cleanup; }
             result = strcmp(input->target, target) == 0 ? 0 : 1;
