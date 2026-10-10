@@ -271,16 +271,21 @@ static int test_store(const unsigned char *record, size_t length,
     fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
     if (fd < 0) goto done;
     { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+    stage = 9;
     tmfd = openat(rootfd, ".tm", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (tmfd < 0) goto done;
+    stage = 10;
     resultsfd = openat(tmfd, "results", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (resultsfd < 0) goto done;
+    stage = 11;
     commandfd = openat(resultsfd, summary.command_id,
                        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (commandfd < 0) goto done;
+    stage = 12;
     verifyfd = openat(commandfd, summary.verification_id,
                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (verifyfd < 0) goto done;
+    stage = 13;
     {
         size_t index;
         char filler[32];
