@@ -14,8 +14,8 @@ fi
 
 unshare_all=no
 die_with_parent=no
-overlay_source=no
-temporary_overlay=no
+readonly_workspace=no
+workspace_overlay=no
 readonly_runtime=no
 hidden_metadata=no
 clean_environment=no
@@ -47,12 +47,12 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
             shift
             ;;
         --die-with-parent) die_with_parent=yes ;;
-        --overlay-src) overlay_source=yes ;;
-        --tmp-overlay) temporary_overlay=yes ;;
+        --overlay-src|--tmp-overlay) workspace_overlay=yes ;;
         --clearenv) clean_environment=yes ;;
         --ro-bind)
             if [ "$#" -lt 3 ]; then exit 90; fi
             if [ "$3" = / ]; then readonly_runtime=yes; fi
+            if [ "$3" = /workspace ]; then readonly_workspace=yes; fi
             shift 2
             ;;
         --tmpfs)
@@ -78,8 +78,8 @@ else
     test "$unshare_all" = yes || fail 'namespace isolation is missing'
 fi
 test "$die_with_parent" = yes || fail '--die-with-parent'
-test "$overlay_source" = yes || fail '--overlay-src'
-test "$temporary_overlay" = yes || fail '--tmp-overlay'
+test "$readonly_workspace" = yes || fail 'read-only workspace bind'
+test "$workspace_overlay" = no || fail 'writable workspace overlay is present'
 test "$readonly_runtime" = yes || fail 'read-only runtime bind'
 test "$hidden_metadata" = yes || fail 'hidden metadata tmpfs'
 test "$clean_environment" = yes || fail '--clearenv'
@@ -89,8 +89,8 @@ if [ "$1" = "/bin/sh" ] && [ "$4" = "tm-profile-view-probe" ]; then
     test "$2" = "-c" || fail 'profile view probe is not a shell check'
     printf '%s\n' "$3" | /bin/sh -n || fail 'profile view probe syntax'
     case "$3" in
-        *"/workspace/.tm/"*"/.tm-runtime-write-probe-"*"for scratch do"*) ;;
-        *) fail 'profile view probe omits metadata/runtime/scratch checks' ;;
+        *"/workspace/.tm/"*"/.tm-runtime-write-probe-"*".tm-workspace-write-probe-"*"for scratch do"*) ;;
+        *) fail 'profile view probe omits metadata/runtime/workspace/scratch checks' ;;
     esac
     printf 'probe\n' >>"$TM_FAKE_BWRAP_LOG"
     exit 0

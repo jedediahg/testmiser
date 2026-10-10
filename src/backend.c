@@ -259,8 +259,6 @@ static int build_arguments(struct argument_vector *arguments,
         push_argument(arguments, "/") < 0 ||
         push_pair(arguments, "--ro-bind", repository_root) < 0 ||
         push_argument(arguments, GUEST_WORKSPACE) < 0 ||
-        push_pair(arguments, "--overlay-src", repository_root) < 0 ||
-        push_pair(arguments, "--tmp-overlay", GUEST_WORKSPACE) < 0 ||
         push_pair(arguments, "--tmpfs", GUEST_METADATA) < 0 ||
         push_argument(arguments, "--dev-bind") < 0 ||
         push_argument(arguments, "/dev/null") < 0 ||
@@ -305,6 +303,9 @@ static int run_probe(const struct argument_vector *arguments,
         "[ ! -e \"$p\" ] && [ ! -L \"$p\" ] || exit 92; "
         "if (umask 077; : >\"$p\") 2>/dev/null; then "
         "rm -f -- \"$p\"; exit 93; fi; "
+        "p=/workspace/.tm-workspace-write-probe-$$; "
+        "if (umask 077; : >\"$p\") 2>/dev/null; then "
+        "rm -f -- \"$p\"; exit 96; fi; "
         "for scratch do p=\"$scratch/.tm-scratch-probe-$$\"; "
         "(umask 077; : >\"$p\") || exit 94; "
         "rm -f -- \"$p\" || exit 95; done; "
@@ -425,7 +426,7 @@ int tm_backend_run(const struct tm_profile *profile,
     }
     if (explain)
         fprintf(stderr,
-            "tm: RUN: Bubblewrap runtime and read-only workspace view active; cache reuse remains disabled\n");
+            "tm: RUN: Bubblewrap read-only workspace and runtime views active; cache reuse remains disabled\n");
     (void)report;
     result = run_bubblewrap(&arguments, command_result);
 done:
