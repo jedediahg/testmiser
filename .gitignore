@@ -1,0 +1,5 @@
+/build/
+/.tm/
+**/.tm/
+*.o
+*.core
