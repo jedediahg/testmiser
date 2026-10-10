@@ -78,6 +78,8 @@ if [[ -e "$work/consumer/build/reports/portable-reuse.txt" ]]; then
     printf '%s\n' 'Consumer unexpectedly received the producer working-tree output.' >&2
     exit 1
 fi
+mkdir -p "$work/consumer/build/reports"
+printf '%s\n' 'stale output' >"$work/consumer/build/reports/stale.txt"
 if ! run_tm "$work/consumer" "$work/cache-consumer" \
     >"$work/consumer.out" 2>"$work/consumer.err"; then
     cat "$work/consumer.err" >&2
@@ -85,7 +87,8 @@ if ! run_tm "$work/consumer" "$work/cache-consumer" \
 fi
 if [[ -s "$work/consumer.out" ]] ||
    ! grep -q '^tm: SKIP: trusted result ' "$work/consumer.err" ||
-   [[ "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != "$id" ]]; then
+   [[ "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != "$id" ||
+      -e "$work/consumer/build/reports/stale.txt" ]]; then
     cat "$work/consumer.err" >&2
     printf '%s\n' 'Clean consumer checkout failed to reuse and restore the trusted result.' >&2
     exit 1
