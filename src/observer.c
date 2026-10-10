@@ -109,6 +109,8 @@ struct observer_state {
     int explain;
     const char *repository_root;
     int controlled_runtime;
+    const char *const *output_roots;
+    size_t output_root_count;
     const char *start_after_exec;
     int observation_started;
     pid_t direct_pid;
@@ -134,6 +136,29 @@ struct observer_state {
 
 static struct task_state tasks[TM_MAX_TASKS];
 static struct observer_state observer;
+static const char *tracked_descriptor(const struct task_state *task, int fd);
+
+static int path_is_declared_output(const char *path)
+{
+    size_t index;
+    if (path == NULL || observer.output_roots == NULL ||
+        observer.repository_root == NULL) return 0;
+    for (index = 0; index < observer.output_root_count; index++) {
+        char root[TM_PATH_SIZE];
+        int length = snprintf(root, sizeof(root), "%s/%s",
+            observer.repository_root, observer.output_roots[index]);
+        if (length < 0 || (size_t)length >= sizeof(root)) continue;
+        if (strncmp(path, root, (size_t)length) == 0 &&
+            (path[length] == '\0' || path[length] == '/')) return 1;
+    }
+    return 0;
+}
+
+static int descriptor_is_declared_output(const struct task_state *task,
+                                         int descriptor)
+{
+    return path_is_declared_output(tracked_descriptor(task, descriptor));
+}
 
 static int process_parent(pid_t process, pid_t *parent)
 {
@@ -501,6 +526,7 @@ static void candidate_path(const char *kind, const char *path)
     size_t index;
     int formatted;
 
+    if (path_is_declared_output(path)) return;
     relative_path = tm_repo_relative_path(observer.repository_root, path);
     if (relative_path == NULL && observer.controlled_runtime) {
         /* The profile backend exposes only its digest-verified runtime,
@@ -621,6 +647,29 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
         } else {
             mark_observer_failure();
         }
+        return;
+    case 76:  /* truncate */
+    case 83:  /* mkdir */
+    case 84:  /* rmdir */
+    case 87:  /* unlink */
+    case 90:  /* chmod */
+        if (read_tracee_string(task->pid, registers->rdi, raw_path,
+                               sizeof(raw_path)) == 0)
+            task_path(task->pid, AT_FDCWD, raw_path, task->pending_path,
+                      sizeof(task->pending_path));
+        else
+            mark_observer_failure();
+        return;
+    case 258: /* mkdirat */
+    case 263: /* unlinkat */
+    case 268: /* fchmodat */
+    case 452: /* fchmodat2 */
+        if (read_tracee_string(task->pid, registers->rsi, raw_path,
+                               sizeof(raw_path)) == 0)
+            task_path(task->pid, (int)registers->rdi, raw_path,
+                      task->pending_path, sizeof(task->pending_path));
+        else
+            mark_observer_failure();
         return;
     case 262: /* newfstatat */
     case 269: /* faccessat */
@@ -803,21 +852,29 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 288: /* accept4 */
         observer.saw_network = 1;
         return;
+    case 4:  /* stat */
     case 5:  /* fstat */
+    case 6:  /* lstat */
     case 21: /* access */
     case 262: /* newfstatat */
     case 269: /* faccessat */
     case 332: /* statx */
     case 439: /* faccessat2 */
+        if ((number == 5 && descriptor_is_declared_output(
+                                  task, (int)regs->rdi)) ||
+            ((number == 4 || number == 6 || number == 21 || number == 262 ||
+              number == 269 || number == 332 || number == 439) &&
+             path_is_declared_output(task->pending_path))) return;
         observer.saw_metadata = 1;
         return;
     case 78: /* getdents */
     case 217: /* getdents64 */
         if (entering) {
             const char *path = tracked_descriptor(task, (int)descriptor);
-            if (path != NULL && descriptor_is_directory(task, (int)descriptor))
-                candidate_path("directory listing", path);
-            else {
+            if (path != NULL && descriptor_is_directory(task, (int)descriptor)) {
+                if (!path_is_declared_output(path))
+                    candidate_path("directory listing", path);
+            } else {
                 observer.saw_directory = 1;
                 if (path == NULL) observer.saw_external_descriptor = 1;
             }
@@ -829,27 +886,37 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 1:  /* write */
     case 18: /* pwrite64 */
     case 20: /* writev */
-    case 76: /* truncate */
     case 77: /* ftruncate */
-    case 82: /* rename */
+        if ((number == 1 || number == 20) &&
+            (descriptor == STDOUT_FILENO || descriptor == STDERR_FILENO))
+            return;
+        if (!descriptor_is_declared_output(task, (int)descriptor))
+            observer.saw_mutation = 1;
+        return;
+    case 76: /* truncate */
     case 83: /* mkdir */
     case 84: /* rmdir */
     case 87: /* unlink */
-    case 88: /* symlink */
     case 90: /* chmod */
-    case 91: /* fchmod */
+    case 258: /* mkdirat */
+    case 263: /* unlinkat */
+    case 268: /* fchmodat */
+    case 452: /* fchmodat2 */
+        if (path_is_declared_output(task->pending_path)) return;
+        observer.saw_mutation = 1;
+        return;
+    case 82: /* rename */
+    case 88: /* symlink */
     case 92: /* chown */
     case 93: /* fchown */
-    case 263: /* unlinkat */
     case 264: /* renameat */
     case 265: /* linkat */
     case 266: /* symlinkat */
-    case 258: /* mkdirat */
-        if ((number == 1 || number == 20) &&
-            (descriptor == STDOUT_FILENO || descriptor == STDERR_FILENO)) {
-            return;
-        }
         observer.saw_mutation = 1;
+        return;
+    case 91: /* fchmod */
+        if (!descriptor_is_declared_output(task, (int)descriptor))
+            observer.saw_mutation = 1;
         return;
     case 0:  /* read */
     case 17: /* pread64 */
@@ -858,12 +925,14 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
             const char *path = descriptor < 3 ? NULL :
                 tracked_descriptor(task, (int)descriptor);
             if (path != NULL &&
-                descriptor_is_directory(task, (int)descriptor))
-                observer.saw_directory = 1;
-            else if (path != NULL)
+                descriptor_is_directory(task, (int)descriptor)) {
+                if (!path_is_declared_output(path))
+                    observer.saw_directory = 1;
+            } else if (path != NULL) {
                 candidate_path("read descriptor", path);
-            else
+            } else {
                 observer.saw_external_descriptor = 1;
+            }
         }
         return;
     case 3: /* close: remove provenance at syscall exit */
@@ -890,7 +959,8 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 9:  /* mmap */
         if (((int)regs->rdx & PROT_WRITE) != 0 &&
             ((int)regs->r10 & MAP_SHARED) != 0) {
-            observer.saw_mutation = 1;
+            if (!descriptor_is_declared_output(task, (int)regs->r8))
+                observer.saw_mutation = 1;
         }
         if (entering && ((int)regs->r10 & MAP_ANONYMOUS) == 0) {
             const char *path = tracked_descriptor(task, (int)regs->r8);
@@ -1063,9 +1133,10 @@ static void syscall_stop(struct task_state *task)
                 candidate_path(is_directory ? "opened directory" :
                                                 "opened file",
                                task->pending_path);
-            } else if ((task->flags & O_PATH) != 0) {
+            } else if ((task->flags & O_PATH) != 0 &&
+                       !path_is_declared_output(task->pending_path)) {
                 observer.saw_metadata = 1;
-            } else {
+            } else if (!path_is_declared_output(task->pending_path)) {
                 observer.saw_mutation = 1;
             }
         } else if (result == -ENOENT || result == -ENOTDIR) {
@@ -1317,6 +1388,8 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                        int inherited_descriptors,
                        const char *start_after_exec,
                        int controlled_runtime,
+                       const char *const *output_roots,
+                       size_t output_root_count,
                        struct tm_observer_report *report)
 {
     int status;
@@ -1331,6 +1404,8 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     observer.explain = explain;
     observer.repository_root = repository_root;
     observer.controlled_runtime = controlled_runtime;
+    observer.output_roots = output_roots;
+    observer.output_root_count = output_root_count;
     observer.start_after_exec = start_after_exec;
     observer.observation_started = start_after_exec == NULL;
     observer.saw_external_descriptor = inherited_descriptors;
@@ -1542,6 +1617,8 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 int null_stdin, int set_umask_022,
                                 const char *start_after_exec,
                                 int controlled_runtime,
+                                const char *const *output_roots,
+                                size_t output_root_count,
                                 struct tm_observer_report *report)
 {
     struct sigaction previous[TM_FORWARDED_SIGNAL_COUNT];
@@ -1589,7 +1666,8 @@ int tm_observe_and_run_with_fds(char **command, int explain,
     }
     result = trace_child(child, explain, repository_root,
                          inherited_descriptors, start_after_exec,
-                         controlled_runtime, report);
+                         controlled_runtime, output_roots, output_root_count,
+                         report);
     restore_signal_handlers(previous);
     return result;
 }
@@ -1600,7 +1678,7 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
 {
     return tm_observe_and_run_with_fds(command, explain, environment,
                                        repository_root, NULL, 0, 0, 0, NULL,
-                                       0, report);
+                                       0, NULL, 0, report);
 }
 
 #else
@@ -1613,6 +1691,8 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 int null_stdin, int set_umask_022,
                                 const char *start_after_exec,
                                 int controlled_runtime,
+                                const char *const *output_roots,
+                                size_t output_root_count,
                                 struct tm_observer_report *report)
 {
     pid_t child = fork();
@@ -1624,6 +1704,8 @@ int tm_observe_and_run_with_fds(char **command, int explain,
     (void)set_umask_022;
     (void)start_after_exec;
     (void)controlled_runtime;
+    (void)output_roots;
+    (void)output_root_count;
     if (report != NULL) memset(report, 0, sizeof(*report));
     if (environment != NULL) environ = (char **)environment;
 
@@ -1658,7 +1740,7 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
 {
     return tm_observe_and_run_with_fds(command, explain, environment,
                                        repository_root, NULL, 0, 0, 0, NULL,
-                                       0, report);
+                                       0, NULL, 0, report);
 }
 
 #endif

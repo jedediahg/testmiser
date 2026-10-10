@@ -961,6 +961,8 @@ done:
 static int run_bubblewrap(const struct argument_vector *arguments,
                           int explain, struct tm_observer_report *report,
                           char **command, const char *working_directory,
+                          const char *const *output_roots,
+                          size_t output_root_count,
                           int *command_result)
 {
     const char *target = command[0];
@@ -980,7 +982,7 @@ static int run_bubblewrap(const struct argument_vector *arguments,
     *command_result = tm_observe_and_run_with_fds(
         arguments->items, explain, NULL, GUEST_WORKSPACE,
         arguments->preserved_fds, arguments->preserved_fd_count, 1, 1,
-        target, 1, report);
+        target, 1, output_roots, output_root_count, report);
     free(relative_target);
     return 1;
 }
@@ -1072,7 +1074,8 @@ int tm_backend_run(const struct tm_profile *profile,
         fprintf(stderr,
             "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; lookup remains disabled\n");
     result = run_bubblewrap(&arguments, explain, report, command,
-                            working_directory, command_result);
+                            working_directory, output_roots,
+                            output_root_count, command_result);
     if (result > 0 && *command_result == 0 && output_root_count > 0) {
         repository_fd = open_directory_without_symlinks(repository_root);
         if (repository_fd < 0 ||

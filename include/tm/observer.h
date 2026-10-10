@@ -56,6 +56,8 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 /* Set only after enforcing the runtime-root
                                  * and scratch mount contract. */
                                 int controlled_runtime,
+                                const char *const *output_roots,
+                                size_t output_root_count,
                                 struct tm_observer_report *report);
 
 #endif
