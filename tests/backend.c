@@ -246,6 +246,53 @@ int main(void)
         fprintf(stderr, "backend probe or wrapped command ran incorrectly\n");
         goto done;
     }
+    {
+        FILE *diagnostics = tmpfile();
+        char diagnostic_text[512] = {0};
+        int saved_stderr = -1, backend_result = -1;
+        size_t diagnostic_length = 0;
+        if (diagnostics == NULL || unlink(marker_path) < 0 ||
+            unlink(log_path) < 0 ||
+            write_file(input_file_path, "original") < 0 ||
+            unsetenv("TM_FAKE_BWRAP_INPUT_FILE") < 0 ||
+            setenv("TM_FAKE_BWRAP_PROBE_FAIL", "1", 1) < 0) {
+            if (diagnostics != NULL) fclose(diagnostics);
+            goto done;
+        }
+        fflush(stderr);
+        saved_stderr = dup(STDERR_FILENO);
+        if (saved_stderr >= 0 &&
+            dup2(fileno(diagnostics), STDERR_FILENO) >= 0) {
+            command_result = -1;
+            backend_result = tm_backend_run(profile, runtime_path,
+                repository_root, NULL, 0, command, 1, &observer_report,
+                &observed_inputs, &outputs, &command_result);
+            fflush(stderr);
+        }
+        if (saved_stderr >= 0) {
+            (void)dup2(saved_stderr, STDERR_FILENO);
+            close(saved_stderr);
+        }
+        (void)unsetenv("TM_FAKE_BWRAP_PROBE_FAIL");
+        (void)setenv("TM_FAKE_BWRAP_INPUT_FILE", input_file_path, 1);
+        rewind(diagnostics);
+        diagnostic_length = fread(diagnostic_text, 1,
+                                  sizeof(diagnostic_text) - 1, diagnostics);
+        diagnostic_text[diagnostic_length] = '\0';
+        fclose(diagnostics);
+        if (backend_result != 0 || command_result != -1 ||
+            access(marker_path, F_OK) == 0 ||
+            strstr(diagnostic_text,
+                   "fake Bubblewrap namespace setup failed") == NULL ||
+            strstr(diagnostic_text,
+                   "Bubblewrap profile view is unavailable") == NULL) {
+            fprintf(stderr,
+                "explain probe diagnostic mismatch (result=%d command=%d): %s\n",
+                backend_result, command_result, diagnostic_text);
+            goto done;
+        }
+        if (write_file(log_path, "probe\ncommand\n") < 0) goto done;
+    }
     if (symlink("tm-backend-input", input_link_path) < 0 ||
         write_file(profile_path, symlink_profile_json) < 0) goto done;
     tm_profile_free(profile);

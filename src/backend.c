@@ -834,7 +834,7 @@ static int build_arguments(struct argument_vector *arguments,
 }
 
 static int run_probe(const struct argument_vector *arguments,
-                     const struct tm_profile *profile)
+                     const struct tm_profile *profile, int explain)
 {
     static const char probe_script[] =
         "for p in /workspace/.tm/* /workspace/.tm/.[!.]* "
@@ -880,14 +880,15 @@ static int run_probe(const struct argument_vector *arguments,
     child = fork();
     if (child < 0) goto unavailable;
     if (child == 0) {
-        int null_fd;
         if (close_child_descriptors(arguments->preserved_fds,
                                     arguments->preserved_fd_count) < 0)
             _exit(125);
         (void)umask(022);
-        null_fd = open("/dev/null", O_RDWR);
-        if (null_fd < 0 || dup2(null_fd, STDERR_FILENO) < 0) _exit(125);
-        if (null_fd != STDERR_FILENO) close(null_fd);
+        if (!explain) {
+            int null_fd = open("/dev/null", O_RDWR);
+            if (null_fd < 0 || dup2(null_fd, STDERR_FILENO) < 0) _exit(125);
+            if (null_fd != STDERR_FILENO) close(null_fd);
+        }
         execv(probe.items[0], probe.items);
         _exit(127);
     }
@@ -931,7 +932,7 @@ int tm_backend_preflight(const struct tm_profile *profile,
     }
     built = build_arguments(&arguments, profile, runtime, snapshot,
                             working_directory, NULL, NULL, 0, command);
-    if (built > 0) result = run_probe(&arguments, profile);
+    if (built > 0) result = run_probe(&arguments, profile, 0);
 done:
     if (repository_fd >= 0) close(repository_fd);
     free_arguments(&arguments);
@@ -1054,7 +1055,7 @@ int tm_backend_run(const struct tm_profile *profile,
                 strerror(errno));
         goto done;
     }
-    if (!run_probe(&arguments, profile)) {
+    if (!run_probe(&arguments, profile, explain)) {
         if (explain)
             fprintf(stderr,
                 "tm: RUN: Bubblewrap profile view is unavailable; running once without reuse\n");

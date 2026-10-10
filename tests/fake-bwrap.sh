@@ -151,6 +151,10 @@ test "$clean_environment" = yes || fail '--clearenv'
 test "$(umask)" = 0022 || fail 'profile umask is not 022'
 shift
 if [ "$1" = "/bin/sh" ] && [ "$4" = "tm-profile-view-probe" ]; then
+    if [ "${TM_FAKE_BWRAP_PROBE_FAIL:-0}" = 1 ]; then
+        printf '%s\n' 'fake Bubblewrap namespace setup failed' >&2
+        exit 89
+    fi
     test "$2" = "-c" || fail 'profile view probe is not a shell check'
     printf '%s\n' "$3" | /bin/sh -n || fail 'profile view probe syntax'
     case "$3" in
