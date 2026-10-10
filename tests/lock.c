@@ -1,0 +1,157 @@
+#define _POSIX_C_SOURCE 200809L
+
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "tm/lock.h"
+
+static const char *profile_digest =
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+static const char *context_digest =
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+static const char *command_digest =
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+static const char *other_command_digest =
+    "sha256:4444444444444444444444444444444444444444444444444444444444444444";
+
+static int count_files(const char *directory_path)
+{
+    DIR *directory = opendir(directory_path);
+    struct dirent *entry;
+    int count = 0;
+    if (directory == NULL) return -1;
+    while ((entry = readdir(directory)) != NULL)
+        if (strcmp(entry->d_name, ".") != 0 &&
+            strcmp(entry->d_name, "..") != 0) count++;
+    closedir(directory);
+    return count;
+}
+
+int main(void)
+{
+    char cache[] = "/tmp/tm-lock-test-XXXXXX";
+    char link[] = "/tmp/tm-lock-link-XXXXXX";
+    char lock_directory[256] = {0};
+    struct tm_lock held = {-1}, independent = {-1}, rejected = {-1};
+    int ready[2] = {-1, -1}, acquired[2] = {-1, -1};
+    pid_t child = -1;
+    int status = 1, stage = 1;
+
+    if (mkdtemp(cache) == NULL ||
+        tm_lock_acquire(cache, "sample", command_digest, profile_digest,
+                        context_digest, &held) < 0 ||
+        tm_lock_acquire(cache, "sample", other_command_digest, profile_digest,
+                        context_digest, &independent) < 0) goto done;
+    stage = 2;
+    tm_lock_release(&independent);
+    if (snprintf(lock_directory, sizeof(lock_directory),
+                 "%s/testmiser/locks", cache) >= (int)sizeof(lock_directory) ||
+        count_files(lock_directory) != 2 || pipe(ready) < 0 ||
+        pipe(acquired) < 0) goto done;
+    stage = 3;
+    child = fork();
+    if (child < 0) goto done;
+    stage = 4;
+    if (child == 0) {
+        struct tm_lock second = {-1};
+        char byte = 'r';
+        close(held.fd);
+        close(ready[0]);
+        close(acquired[0]);
+        if (write(ready[1], &byte, 1) != 1) _exit(2);
+        if (tm_lock_acquire(cache, "sample", command_digest, profile_digest,
+                            context_digest, &second) < 0) {
+            perror("child lock acquire");
+            _exit(2);
+        }
+        byte = 'a';
+        (void)write(acquired[1], &byte, 1);
+        tm_lock_release(&second);
+        _exit(0);
+    }
+    close(ready[1]); ready[1] = -1;
+    close(acquired[1]); acquired[1] = -1;
+    stage = 5;
+    {
+        char byte;
+        struct pollfd event = {acquired[0], POLLIN, 0};
+        int polled;
+        if (read(ready[0], &byte, 1) != 1 || byte != 'r') goto done;
+        polled = poll(&event, 1, 100);
+        if (polled != 0) {
+            fprintf(stderr, "lock became available early: poll=%d revents=%d\n",
+                    polled, event.revents);
+            goto done;
+        }
+        tm_lock_release(&held);
+        polled = poll(&event, 1, 5000);
+        if (polled != 1 || read(acquired[0], &byte, 1) != 1 || byte != 'a') {
+            fprintf(stderr, "lock did not release: poll=%d revents=%d\n",
+                    polled, event.revents);
+            goto done;
+        }
+    }
+    {
+        int child_status;
+        if (waitpid(child, &child_status, 0) != child ||
+            !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0)
+            goto done;
+        child = -1;
+    }
+    stage = 6;
+    if (mkdtemp(link) == NULL) goto done;
+    if (rmdir(link) < 0 || symlink(cache, link) < 0 ||
+        tm_lock_acquire(link, "sample", command_digest, profile_digest,
+                        context_digest, &rejected) == 0 || rejected.fd >= 0)
+        goto done;
+    if (tm_lock_acquire(cache, "Bad Repo", command_digest, profile_digest,
+                        context_digest, &rejected) == 0) goto done;
+    stage = 7;
+    status = 0;
+
+done:
+    if (child > 0) {
+        (void)kill(child, SIGKILL);
+        (void)waitpid(child, NULL, 0);
+    }
+    if (ready[0] >= 0) close(ready[0]);
+    if (ready[1] >= 0) close(ready[1]);
+    if (acquired[0] >= 0) close(acquired[0]);
+    if (acquired[1] >= 0) close(acquired[1]);
+    tm_lock_release(&held);
+    tm_lock_release(&independent);
+    tm_lock_release(&rejected);
+    if (link[0] != '\0') unlink(link);
+    if (cache[0] != '\0') {
+        DIR *directory;
+        struct dirent *entry;
+        if (lock_directory[0] != '\0' &&
+            (directory = opendir(lock_directory)) != NULL) {
+            while ((entry = readdir(directory)) != NULL) {
+                char file[320];
+                if (strcmp(entry->d_name, ".") == 0 ||
+                    strcmp(entry->d_name, "..") == 0) continue;
+                if (snprintf(file, sizeof(file), "%s/%s", lock_directory,
+                             entry->d_name) < (int)sizeof(file)) unlink(file);
+            }
+            closedir(directory);
+        }
+        snprintf(lock_directory, sizeof(lock_directory), "%s/testmiser/locks", cache);
+        rmdir(lock_directory);
+        snprintf(lock_directory, sizeof(lock_directory), "%s/testmiser", cache);
+        rmdir(lock_directory);
+        rmdir(cache);
+    }
+    if (status != 0)
+        fprintf(stderr, "local lock test failed at stage %d: %s\n",
+                stage, strerror(errno));
+    return status;
+}
