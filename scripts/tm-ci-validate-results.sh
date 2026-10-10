@@ -7,7 +7,15 @@ if [[ -d .tm/blobs/sha256 ]]; then
     # back to the immutable mode required by validation after checkout.
     find .tm/blobs/sha256 -type f -exec chmod 0444 -- {} +
 fi
-if [[ -n "${TM_TRUST_POLICY_JSON:-}" ]]; then
+if [[ -n "${TM_TRUST_POLICY_FILE:-}" &&
+      -n "${TM_TRUST_POLICY_JSON:-}" ]]; then
+    printf '%s\n' \
+        'Set only one of TM_TRUST_POLICY_FILE or TM_TRUST_POLICY_JSON.' >&2
+    exit 2
+elif [[ -n "${TM_TRUST_POLICY_FILE:-}" ]]; then
+    ./build/tm validate --root . --trust-policy "$TM_TRUST_POLICY_FILE" \
+        --require-trust
+elif [[ -n "${TM_TRUST_POLICY_JSON:-}" ]]; then
     policy_file=$(mktemp)
     trap 'rm -f "$policy_file"' EXIT
     printf '%s' "$TM_TRUST_POLICY_JSON" >"$policy_file"

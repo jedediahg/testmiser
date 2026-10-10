@@ -19,6 +19,8 @@ test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_
 	bash -n tests/portable-reuse-ci.sh
 	bash tests/portable-ci-gate.sh
 	bash tests/portable-probe-env.sh
+	bash -n tests/ci-validate-results.sh
+	bash tests/ci-validate-results.sh
 	@TM_BIN=./$(TARGET) OPENAT2_PROBE=./$(BUILD_DIR)/openat2_probe OPEN_MODE_PROBE=./$(BUILD_DIR)/open_mode_probe DESCRIPTOR_DUP_PROBE=./$(BUILD_DIR)/descriptor_dup_probe CLONE3_PROBE=./$(BUILD_DIR)/clone3_probe CWD_PROBE=./$(BUILD_DIR)/cwd_probe PATH_ERROR_PROBE=./$(BUILD_DIR)/path_error_probe EXECVEAT_PROBE=./$(BUILD_DIR)/execveat_probe READLINK_PROBE=./$(BUILD_DIR)/readlink_probe CONTEXT_PROBE=./$(BUILD_DIR)/context_probe sh -x tests/cli.sh >$(BUILD_DIR)/cli-test.log 2>&1 || { tail -n 100 $(BUILD_DIR)/cli-test.log; exit 1; }
 	@tail -n 1 $(BUILD_DIR)/cli-test.log
 	./$(BUILD_DIR)/test_digest
