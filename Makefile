@@ -5,7 +5,7 @@ LDFLAGS ?=
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/tm
-SOURCES := src/main.c
+SOURCES := src/main.c src/observer.c
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
 .PHONY: all test clean

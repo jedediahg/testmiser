@@ -14,7 +14,7 @@ make test     # run command-line integration checks
 make clean    # remove generated build files
 ```
 
-The current executable is a transparent process wrapper. It supports `--help`, `--force`, and `--explain`, launches the command directly without a shell, and returns the child's exit code (or 128 plus its terminating signal). `--explain` reports that caching is not implemented and the command will run. Every invocation runs; there is no dependency observer, fingerprint, sidecar, or cache skip yet.
+The current executable is a transparent process wrapper with a Linux x86-64 `ptrace` observer prototype. It supports `--help`, `--force`, and `--explain`, launches the command directly without a shell, and returns the child's exit code (or 128 plus its terminating signal). With `--explain`, the prototype reports observed executable, file, and metadata path candidates plus rejection reasons. If tracing is unavailable, it runs the command uncached. Every invocation still runs: input hashing, complete syscall modeling, sidecars, trust receipts, and cache skips are not implemented.
 
 ## Intended usage
 
@@ -32,7 +32,7 @@ The target behavior is to observe dependencies and record a result only after a 
 
 ```text
 include/tm/     public and internal C interfaces
-src/            application source; observer and cache modules are future work
+src/            CLI and Linux syscall-observer prototype
 tests/          command-line integration checks and future tests
 docs/spec/      technical design specification
 docs/           implementation review notes

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, headers in `include/tm/`, and tests will live in `tests/`. `docs/implementation-notes.md` tracks open design questions. The current `src/main.c` is only a CLI placeholder; memoization behavior is not implemented.
+The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, headers in `include/tm/`, and CLI checks are in `tests/`. `docs/implementation-notes.md` records implementation decisions. `src/observer.c` prototypes Linux x86-64 syscall observation; memoization and skipping are not implemented.
 
 ## Build, Test, and Development Commands
 
@@ -14,7 +14,7 @@ The target implementation is C and Linux-first. Compile with C11 and the Makefil
 
 ## Testing Guidelines
 
-`tests/cli.sh` exercises help, argument preservation, exit propagation, missing commands, explain mode, and option parsing. It uses POSIX shell and system utilities. There is no coverage target. Add tests for successful reuse, input invalidation, and rerunning after a failed command when the cache is implemented.
+`tests/cli.sh` exercises help, argument preservation, child exit and signal status, missing commands, explain mode, option parsing, and descendant completion. With ptrace permission it also checks network and mutation rejection. It uses POSIX shell and system utilities. There is no coverage target. Add tests for successful reuse, input invalidation, and rerunning after a failed command when the cache is implemented.
 
 ## Commit & Pull Request Guidelines
 

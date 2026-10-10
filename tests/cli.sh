@@ -18,11 +18,28 @@ status=$?
 set -e
 test "$status" -eq 23
 
+for expected in 125 126 127; do
+    set +e
+    "$tm_bin" -- /bin/sh -c "exit $expected"
+    status=$?
+    set -e
+    test "$status" -eq "$expected"
+done
+
 set +e
 "$tm_bin" -- sh -c 'kill -TERM $$'
 status=$?
 set -e
 test "$status" -eq 143
+
+set +e
+"$tm_bin" -- /bin/sh -c '( /bin/sleep 0.1; printf done > "$1" ) & exit 17' \
+    sh "$tmp_dir/descendant.out"
+status=$?
+set -e
+test "$status" -eq 17
+sleep 0.2
+test "$(cat "$tmp_dir/descendant.out")" = done
 
 set +e
 PATH="$tmp_dir" "$tm_bin" -- tm-command-that-does-not-exist-4f5c9a \
@@ -32,8 +49,23 @@ set -e
 test "$status" -eq 127
 grep -q 'command not found' "$tmp_dir/missing.err"
 
-"$tm_bin" --explain -- sh -c 'exit 0' 2>"$tmp_dir/explain.err"
-grep -q 'RUN: memoization is not implemented' "$tmp_dir/explain.err"
+set +e
+"$tm_bin" --explain -- /bin/sh -c 'exit 29' 2>"$tmp_dir/explain.err"
+status=$?
+set -e
+test "$status" -eq 29
+grep -q 'tm: RUN:' "$tmp_dir/explain.err"
+if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
+    python_bin=$(command -v python3 || true)
+    if [ -n "$python_bin" ]; then
+        "$tm_bin" --explain -- "$python_bin" -c \
+            'import socket; socket.socket()' 2>"$tmp_dir/network.err"
+        grep -q 'socket or network operation observed' "$tmp_dir/network.err"
+    fi
+    "$tm_bin" --explain -- /bin/sh -c 'printf x > "$1"' \
+        sh "$tmp_dir/child-write" 2>"$tmp_dir/mutation.err"
+    grep -q 'filesystem mutation observed' "$tmp_dir/mutation.err"
+fi
 
 "$tm_bin" --force -- sh -c 'exit 0'
 
