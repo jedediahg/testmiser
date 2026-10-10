@@ -75,6 +75,14 @@ set +e
 status=$?
 set -e
 test "$status" -eq 1
+mkfifo "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/pipe.tm.json"
+set +e
+timeout 3 "$tm_bin" validate --root "$tmp_dir/repo" \
+    >"$tmp_dir/validate-fifo.out" 2>&1
+status=$?
+set -e
+test "$status" -eq 1
+rm "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/pipe.tm.json"
 chmod 000 "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bad.tm.json"
 set +e
 "$tm_bin" validate --root "$tmp_dir/repo" >"$tmp_dir/validate-io.out" 2>&1

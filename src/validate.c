@@ -41,7 +41,8 @@ static int read_record(int directory, const char *name,
     struct stat before, after;
     unsigned char *data;
     size_t used = 0;
-    int fd = openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = openat(directory, name,
+                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) return -1;
     if (fstat(fd, &before) < 0 || !S_ISREG(before.st_mode) ||
         before.st_size < 2 || (uint64_t)before.st_size > RECORD_LIMIT) {
