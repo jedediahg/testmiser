@@ -21,6 +21,7 @@
 
 static const unsigned char result_signature_domain[] = "tm-result-v2";
 static unsigned long result_store_sequence;
+static int valid_sha256(const char *digest);
 
 static int signature_message(const unsigned char *payload, size_t payload_size,
                              unsigned char **message, size_t *message_size)
@@ -162,19 +163,81 @@ static struct tm_json_value *make_inputs(
     return array;
 }
 
+static int valid_output_path(const char *path)
+{
+    const char *part, *cursor;
+    if (path == NULL || path[0] == '\0' || path[0] == '/' ||
+        (strncmp(path, ".tm", 3) == 0 &&
+         (path[3] == '\0' || path[3] == '/')) ||
+        (strncmp(path, ".git", 4) == 0 &&
+         (path[4] == '\0' || path[4] == '/'))) return 0;
+    part = path;
+    for (cursor = path;; cursor++) {
+        if (*cursor == '/' || *cursor == '\0') {
+            size_t n = (size_t)(cursor - part);
+            if (n == 0 || (n == 1 && part[0] == '.') ||
+                (n == 2 && part[0] == '.' && part[1] == '.')) return 0;
+            if (*cursor == '\0') return 1;
+            part = cursor + 1;
+        }
+    }
+}
+
+static struct tm_json_value *make_outputs(
+    const struct tm_output_manifest *outputs)
+{
+    struct tm_json_value *array = tm_json_new_array();
+    size_t i;
+    if (array == NULL || outputs == NULL ||
+        (outputs->count > 0 && outputs->entries == NULL)) {
+        tm_json_free(array); errno = EINVAL; return NULL;
+    }
+    for (i = 0; i < outputs->count; i++) {
+        const struct tm_output_entry *entry = &outputs->entries[i];
+        const char *kind = entry->kind == TM_OUTPUT_FILE ? "file" :
+                           entry->kind == TM_OUTPUT_DIRECTORY ? "directory" : NULL;
+        struct tm_json_value *item = tm_json_new_object();
+        if (kind == NULL || !valid_output_path(entry->path) || entry->mode > 0777 ||
+            (i > 0 && strcmp(outputs->entries[i-1].path, entry->path) >= 0) || item == NULL) {
+            tm_json_free(item); tm_json_free(array); errno = EINVAL; return NULL;
+        }
+        if (i > 0 && outputs->entries[i-1].kind == TM_OUTPUT_FILE &&
+            strncmp(entry->path, outputs->entries[i-1].path,
+                    strlen(outputs->entries[i-1].path)) == 0 &&
+            entry->path[strlen(outputs->entries[i-1].path)] == '/') {
+            tm_json_free(item); tm_json_free(array); errno = EINVAL; return NULL;
+        }
+        if (object_put(item, "kind", json_string(kind)) < 0 ||
+            object_put(item, "mode", tm_json_new_integer(entry->mode)) < 0 ||
+            object_put(item, "path", json_string(entry->path)) < 0 ||
+            (entry->kind == TM_OUTPUT_FILE &&
+             (!valid_sha256(entry->digest) || entry->size > UINT64_C(9007199254740991) ||
+              object_put(item, "sha256", json_string(entry->digest)) < 0 ||
+              object_put(item, "size", tm_json_new_integer(entry->size)) < 0)) ||
+            (entry->kind == TM_OUTPUT_DIRECTORY && (entry->size != 0 || entry->digest[0] != '\0')) ||
+            tm_json_array_append(array, item) < 0) {
+            tm_json_free(item); tm_json_free(array); errno = EINVAL; return NULL;
+        }
+    }
+    return array;
+}
+
 static struct tm_json_value *make_payload(
     const struct tm_verification_identity *identity, uint64_t trust_epoch,
-    const char *verification_fingerprint)
+    const char *verification_fingerprint,
+    const struct tm_output_manifest *output_manifest)
 {
     struct tm_json_value *payload = tm_json_new_object();
     struct tm_json_value *environment = tm_json_new_object();
     struct tm_json_value *identity_json = tm_json_new_object();
     struct tm_json_value *result = tm_json_new_object();
     struct tm_json_value *inputs = NULL;
-    struct tm_json_value *outputs = tm_json_new_array();
+    struct tm_json_value *outputs = NULL;
 
     if (payload == NULL || environment == NULL || identity_json == NULL ||
-        result == NULL || outputs == NULL) goto fail;
+        result == NULL) goto fail;
+    outputs = make_outputs(output_manifest);
+    if (outputs == NULL) goto fail;
     inputs = make_inputs(identity);
     if (inputs == NULL) goto fail;
     if (object_put(environment, "context_digest",
@@ -247,8 +310,9 @@ static int format_sha256(const unsigned char *bytes, size_t length,
     return 0;
 }
 
-int tm_result_create(const struct tm_verification_identity *identity,
+int tm_result_create_with_outputs(const struct tm_verification_identity *identity,
                      uint64_t trust_epoch, EVP_PKEY *private_key,
+                     const struct tm_output_manifest *output_manifest,
                      unsigned char **record, size_t *record_length,
                      char record_id[72])
 {
@@ -269,7 +333,7 @@ int tm_result_create(const struct tm_verification_identity *identity,
     int encoded_length;
     int result = -1;
 
-    if (identity == NULL || private_key == NULL || record == NULL ||
+    if (identity == NULL || private_key == NULL || output_manifest == NULL || record == NULL ||
         record_length == NULL || record_id == NULL ||
         trust_epoch > UINT64_C(9007199254740991)) {
         errno = EINVAL;
@@ -279,7 +343,8 @@ int tm_result_create(const struct tm_verification_identity *identity,
     *record_length = 0;
     if (tm_verification_fingerprint(identity, verification_fingerprint) < 0 ||
         tm_ed25519_key_id(private_key, key_id) < 0) goto done;
-    payload = make_payload(identity, trust_epoch, verification_fingerprint);
+    payload = make_payload(identity, trust_epoch, verification_fingerprint,
+                           output_manifest);
     if (payload == NULL ||
         tm_json_canonicalize(payload, &payload_bytes, &payload_length) < 0 ||
         signature_message(payload_bytes, payload_length, &message,
@@ -331,6 +396,16 @@ done:
     free(envelope_bytes);
     free(record_with_lf);
     return result;
+}
+
+int tm_result_create(const struct tm_verification_identity *identity,
+                     uint64_t trust_epoch, EVP_PKEY *private_key,
+                     unsigned char **record, size_t *record_length,
+                     char record_id[72])
+{
+    const struct tm_output_manifest empty = {0};
+    return tm_result_create_with_outputs(identity, trust_epoch, private_key,
+        &empty, record, record_length, record_id);
 }
 
 static int result_directory_at(int parent, const char *name)
@@ -561,6 +636,50 @@ invalid:
     return -1;
 }
 
+static int parse_outputs(const struct tm_json_value *array,
+                         struct tm_output_entry **output, size_t *count_out)
+{
+    size_t count = tm_json_size(array), i;
+    struct tm_output_entry *entries;
+    if (tm_json_typeof(array) != TM_JSON_ARRAY ||
+        count > SIZE_MAX / sizeof(*entries)) return -1;
+    entries = count == 0 ? NULL : calloc(count, sizeof(*entries));
+    if (count && entries == NULL) return -1;
+    for (i = 0; i < count; i++) {
+        const struct tm_json_value *item = tm_json_array_get(array, i);
+        const char *kind, *path;
+        uint64_t mode;
+        if (tm_json_typeof(item) != TM_JSON_OBJECT) goto invalid;
+        kind = get_string(item, "kind");
+        path = get_string(item, "path");
+        mode = tm_json_integer_value(tm_json_object_get(item, "mode"));
+        if (!valid_output_path(path) || mode == UINT64_MAX || mode > 0777 ||
+            (i && strcmp(entries[i-1].path, path) >= 0)) goto invalid;
+        entries[i].path = strdup(path);
+        entries[i].mode = (uint32_t)mode;
+        if (entries[i].path == NULL) goto invalid;
+        if (kind != NULL && strcmp(kind, "file") == 0) {
+            const char *digest = get_string(item, "sha256");
+            uint64_t size = tm_json_integer_value(tm_json_object_get(item, "size"));
+            if (!expect_object_size(item, 5) || !valid_sha256(digest) ||
+                size == UINT64_MAX || size > UINT64_C(9007199254740991)) goto invalid;
+            entries[i].kind = TM_OUTPUT_FILE;
+            memcpy(entries[i].digest, digest, 72);
+            entries[i].size = size;
+        } else if (kind != NULL && strcmp(kind, "directory") == 0) {
+            if (!expect_object_size(item, 3)) goto invalid;
+            entries[i].kind = TM_OUTPUT_DIRECTORY;
+        } else goto invalid;
+    }
+    *output = entries;
+    *count_out = count;
+    return 0;
+invalid:
+    for (i = 0; i < count; i++) free(entries[i].path);
+    free(entries);
+    return -1;
+}
+
 static int canonical_input_order(const struct tm_input_observation *inputs,
                                  size_t count)
 {
@@ -615,6 +734,8 @@ void tm_result_summary_clear(struct tm_result_summary *summary)
         free((char *)summary->inputs[i].target);
     }
     free(summary->inputs);
+    for (i = 0; i < summary->output_count; i++) free(summary->outputs[i].path);
+    free(summary->outputs);
     memset(summary, 0, sizeof(*summary));
 }
 
@@ -706,7 +827,7 @@ int tm_result_inspect(const unsigned char *record, size_t record_length,
     if (repository_id == NULL || profile_digest == NULL ||
         verification_fingerprint == NULL || !expect_object_size(identity_json, 2) ||
         !expect_object_size(environment, 3) || !expect_object_size(result_json, 2) ||
-        tm_json_typeof(outputs) != TM_JSON_ARRAY || tm_json_size(outputs) != 0 ||
+        tm_json_typeof(outputs) != TM_JSON_ARRAY ||
         tm_json_integer_value(tm_json_object_get(result_json, "exit_code")) != 0 ||
         tm_json_object_get(result_json, "signal") == NULL ||
         tm_json_typeof(tm_json_object_get(result_json, "signal")) != TM_JSON_NULL)
@@ -723,6 +844,7 @@ int tm_result_inspect(const unsigned char *record, size_t record_length,
         runtime_digest == NULL || context_digest == NULL ||
         parse_inputs(tm_json_object_get(payload, "inputs"), &inputs,
                      &input_count) < 0 ||
+        parse_outputs(outputs, &summary->outputs, &summary->output_count) < 0 ||
         !canonical_input_order(inputs, input_count)) goto invalid;
     identity = (struct tm_verification_identity){
         repository_id, command_fingerprint, working_directory, profile_digest,
@@ -913,6 +1035,7 @@ int tm_result_find(int repository_root_fd, const char *command_fingerprint,
                           &candidate_length) < 0) continue;
         if (tm_result_inspect(candidate, candidate_length, &summary,
                               candidate_id) == 0 &&
+            summary.output_count == 0 &&
             strcmp(summary.command_id, command_fingerprint + 7) == 0 &&
             strcmp(summary.verification_id,
                    verification_fingerprint + 7) == 0 &&
@@ -962,6 +1085,8 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
     struct tm_json_value *envelope = NULL;
     struct tm_input_observation *inputs = NULL;
     size_t input_count = 0;
+    struct tm_output_entry *outputs_parsed = NULL;
+    size_t output_count = 0;
     const struct tm_json_value *payload;
     const struct tm_json_value *attestation;
     const struct tm_json_value *identity_json;
@@ -1041,7 +1166,7 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
     if (!expect_object_size(identity_json, 2) ||
         !expect_object_size(environment, 3) ||
         !expect_object_size(result_json, 2) ||
-        tm_json_typeof(outputs) != TM_JSON_ARRAY || tm_json_size(outputs) != 0 ||
+        tm_json_typeof(outputs) != TM_JSON_ARRAY ||
         tm_json_integer_value(tm_json_object_get(result_json, "exit_code")) != 0 ||
         tm_json_object_get(result_json, "signal") == NULL ||
         tm_json_typeof(tm_json_object_get(result_json, "signal")) != TM_JSON_NULL) {
@@ -1062,6 +1187,7 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
     }
     if (parse_inputs(tm_json_object_get(payload, "inputs"), &inputs,
                      &input_count) < 0 ||
+        parse_outputs(outputs, &outputs_parsed, &output_count) < 0 ||
         !canonical_input_order(inputs, input_count)) {
         errno = EBADMSG;
         goto done;
@@ -1107,6 +1233,8 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
 done:
     tm_json_free(envelope);
     free(inputs);
+    for (size_t oi = 0; oi < output_count; oi++) free(outputs_parsed[oi].path);
+    free(outputs_parsed);
     free(canonical_envelope);
     free(canonical_payload);
     free(message);

@@ -262,6 +262,32 @@ int main(void)
     }
     tm_result_summary_clear(&summary);
     {
+        struct tm_output_entry entries[] = {
+            {"dist", TM_OUTPUT_DIRECTORY, 0755, "", 0},
+            {"dist/report.txt", TM_OUTPUT_FILE, 0644,
+             "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 3}
+        };
+        struct tm_output_manifest manifest = {entries, 2};
+        unsigned char *output_record = NULL;
+        size_t output_length = 0;
+        char output_id[72];
+        if (tm_result_create_with_outputs(&identity, 3, private_key, &manifest,
+                &output_record, &output_length, output_id) != 0 ||
+            tm_result_verify(output_record, output_length, private_key, &policy,
+                             verified_id) != 0 ||
+            tm_result_inspect(output_record, output_length, &summary,
+                              verified_id) != 0 || summary.output_count != 2 ||
+            strcmp(summary.outputs[1].path, "dist/report.txt") != 0 ||
+            summary.outputs[1].size != 3) {
+            free(output_record);
+            tm_result_summary_clear(&summary);
+            fprintf(stderr, "signed output manifest failed\n");
+            goto fail;
+        }
+        tm_result_summary_clear(&summary);
+        free(output_record);
+    }
+    {
         const struct tm_input_observation ordered_inputs[] = {
             {"tests/a", TM_INPUT_FILE,
              "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

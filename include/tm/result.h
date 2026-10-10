@@ -6,6 +6,7 @@
 
 #include <openssl/evp.h>
 
+#include "tm/outputs.h"
 #include "tm/verification.h"
 
 struct tm_trust_policy;
@@ -28,6 +29,8 @@ struct tm_result_summary {
     uint64_t semantics_version;
     struct tm_input_observation *inputs;
     size_t input_count;
+    struct tm_output_entry *outputs;
+    size_t output_count;
 };
 
 /* Build a signed v2 success record with an empty output manifest. The returned
@@ -36,6 +39,13 @@ int tm_result_create(const struct tm_verification_identity *identity,
                      uint64_t trust_epoch, EVP_PKEY *private_key,
                      unsigned char **record, size_t *record_length,
                      char record_id[72]);
+
+/* Build a signed v2 success record with a captured output manifest. The
+ * referenced blob store must remain available for a future restore. */
+int tm_result_create_with_outputs(
+    const struct tm_verification_identity *identity, uint64_t trust_epoch,
+    EVP_PKEY *private_key, const struct tm_output_manifest *outputs,
+    unsigned char **record, size_t *record_length, char record_id[72]);
 
 /* Atomically add a canonical record to .tm/results using the portable
  * command/verification/record ID layout. Existing IDs are never replaced. */
@@ -50,8 +60,8 @@ int tm_result_find(int repository_root_fd, const char *command_fingerprint,
                    unsigned char **record, size_t *record_length,
                    char record_id[72]);
 
-/* Authenticate and scope-check an output-free record using an
- * operator-approved key/policy. Nonempty outputs are rejected. */
+/* Authenticate and scope-check a record, including its declared output
+ * manifest, using an operator-approved key/policy. */
 int tm_result_verify(const unsigned char *record, size_t record_length,
                      EVP_PKEY *trusted_public_key,
                      const struct tm_result_policy *policy,
@@ -66,7 +76,7 @@ int tm_result_verify_trusted(const unsigned char *record, size_t record_length,
 
 /* Validate canonical structure and reconstruct the fingerprint without
  * asserting that the signature is trusted or that current files are fresh.
- * String fields and the owned input manifest are released by summary_clear. */
+ * String fields and owned input/output manifests are released by summary_clear. */
 int tm_result_inspect(const unsigned char *record, size_t record_length,
                       struct tm_result_summary *summary, char record_id[72]);
 
