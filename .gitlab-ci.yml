@@ -34,3 +34,15 @@ test:
       else
         echo "No result sidecars changed."
       fi
+
+portable_acceptance:
+  stage: test
+  tags:
+    - linux-bwrap
+  needs:
+    - test
+  before_script:
+    - sudo apt-get update
+    - sudo apt-get install --yes --no-install-recommends build-essential libssl-dev bubblewrap busybox-static jq
+  script:
+    - bash tests/portable-reuse-ci.sh
