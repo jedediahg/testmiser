@@ -31,6 +31,55 @@
 #define GUEST_WORKSPACE "/workspace"
 #define GUEST_METADATA "/workspace/.tm"
 
+#ifndef TM_TEST_BWRAP
+static int trusted_executable_directories(const char *executable_path)
+{
+    char *parent = strdup(executable_path);
+    int trusted = 0;
+    if (parent == NULL) return -1;
+    for (;;) {
+        char *separator = strrchr(parent, '/');
+        struct stat status;
+        int descriptor, access_error;
+        if (separator == NULL) { errno = EINVAL; break; }
+        if (separator == parent) separator[1] = '\0';
+        else *separator = '\0';
+        descriptor = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC |
+                                  O_NOFOLLOW);
+        if (descriptor < 0) break;
+        if (fstat(descriptor, &status) < 0) {
+            int saved = errno;
+            close(descriptor);
+            errno = saved;
+            break;
+        }
+        if (!S_ISDIR(status.st_mode) || status.st_uid != 0 ||
+            (status.st_mode & 0222) != 0) {
+            close(descriptor);
+            errno = EPERM;
+            break;
+        }
+        if (faccessat(descriptor, ".", W_OK, AT_EACCESS) == 0) {
+            close(descriptor);
+            errno = EPERM;
+            break;
+        }
+        access_error = errno;
+        close(descriptor);
+        if (access_error != EACCES && access_error != EROFS) {
+            errno = access_error;
+            break;
+        }
+        if (strcmp(parent, "/") == 0) {
+            trusted = 1;
+            break;
+        }
+    }
+    free(parent);
+    return trusted ? 0 : -1;
+}
+#endif
+
 int tm_backend_executable_identity(char **resolved_path, char digest[72])
 {
     struct stat before, after;
@@ -62,6 +111,12 @@ int tm_backend_executable_identity(char **resolved_path, char digest[72])
         errno = EPERM;
         return -1;
     }
+    if (trusted_executable_directories(path) < 0) {
+        saved = errno;
+        free(path);
+        errno = saved;
+        return -1;
+    }
     if (faccessat(AT_FDCWD, path, W_OK, AT_EACCESS) == 0) {
         free(path);
         errno = EPERM;
@@ -74,6 +129,7 @@ int tm_backend_executable_identity(char **resolved_path, char digest[72])
         return -1;
     }
 #endif
+    errno = 0;
     if (tm_sha256_file(path, hex) < 0 || lstat(path, &after) < 0 ||
         before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
         before.st_mode != after.st_mode || before.st_uid != after.st_uid ||
@@ -675,6 +731,46 @@ static int run_probe(const struct argument_vector *arguments,
 unavailable:
     free_arguments(&probe);
     return 0;
+}
+
+int tm_backend_preflight(const struct tm_profile *profile,
+                         const char *runtime_root,
+                         const char *repository_root,
+                         const struct tm_snapshot *snapshot)
+{
+    struct argument_vector arguments = {0};
+    const char **input_paths = NULL;
+    char *runtime = NULL, *current = NULL, *working_directory = NULL;
+    char *command[] = {"/bin/true", NULL};
+    size_t input_count, index;
+    int repository_fd = -1, built, result = 0;
+    if (profile == NULL || runtime_root == NULL || repository_root == NULL)
+        return 0;
+    runtime = realpath(runtime_root, NULL);
+    current = getcwd(NULL, 0);
+    if (runtime == NULL || current == NULL) goto done;
+    working_directory = tm_repo_relative_path(repository_root, current);
+    if (working_directory == NULL) goto done;
+    repository_fd = open_directory_without_symlinks(repository_root);
+    if (repository_fd < 0) goto done;
+    input_count = tm_profile_input_root_count(profile);
+    if (input_count > 0) {
+        input_paths = calloc(input_count, sizeof(*input_paths));
+        if (input_paths == NULL) goto done;
+        for (index = 0; index < input_count; index++)
+            input_paths[index] = tm_profile_input_root(profile, index);
+    }
+    built = build_arguments(&arguments, profile, runtime, snapshot,
+                            working_directory, NULL, 0, command);
+    if (built > 0) result = run_probe(&arguments, profile);
+done:
+    if (repository_fd >= 0) close(repository_fd);
+    free_arguments(&arguments);
+    free(input_paths);
+    free(working_directory);
+    free(current);
+    free(runtime);
+    return result;
 }
 
 static int run_bubblewrap(const struct argument_vector *arguments,

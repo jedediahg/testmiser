@@ -5,9 +5,16 @@
 #include "tm/observed_inputs.h"
 
 struct tm_profile;
+struct tm_snapshot;
 
 /* Resolve the Bubblewrap executable and identify its stable contents. */
 int tm_backend_executable_identity(char **resolved_path, char digest[72]);
+
+/* Check whether the approved view can be enforced without running the test. */
+int tm_backend_preflight(const struct tm_profile *profile,
+                        const char *runtime_root,
+                        const char *repository_root,
+                        const struct tm_snapshot *snapshot);
 
 /* Try the approved Bubblewrap view. Return 1 if the command ran, 0 when the
  * host cannot enforce the view (caller may run once, uncached), or -1 when

@@ -14,6 +14,7 @@
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/runtime.h"
+#include "tm/snapshot.h"
 
 static int write_file(const char *path, const char *content)
 {
@@ -63,6 +64,8 @@ int main(void)
     char bwrap_digest[72];
     int command_result = -1, status = 1, base_descriptor = -1;
     int high_descriptor = -1;
+    int preflight_repository_fd = -1;
+    struct tm_snapshot *preflight_snapshot = NULL;
     mode_t original_umask = 0;
     int restore_umask = 0;
     char log_contents[64] = {0}, marker_contents[64] = {0};
@@ -145,6 +148,27 @@ int main(void)
     original_umask = umask(077);
     restore_umask = 1;
 
+    {
+        const char *preflight_roots[] = {"build/tm-backend-input"};
+        preflight_repository_fd = open(repository_root,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (preflight_repository_fd < 0 ||
+            tm_snapshot_create(preflight_repository_fd, preflight_roots, 1,
+                               &preflight_snapshot) < 0 ||
+            unsetenv("TM_FAKE_BWRAP_INPUT_FILE") < 0 ||
+            tm_backend_preflight(profile, runtime_path, repository_root,
+                                 preflight_snapshot) != 1 ||
+            unlink(log_path) < 0 ||
+            setenv("TM_FAKE_BWRAP_INPUT_FILE", input_file_path, 1) < 0) {
+            fprintf(stderr, "backend cache preflight did not pass its probe\n");
+            goto done;
+        }
+        tm_snapshot_free(preflight_snapshot);
+        preflight_snapshot = NULL;
+        close(preflight_repository_fd);
+        preflight_repository_fd = -1;
+    }
+
     if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
                        0, &observer_report, &observed_inputs,
                        &command_result) != 1 ||
@@ -218,6 +242,8 @@ int main(void)
     status = 0;
 done:
     if (restore_umask) (void)umask(original_umask);
+    tm_snapshot_free(preflight_snapshot);
+    if (preflight_repository_fd >= 0) close(preflight_repository_fd);
     if (base_descriptor >= 0) close(base_descriptor);
     if (high_descriptor >= 0) close(high_descriptor);
     tm_profile_free(profile);

@@ -21,6 +21,7 @@
 #include "tm/repo.h"
 #include "tm/result.h"
 #include "tm/runtime.h"
+#include "tm/snapshot.h"
 #include "tm/tm.h"
 #include "tm/trust.h"
 #include "tm/verification.h"
@@ -373,6 +374,61 @@ static int parse_options(int argc, char **argv, struct options *options)
     return 0;
 }
 
+static int find_profile_cache_hit(int repository_fd,
+                                  const struct tm_profile *profile,
+                                  const char *runtime_root,
+                                  const char *repository_root,
+                                  const char *command_fingerprint,
+                                  const char *context_fingerprint,
+                                  const struct tm_trust_policy *trust_policy,
+                                  char record_id[72])
+{
+    struct tm_snapshot *snapshot = NULL;
+    const char **root_paths = NULL;
+    int *root_descriptors = NULL;
+    unsigned char *record = NULL;
+    size_t record_length = 0, root_count, index;
+    int preflight, found = 1;
+    root_count = tm_profile_input_root_count(profile);
+    if (root_count > 0) {
+        root_paths = calloc(root_count, sizeof(*root_paths));
+        root_descriptors = malloc(root_count * sizeof(*root_descriptors));
+        if (root_descriptors != NULL)
+            for (index = 0; index < root_count; index++)
+                root_descriptors[index] = -1;
+        if (root_paths == NULL || root_descriptors == NULL) goto done;
+        for (index = 0; index < root_count; index++) {
+            root_paths[index] = tm_profile_input_root(profile, index);
+        }
+        if (tm_snapshot_create(repository_fd, root_paths, root_count,
+                               &snapshot) < 0) goto done;
+        for (index = 0; index < root_count; index++) {
+            root_descriptors[index] = tm_snapshot_open_root_readable(
+                snapshot, index);
+            if (root_descriptors[index] < 0) goto done;
+        }
+    }
+    preflight = tm_backend_preflight(profile, runtime_root, repository_root,
+                                     snapshot);
+    if (preflight != 1) goto done;
+    found = tm_result_find_matching_snapshot_inputs(repository_fd,
+        command_fingerprint, tm_profile_digest(profile),
+        tm_profile_runtime_digest(profile), context_fingerprint,
+        trust_policy, root_paths, root_descriptors, root_count,
+        &record, &record_length, record_id);
+    if (found == 0) found = 0;
+    else found = 1;
+done:
+    if (root_descriptors != NULL)
+        for (index = 0; index < root_count; index++)
+            if (root_descriptors[index] >= 0) close(root_descriptors[index]);
+    free(record);
+    tm_snapshot_free(snapshot);
+    free(root_descriptors);
+    free(root_paths);
+    return found;
+}
+
 int main(int argc, char **argv)
 {
     struct options options;
@@ -399,6 +455,7 @@ int main(int argc, char **argv)
     int backend_used = 0;
     int reusable_context = 0;
     int explicit_inputs_unchanged = 1;
+    int cache_hit = 0;
     int parse_result;
     int result;
 
@@ -517,7 +574,7 @@ int main(int argc, char **argv)
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
         }
-        if (options.explain || signing_key != NULL) {
+        if (options.explain || signing_key != NULL || !options.force) {
             struct tm_json_value *environment =
                 environment_json(child_environment);
             struct tm_json_value *execution_context = NULL;
@@ -534,8 +591,9 @@ int main(int argc, char **argv)
                     &profile_context) < 0 ||
                 tm_context_fingerprint(environment, profile_context,
                                       context_fingerprint) < 0) {
-                fprintf(stderr,
-                    "tm: reuse rejected: trusted Bubblewrap executable and Linux execution context could not be fingerprinted\n");
+                if (options.explain || signing_key != NULL)
+                    fprintf(stderr,
+                        "tm: reuse rejected: trusted Bubblewrap executable and Linux execution context could not be fingerprinted\n");
                 if (signing_key != NULL) {
                     free(bubblewrap_path);
                     tm_json_free(profile_context);
@@ -568,12 +626,14 @@ int main(int argc, char **argv)
         tm_trust_policy_free(trust_policy);
         return TM_EXIT_INTERNAL_ERROR;
     }
-    if ((options.explain || signing_key != NULL) && profile != NULL) {
+    if ((options.explain || signing_key != NULL || !options.force) &&
+        profile != NULL) {
         char *current_directory = getcwd(NULL, 0);
         working_directory = current_directory == NULL ? NULL :
             tm_repo_relative_path(repository_root, current_directory);
         if (working_directory == NULL) {
-            fprintf(stderr,
+            if (options.explain || signing_key != NULL)
+                fprintf(stderr,
                     "tm: reuse rejected: working directory is outside the repository or unavailable\n");
         } else {
             struct tm_command_identity identity = {
@@ -588,7 +648,8 @@ int main(int argc, char **argv)
                     fprintf(stderr, "tm: command fingerprint: %s\n",
                             command_fingerprint);
             } else {
-                fprintf(stderr,
+                if (options.explain || signing_key != NULL)
+                    fprintf(stderr,
                         "tm: reuse rejected: command identity is not portable\n");
             }
         }
@@ -604,7 +665,7 @@ int main(int argc, char **argv)
             return TM_EXIT_INTERNAL_ERROR;
         }
     }
-    if (options.input_count > 0 || signing_key != NULL) {
+    if (options.input_count > 0 || signing_key != NULL || profile != NULL) {
         repository_fd = open(repository_root,
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         for (index = 0; index < options.input_count; index++) {
@@ -647,7 +708,26 @@ int main(int argc, char **argv)
         fprintf(stderr, "tm: force requested; command will execute\n");
     if (options.explain && options.output_count > 0 && profile == NULL)
         fprintf(stderr, "tm: reuse rejected: --output requires an approved enforced profile\n");
-    {
+    if (!options.force && profile != NULL &&
+        tm_profile_is_deterministic(profile) &&
+        strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
+        options.output_count == 0 && options.input_count == 0 &&
+        reusable_context && command_fingerprint[0] != '\0' &&
+        repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
+        char candidate_id[72];
+        if (find_profile_cache_hit(repository_fd, profile, runtime_root,
+                repository_root, command_fingerprint, context_fingerprint,
+                trust_policy, candidate_id) == 0) {
+            cache_hit = 1;
+            result = 0;
+            if (options.explain)
+                fprintf(stderr, "tm: SKIP: trusted result %s\n", candidate_id);
+        } else if (options.explain) {
+            fprintf(stderr,
+                "tm: RUN: no trusted result matched the stable input snapshot\n");
+        }
+    }
+    if (!cache_hit) {
         int backend_result = 0;
         backend_used = profile != NULL && runtime_root != NULL ?
             tm_backend_run(profile, runtime_root, repository_root,
@@ -666,7 +746,7 @@ int main(int argc, char **argv)
                 &observer_report);
         }
     }
-    if (options.explain) {
+    if (options.explain && !cache_hit) {
         int observer_gate =
             tm_observer_report_allows_reuse(&observer_report);
         fprintf(stderr,
@@ -676,7 +756,7 @@ int main(int argc, char **argv)
             observer_report.stable_input_view ? "yes" : "no",
             observer_report.ineligibility_reasons);
     }
-    if (options.explain)
+    if (options.explain && !cache_hit)
         for (index = 0; index < observer_report.candidate_count; index++) {
             const struct tm_observer_candidate *candidate =
                 &observer_report.candidates[index];
@@ -693,7 +773,7 @@ int main(int argc, char **argv)
                         explicit_inputs[index].path);
         }
     }
-    if (signing_key != NULL && result == 0 && !options.force &&
+    if (!cache_hit && signing_key != NULL && result == 0 && !options.force &&
         tm_profile_is_deterministic(profile) &&
         strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
         backend_used > 0 && reusable_context &&
