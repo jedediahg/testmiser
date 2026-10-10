@@ -120,6 +120,7 @@ struct observer_state {
     int saw_observer_failure;
     int saw_outliving_descendant;
     int saw_external_path;
+    int saw_unmodeled_error;
     size_t candidate_count;
     size_t unsupported_count;
     long unsupported_syscalls[TM_MAX_UNSUPPORTED];
@@ -243,6 +244,11 @@ static void mark_observer_failure(void)
 {
     observer.saw_unknown_syscall = 1;
     observer.saw_observer_failure = 1;
+}
+
+static void mark_unmodeled_error(void)
+{
+    observer.saw_unmodeled_error = 1;
 }
 
 static void reject_unsupported_syscall(long number)
@@ -623,8 +629,6 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
                                sizeof(raw_path)) == 0) {
             task_path(task->pid, (int)registers->rdi, raw_path,
                       task->pending_path, sizeof(task->pending_path));
-            candidate_path(number == 322 ? "executable" : "symlink",
-                           task->pending_path);
         } else {
             mark_observer_failure();
         }
@@ -656,7 +660,6 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
                                sizeof(raw_path)) == 0) {
             task_path(task->pid, AT_FDCWD, raw_path, task->pending_path,
                       sizeof(task->pending_path));
-            candidate_path("executable", task->pending_path);
         } else {
             mark_observer_failure();
         }
@@ -895,6 +898,7 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 57:  /* fork: descendants are traced */
     case 58:  /* vfork: descendants are traced */
     case 59:  /* execve is captured by note_syscall */
+    case 267: /* readlinkat is captured by note_syscall */
     case 437: /* openat2 request validated by note_syscall */
     case 60:  /* exit */
     case 231: /* exit_group */
@@ -930,7 +934,29 @@ static void syscall_stop(struct task_state *task)
     task->syscall_entry = 0;
     long result = (long)registers.rax;
     if (task->syscall_number == 3) {
+        if (result < 0) mark_unmodeled_error();
         forget_descriptor(task, task->pending_descriptor);
+    }
+    if ((task->pending_duplication || task->pending_close_range) &&
+        result < 0)
+        mark_unmodeled_error();
+    if ((task->syscall_number == 0 || task->syscall_number == 17 ||
+         task->syscall_number == 19 || task->syscall_number == 78 ||
+         task->syscall_number == 217) && result < 0)
+        mark_unmodeled_error();
+    if (task->syscall_number == 9 && result < 0)
+        mark_unmodeled_error();
+    if ((task->syscall_number == 80 || task->syscall_number == 81) &&
+        result < 0)
+        mark_unmodeled_error();
+    if (task->syscall_number == 267) {
+        if (result >= 0)
+            candidate_path("symlink", task->pending_path);
+        else if (result == -ENOENT || result == -ENOTDIR)
+            candidate_path("absent path", task->pending_path);
+        else
+            mark_unmodeled_error();
+        task->pending_path[0] = '\0';
     }
     if (task->pending_duplication && result >= 0) {
         const char *source = tracked_descriptor(task,
@@ -990,6 +1016,8 @@ static void syscall_stop(struct task_state *task)
             }
         } else if (result == -ENOENT || result == -ENOTDIR) {
             candidate_path("absent path", task->pending_path);
+        } else {
+            mark_unmodeled_error();
         }
         task->pending_path[0] = '\0';
     } else if (task->pending_path[0] != '\0' &&
@@ -997,7 +1025,7 @@ static void syscall_stop(struct task_state *task)
                 task->syscall_number == 322) && result < 0) {
         if (result == -ENOENT || result == -ENOTDIR) {
             candidate_path("absent executable", task->pending_path);
-        }
+        } else mark_unmodeled_error();
         task->pending_path[0] = '\0';
     } else {
         task->pending_path[0] = '\0';
@@ -1025,6 +1053,10 @@ static void report_reasons(void)
     }
     if (observer.saw_external_path) {
         fprintf(stderr, "tm: reuse rejected: external filesystem path is outside the repository input model\n");
+    }
+    if (observer.saw_unmodeled_error) {
+        fprintf(stderr,
+            "tm: reuse rejected: filesystem or descriptor error result is not modeled\n");
     }
     if (observer.saw_unknown_syscall) {
         size_t unsupported_index;
@@ -1287,6 +1319,10 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                 }
             }
         } else if (event == PTRACE_EVENT_EXEC) {
+            if ((task->syscall_number == 59 ||
+                 task->syscall_number == 322) &&
+                task->pending_path[0] != '\0')
+                candidate_path("executable", task->pending_path);
             forget_cloexec_descriptors(task);
         }
         if (stop_signal == (SIGTRAP | 0x80)) {
@@ -1327,6 +1363,9 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_DESCENDANT;
         if (observer.saw_external_path)
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT;
+        if (observer.saw_unmodeled_error)
+            report->ineligibility_reasons |=
+                TM_OBSERVER_INELIGIBLE_UNMODELED_ERROR;
         if (!report->stable_input_view)
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW;
         report->observation_complete = !observer.saw_observer_failure &&

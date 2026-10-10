@@ -9,6 +9,7 @@ network_syscall_probe=${NETWORK_SYSCALL_PROBE:-./build/network_syscall_probe}
 descriptor_dup_probe=${DESCRIPTOR_DUP_PROBE:-./build/descriptor_dup_probe}
 clone3_probe=${CLONE3_PROBE:-./build/clone3_probe}
 cwd_probe=${CWD_PROBE:-./build/cwd_probe}
+path_error_probe=${PATH_ERROR_PROBE:-./build/path_error_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -494,6 +495,19 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
     grep -q 'observed input candidate: directory listing: docs' \
         "$tmp_dir/directory-list.err"
     grep -q 'stable-view=no' "$tmp_dir/directory-list.err"
+    "$tm_bin" --explain -- "$path_error_probe" directory-write \
+        2>"$tmp_dir/path-error.err"
+    grep -q 'filesystem or descriptor error result is not modeled' \
+        "$tmp_dir/path-error.err"
+    "$tm_bin" --explain -- "$path_error_probe" absent \
+        2>"$tmp_dir/path-absent.err"
+    grep -q 'observed input candidate: absent path: tm-known-absent-input-for-test' \
+        "$tmp_dir/path-absent.err"
+    if grep -q 'filesystem or descriptor error result is not modeled' \
+        "$tmp_dir/path-absent.err"; then
+        printf '%s\n' 'ENOENT was rejected instead of modeled as absence' >&2
+        exit 1
+    fi
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'

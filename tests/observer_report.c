@@ -18,6 +18,8 @@ int main(void)
     assert(!tm_observer_report_allows_reuse(&report));
     report.ineligibility_reasons = TM_OBSERVER_INELIGIBLE_OBSERVER_FAILURE;
     assert(!tm_observer_report_allows_reuse(&report));
+    report.ineligibility_reasons = TM_OBSERVER_INELIGIBLE_UNMODELED_ERROR;
+    assert(!tm_observer_report_allows_reuse(&report));
 
     report.ineligibility_reasons = 0;
     report.observation_complete = 0;
