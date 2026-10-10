@@ -513,7 +513,6 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         return;
     case 3: /* close: remove provenance at syscall exit */
         return;
-    case 11: /* munmap */
     case 29: /* ioctl */
     case 32: /* dup */
     case 33: /* dup2 */
@@ -543,6 +542,11 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 26:  /* msync */
     case 28:  /* madvise */
     case 39:  /* getpid */
+    case 2:   /* open: path and flags captured by note_syscall */
+    case 257: /* openat: path and flags captured by note_syscall */
+    case 10:  /* mprotect */
+    case 11:  /* munmap */
+    case 218: /* set_tid_address */
         return;
     case 56:  /* clone: descendants are traced */
         task->shares_descriptors =

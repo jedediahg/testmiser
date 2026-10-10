@@ -145,8 +145,10 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
     fi
 fi
 
-if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
-    "$tm_bin" --explain -- "$open_mode_probe" 2>"$tmp_dir/open-mode.err"; then
+if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
+    : >"$tmp_dir/open-mode-target"
+    "$tm_bin" --explain -- "$open_mode_probe" "$tmp_dir/open-mode-target" \
+        2>"$tmp_dir/open-mode.err"
     grep -q 'filesystem mutation observed' "$tmp_dir/open-mode.err"
 fi
 
