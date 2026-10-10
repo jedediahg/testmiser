@@ -37,6 +37,11 @@ int tm_result_create(const struct tm_verification_identity *identity,
                      unsigned char **record, size_t *record_length,
                      char record_id[72]);
 
+/* Atomically add a canonical record to .tm/results using the portable
+ * command/verification/record ID layout. Existing IDs are never replaced. */
+int tm_result_store(int repository_root_fd, const unsigned char *record,
+                    size_t record_length, char record_id[72]);
+
 /* Authenticate and scope-check an output-free record using an
  * operator-approved key/policy. Nonempty outputs are rejected. */
 int tm_result_verify(const unsigned char *record, size_t record_length,

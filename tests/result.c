@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <stdio.h>
@@ -11,6 +12,103 @@
 
 #include "tm/result.h"
 #include "tm/trust.h"
+
+static int test_store(const unsigned char *record, size_t length,
+                      const char *expected_id)
+{
+    char root[] = "/tmp/tm-result-store-XXXXXX";
+    char outside[] = "/tmp/tm-result-outside-XXXXXX";
+    char filename[80], path[512];
+    struct tm_result_summary summary = {0};
+    char record_id[72];
+    struct stat st;
+    unsigned char *stored = NULL;
+    size_t used = 0;
+    int rootfd = -1, tmfd = -1, resultsfd = -1, commandfd = -1;
+    int verifyfd = -1, fd = -1, result = -1;
+    if (mkdtemp(root) == NULL || mkdtemp(outside) == NULL) goto done;
+    rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (rootfd < 0 || tm_result_inspect(record, length, &summary, record_id) < 0 ||
+        strcmp(record_id, expected_id) != 0 ||
+        tm_result_store(rootfd, record, length, record_id) != 0 ||
+        tm_result_store(rootfd, record, length, record_id) != 0 ||
+        snprintf(filename, sizeof(filename), "%s.tm.json", record_id + 7) >=
+            (int)sizeof(filename)) goto done;
+    tmfd = openat(rootfd, ".tm", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (tmfd < 0) goto done;
+    resultsfd = openat(tmfd, "results", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (resultsfd < 0) goto done;
+    commandfd = openat(resultsfd, summary.command_id,
+                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (commandfd < 0) goto done;
+    verifyfd = openat(commandfd, summary.verification_id,
+                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (verifyfd < 0) goto done;
+    fd = openat(verifyfd, filename, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0 || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
+        (st.st_mode & 0777) != 0644 || st.st_size != (off_t)length) goto done;
+    stored = malloc(length);
+    if (stored == NULL) goto done;
+    while (used < length) {
+        ssize_t n = read(fd, stored + used, length - used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) goto done;
+        used += (size_t)n;
+    }
+    if (memcmp(stored, record, length) != 0) goto done;
+    close(fd); fd = -1;
+    fd = openat(verifyfd, filename, O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0 || write(fd, "x", 1) != 1) goto done;
+    close(fd); fd = -1;
+    if (tm_result_store(rootfd, record, length, record_id) == 0) goto done;
+
+    /* Refuse a symlink at the repository-controlled .tm boundary. */
+    close(verifyfd); verifyfd = -1;
+    close(commandfd); commandfd = -1;
+    close(resultsfd); resultsfd = -1;
+    close(tmfd); tmfd = -1;
+    /* Use a second root to isolate the symlink test. */
+    {
+        char symlink_root[] = "/tmp/tm-result-link-XXXXXX";
+        int linkfd;
+        if (mkdtemp(symlink_root) == NULL) goto done;
+        linkfd = open(symlink_root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (linkfd < 0 || symlink(outside, strcat(strcpy(path, symlink_root), "/.tm")) < 0) {
+            if (linkfd >= 0) close(linkfd);
+            rmdir(symlink_root);
+            goto done;
+        }
+        if (tm_result_store(linkfd, record, length, record_id) == 0) {
+            close(linkfd); unlink(path); rmdir(symlink_root); goto done;
+        }
+        close(linkfd); unlink(path); rmdir(symlink_root);
+    }
+    result = 0;
+done:
+    if (fd >= 0) close(fd);
+    if (verifyfd >= 0) close(verifyfd);
+    if (commandfd >= 0) close(commandfd);
+    if (resultsfd >= 0) close(resultsfd);
+    if (tmfd >= 0) close(tmfd);
+    if (rootfd >= 0) close(rootfd);
+    if (summary.command_id[0] != '\0' && summary.verification_id[0] != '\0') {
+        snprintf(path, sizeof(path), "%s/.tm/results/%s/%s/%s.tm.json",
+                 root, summary.command_id, summary.verification_id, expected_id + 7);
+        unlink(path);
+        snprintf(path, sizeof(path), "%s/.tm/results/%s/%s", root,
+                 summary.command_id, summary.verification_id); rmdir(path);
+        snprintf(path, sizeof(path), "%s/.tm/results/%s", root,
+                 summary.command_id); rmdir(path);
+        snprintf(path, sizeof(path), "%s/.tm/results", root); rmdir(path);
+        snprintf(path, sizeof(path), "%s/.tm", root); rmdir(path);
+    }
+    snprintf(path, sizeof(path), "%s/.tm", root);
+    rmdir(path);
+    rmdir(root); rmdir(outside);
+    free(stored);
+    tm_result_summary_clear(&summary);
+    return result;
+}
 
 static int must_reject(const unsigned char *record, size_t length,
                        EVP_PKEY *key, const struct tm_result_policy *policy)
@@ -103,6 +201,10 @@ int main(void)
         goto fail;
     }
     tm_result_summary_clear(&summary);
+    if (test_store(record, record_length, expected_id) != 0) {
+        fprintf(stderr, "portable result publication checks failed\n");
+        goto fail;
+    }
     {
         const struct tm_input_observation ordered_inputs[] = {
             {"tests/a", TM_INPUT_FILE,

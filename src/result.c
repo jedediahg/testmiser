@@ -1,9 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <openssl/evp.h>
 
@@ -15,6 +19,7 @@
 #include "tm/trust.h"
 
 static const unsigned char result_signature_domain[] = "tm-result-v2";
+static unsigned long result_store_sequence;
 
 static int signature_message(const unsigned char *payload, size_t payload_size,
                              unsigned char **message, size_t *message_size)
@@ -324,6 +329,160 @@ done:
     free(message);
     free(envelope_bytes);
     free(record_with_lf);
+    return result;
+}
+
+static int result_directory_at(int parent, const char *name)
+{
+    int created = 0;
+    int directory;
+    if (mkdirat(parent, name, 0755) == 0) created = 1;
+    else if (errno != EEXIST) return -1;
+    if (created && fsync(parent) < 0) return -1;
+    directory = openat(parent, name,
+                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (directory < 0) return -1;
+    return directory;
+}
+
+static int same_file_contents(int directory, const char *name,
+                              const unsigned char *record, size_t length)
+{
+    unsigned char buffer[8192];
+    struct stat before, after;
+    size_t offset = 0;
+    int fd = openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int matches = -1;
+    int saved;
+    if (fd < 0) return -1;
+    if (fstat(fd, &before) < 0 || !S_ISREG(before.st_mode) ||
+        before.st_size < 0 || (uint64_t)before.st_size != (uint64_t)length) {
+        errno = EEXIST;
+        goto done;
+    }
+    while (offset < length) {
+        size_t amount = length - offset;
+        ssize_t count;
+        if (amount > sizeof(buffer)) amount = sizeof(buffer);
+        count = read(fd, buffer, amount);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) { errno = EIO; goto done; }
+        if (memcmp(buffer, record + offset, (size_t)count) != 0) {
+            errno = EEXIST;
+            goto done;
+        }
+        offset += (size_t)count;
+    }
+    if (fstat(fd, &after) < 0 || before.st_dev != after.st_dev ||
+        before.st_ino != after.st_ino || before.st_size != after.st_size ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
+        errno = EBUSY;
+        goto done;
+    }
+    matches = 1;
+done:
+    saved = errno;
+    close(fd);
+    errno = saved;
+    return matches;
+}
+
+static int write_record_file(int directory, const char *name,
+                             const unsigned char *record, size_t length)
+{
+    size_t offset = 0;
+    int fd = openat(directory, name,
+                    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                    0600);
+    int saved;
+    if (fd < 0) return -1;
+    while (offset < length) {
+        ssize_t count = write(fd, record + offset, length - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) { errno = EIO; goto fail; }
+        offset += (size_t)count;
+    }
+    if (fchmod(fd, 0644) < 0 || fsync(fd) < 0) goto fail;
+    if (close(fd) < 0) {
+        saved = errno;
+        unlinkat(directory, name, 0);
+        errno = saved;
+        return -1;
+    }
+    return 0;
+fail:
+    saved = errno;
+    close(fd);
+    unlinkat(directory, name, 0);
+    errno = saved;
+    return -1;
+}
+
+int tm_result_store(int repository_root_fd, const unsigned char *record,
+                    size_t record_length, char record_id[72])
+{
+    struct tm_result_summary summary = {0};
+    char filename[80], temporary[80];
+    int tm_directory = -1, results_directory = -1;
+    int command_directory = -1, verification_directory = -1;
+    int result = -1, saved;
+
+    if (repository_root_fd < 0 || record == NULL || record_id == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (tm_result_inspect(record, record_length, &summary, record_id) < 0)
+        return -1;
+    if (snprintf(filename, sizeof(filename), "%s.tm.json", record_id + 7) >=
+        (int)sizeof(filename)) {
+        errno = EOVERFLOW;
+        goto done;
+    }
+    tm_directory = result_directory_at(repository_root_fd, ".tm");
+    if (tm_directory < 0) goto done;
+    results_directory = result_directory_at(tm_directory, "results");
+    if (results_directory < 0) goto done;
+    command_directory = result_directory_at(results_directory,
+                                             summary.command_id);
+    if (command_directory < 0) goto done;
+    verification_directory = result_directory_at(command_directory,
+                                                  summary.verification_id);
+    if (verification_directory < 0) goto done;
+
+    result_store_sequence++;
+    if (snprintf(temporary, sizeof(temporary), ".staging-%ld-%lu",
+                 (long)getpid(), result_store_sequence) >=
+        (int)sizeof(temporary)) {
+        errno = EOVERFLOW;
+        goto done;
+    }
+    if (write_record_file(verification_directory, temporary, record,
+                          record_length) < 0) goto done;
+    if (linkat(verification_directory, temporary, verification_directory,
+               filename, 0) < 0) {
+        if (errno != EEXIST ||
+            same_file_contents(verification_directory, filename, record,
+                               record_length) != 1) {
+            saved = errno;
+            unlinkat(verification_directory, temporary, 0);
+            errno = saved;
+            goto done;
+        }
+    }
+    if (unlinkat(verification_directory, temporary, 0) < 0 ||
+        fsync(verification_directory) < 0) goto done;
+    result = 0;
+done:
+    saved = errno;
+    if (verification_directory >= 0) close(verification_directory);
+    if (command_directory >= 0) close(command_directory);
+    if (results_directory >= 0) close(results_directory);
+    if (tm_directory >= 0) close(tm_directory);
+    tm_result_summary_clear(&summary);
+    errno = saved;
     return result;
 }
 

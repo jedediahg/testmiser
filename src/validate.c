@@ -81,12 +81,10 @@ static int directory_at(int parent, const char *name)
            S_ISDIR(st.st_mode);
 }
 
-static int check_filename(const char *name, const struct tm_result_summary *s,
-                          const char *record_id)
+static int check_filename(const char *name, const char *record_id)
 {
     char expected[200];
-    int n = snprintf(expected, sizeof(expected), "%s-%s-%s.tm.json",
-                     s->command_id, s->verification_id, record_id + 7);
+    int n = snprintf(expected, sizeof(expected), "%s.tm.json", record_id + 7);
     return n > 0 && (size_t)n < sizeof(expected) && strcmp(name, expected) == 0;
 }
 
@@ -112,7 +110,7 @@ static int validate_one(int dirfd, const char *name, const char *command_id,
     if (tm_result_inspect(bytes, length, &summary, record_id) < 0 ||
         strcmp(summary.command_id, command_id) != 0 ||
         strcmp(summary.verification_id, verification_id) != 0 ||
-        !check_filename(name, &summary, record_id)) goto done;
+        !check_filename(name, record_id)) goto done;
     if (policy != NULL) {
         trust = tm_trust_policy_classify(policy, summary.repository_id,
             summary.profile_digest, summary.key_id, summary.trust_epoch,
