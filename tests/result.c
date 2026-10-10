@@ -20,6 +20,7 @@ static int test_store(const unsigned char *record, size_t length,
 {
     char root[] = "/tmp/tm-result-store-XXXXXX";
     char clone[] = "/tmp/tm-result-clone-XXXXXX";
+    char shared_store[] = "/tmp/tm-result-shared-XXXXXX";
     char outside[] = "/tmp/tm-result-outside-XXXXXX";
     char filename[80], path[512];
     struct tm_result_summary summary = {0};
@@ -29,9 +30,11 @@ static int test_store(const unsigned char *record, size_t length,
     unsigned char *found = NULL;
     size_t used = 0;
     size_t found_length = 0;
-    int rootfd = -1, clonefd = -1, tmfd = -1, resultsfd = -1, commandfd = -1;
+    int rootfd = -1, clonefd = -1, sharedfd = -1, tmfd = -1;
+    int resultsfd = -1, commandfd = -1;
     int verifyfd = -1, fd = -1, result = -1;
     if (mkdtemp(root) == NULL || mkdtemp(clone) == NULL ||
+        mkdtemp(shared_store) == NULL ||
         mkdtemp(outside) == NULL) goto done;
     rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (rootfd < 0 || tm_result_inspect(record, length, &summary, record_id) < 0 ||
@@ -60,14 +63,26 @@ static int test_store(const unsigned char *record, size_t length,
                 0600);
     if (fd < 0) goto done;
     { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
-    if (tm_result_store(clonefd, record, length, record_id) != 0 ||
-        tm_result_find(clonefd,
+    sharedfd = open(shared_store, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (sharedfd < 0 || tm_result_store(sharedfd, record, length, record_id) != 0 ||
+        tm_result_find_in_store(sharedfd, clonefd,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.verification_fingerprint, trust, &found, &found_length,
             record_id) != 0 || found_length != length ||
         memcmp(found, record, length) != 0 || strcmp(record_id, expected_id) != 0)
         goto done;
     free(found); found = NULL;
+    fd = openat(clonefd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
+    if (fd < 0 || write(fd, "changed", 7) != 7) goto done;
+    { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+    if (tm_result_find_in_store(sharedfd, clonefd,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            summary.verification_fingerprint, trust, &found, &found_length,
+            record_id) != 1 || found != NULL) goto done;
+    fd = openat(clonefd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
+    if (fd < 0) goto done;
+    { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+    close(sharedfd); sharedfd = -1;
     close(clonefd); clonefd = -1;
     fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
     if (fd < 0 || write(fd, "changed", 7) != 7) goto done;
@@ -153,6 +168,7 @@ done:
     if (fd >= 0) close(fd);
     free(found);
     if (clonefd >= 0) close(clonefd);
+    if (sharedfd >= 0) close(sharedfd);
     if (verifyfd >= 0) close(verifyfd);
     if (commandfd >= 0) close(commandfd);
     if (resultsfd >= 0) close(resultsfd);
@@ -184,8 +200,19 @@ done:
     snprintf(path, sizeof(path), "%s/.tm", clone); rmdir(path);
     snprintf(path, sizeof(path), "%s/tests/a", clone); unlink(path);
     snprintf(path, sizeof(path), "%s/tests", clone); rmdir(path);
+    snprintf(path, sizeof(path), "%s/.tm/results/%s/%s/%s.tm.json",
+             shared_store, summary.command_id, summary.verification_id,
+             expected_id + 7);
+    unlink(path);
+    snprintf(path, sizeof(path), "%s/.tm/results/%s/%s", shared_store,
+             summary.command_id, summary.verification_id); rmdir(path);
+    snprintf(path, sizeof(path), "%s/.tm/results/%s", shared_store,
+             summary.command_id); rmdir(path);
+    snprintf(path, sizeof(path), "%s/.tm/results", shared_store); rmdir(path);
+    snprintf(path, sizeof(path), "%s/.tm", shared_store); rmdir(path);
     rmdir(root); rmdir(outside);
     rmdir(clone);
+    rmdir(shared_store);
     free(stored);
     tm_result_summary_clear(&summary);
     return result;

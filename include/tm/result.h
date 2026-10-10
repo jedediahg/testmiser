@@ -60,6 +60,15 @@ int tm_result_find(int repository_root_fd, const char *command_fingerprint,
                    unsigned char **record, size_t *record_length,
                    char record_id[72]);
 
+/* Find an output-free trusted record in a separate shared store while
+ * validating its inputs against the current repository checkout. */
+int tm_result_find_in_store(int store_root_fd, int repository_root_fd,
+                            const char *command_fingerprint,
+                            const char *verification_fingerprint,
+                            const struct tm_trust_policy *trust_policy,
+                            unsigned char **record, size_t *record_length,
+                            char record_id[72]);
+
 /* Find and authenticate a result, check its declared inputs, restore the
  * caller's declared output roots, and return a hit only after restoration.
  * Output roots must be the same declarations bound into command_fingerprint. */
