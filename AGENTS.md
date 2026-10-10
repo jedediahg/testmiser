@@ -14,7 +14,7 @@ The implementation is C and Linux-first, using OpenSSL EVP for SHA-256 and Ed255
 
 ## Testing Guidelines
 
-`tests/cli.sh` exercises help, argument preservation, child exit and signal status, missing commands, explain mode, option parsing, profile environment handling, and descendant completion. With ptrace permission it also checks network and mutation rejection. C tests cover fingerprints, signatures, trust policy, immutable record storage, exact-slot lookup, and changed-input misses. Run them all with `make test`; there is no coverage target. Add regression cases alongside the relevant unit or CLI test.
+`tests/cli.sh` exercises help, argument preservation, child exit and signal status, missing commands, explain mode, option parsing, profile environment handling, and descendant completion. With ptrace permission it also checks network and mutation rejection. C tests cover fingerprints, signatures, trust policy, immutable record storage, exact-slot lookup, changed-input misses, and safe output-tree capture. Run them all with `make test`; there is no coverage target. Add regression cases alongside the relevant unit or CLI test.
 
 ## Commit & Pull Request Guidelines
 
