@@ -49,6 +49,8 @@ int main(void)
     pid_t child = -1;
     char *old_xdg_cache = NULL;
     int had_xdg_cache = 0;
+    char *old_shared_store = NULL;
+    int had_shared_store = 0;
     int status = 1, stage = 1;
 
     if (mkdtemp(cache) == NULL ||
@@ -70,6 +72,12 @@ int main(void)
             had_xdg_cache = 1;
         }
         if (setenv("XDG_CACHE_HOME", cache, 1) < 0) goto done;
+        current = getenv("TM_SHARED_STORE");
+        if (current != NULL) {
+            old_shared_store = strdup(current);
+            if (old_shared_store == NULL) goto done;
+            had_shared_store = 1;
+        }
     }
     stage = 3;
     child = fork();
@@ -130,7 +138,8 @@ int main(void)
     if (tm_lock_acquire(cache, "Bad Repo", command_digest, profile_digest,
                         context_digest, &rejected) == 0) goto done;
     stage = 7;
-    if (tm_local_store_open(cache, &store_fd) < 0 ||
+    if (setenv("TM_SHARED_STORE", cache, 1) < 0 ||
+        tm_shared_store_open_configured(&store_fd) != 0 ||
         tm_lock_acquire_store(store_fd, "sample", command_digest,
             profile_digest, context_digest, &shared_held) < 0 ||
         pipe(shared_ready) < 0 || pipe(shared_acquired) < 0) goto done;
@@ -184,6 +193,9 @@ done:
     if (had_xdg_cache) (void)setenv("XDG_CACHE_HOME", old_xdg_cache, 1);
     else (void)unsetenv("XDG_CACHE_HOME");
     free(old_xdg_cache);
+    if (had_shared_store) (void)setenv("TM_SHARED_STORE", old_shared_store, 1);
+    else (void)unsetenv("TM_SHARED_STORE");
+    free(old_shared_store);
     if (child > 0) {
         (void)kill(child, SIGKILL);
         (void)waitpid(child, NULL, 0);
