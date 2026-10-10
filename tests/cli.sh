@@ -139,6 +139,10 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
         printf '%s\n' 'supported read-only openat2 was classified as unsupported' >&2
         exit 1
     fi
+    if grep -q 'input descriptor provenance is not modeled' "$tmp_dir/openat2.err"; then
+        printf '%s\n' 'read from an observed open descriptor was classified as external' >&2
+        exit 1
+    fi
 fi
 
 if grep -q 'observer prototype' "$tmp_dir/explain.err" &&

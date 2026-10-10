@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -29,6 +30,13 @@ extern char **environ;
 #define TM_PATH_SIZE 1024
 #define TM_MAX_CANDIDATES 512
 #define TM_MAX_UNSUPPORTED 32
+#define TM_MAX_DESCRIPTORS 128
+
+struct fd_entry {
+    int descriptor;
+    unsigned long flags;
+    char *path;
+};
 
 struct task_state {
     pid_t pid;
@@ -36,7 +44,11 @@ struct task_state {
     int syscall_entry;
     long syscall_number;
     unsigned long flags;
+    int shares_descriptors;
+    int pending_descriptor;
     char pending_path[TM_PATH_SIZE];
+    size_t fd_count;
+    struct fd_entry descriptors[TM_MAX_DESCRIPTORS];
 };
 
 struct observer_state {
@@ -96,6 +108,71 @@ static struct task_state *find_task(pid_t pid)
     return NULL;
 }
 
+static const char *tracked_descriptor(const struct task_state *task, int fd)
+{
+    size_t index;
+    for (index = 0; index < task->fd_count; index++)
+        if (task->descriptors[index].descriptor == fd)
+            return task->descriptors[index].path;
+    return NULL;
+}
+
+static void forget_descriptor(struct task_state *task, int fd)
+{
+    size_t index;
+    for (index = 0; index < task->fd_count; index++) {
+        if (task->descriptors[index].descriptor == fd) {
+            free(task->descriptors[index].path);
+            task->descriptors[index] = task->descriptors[task->fd_count - 1];
+            task->fd_count--;
+            return;
+        }
+    }
+}
+
+static int remember_descriptor(struct task_state *task, int fd,
+                               unsigned long flags, const char *path)
+{
+    char *copy;
+    if (fd < 0 || fd > 1048576 || path == NULL) return -1;
+    copy = strdup(path);
+    if (copy == NULL) return -1;
+    forget_descriptor(task, fd);
+    if (task->fd_count == TM_MAX_DESCRIPTORS) {
+        free(copy);
+        return -1;
+    }
+    task->descriptors[task->fd_count].descriptor = fd;
+    task->descriptors[task->fd_count].flags = flags;
+    task->descriptors[task->fd_count].path = copy;
+    task->fd_count++;
+    return 0;
+}
+
+static int copy_descriptors(struct task_state *destination,
+                            const struct task_state *source)
+{
+    size_t index;
+    for (index = 0; index < source->fd_count; index++)
+        if (remember_descriptor(destination,
+                source->descriptors[index].descriptor,
+                source->descriptors[index].flags,
+                source->descriptors[index].path) < 0) return -1;
+    return 0;
+}
+
+static void forget_cloexec_descriptors(struct task_state *task)
+{
+    size_t index = 0;
+    while (index < task->fd_count) {
+        if ((task->descriptors[index].flags & O_CLOEXEC) != 0) {
+            forget_descriptor(task, task->descriptors[index].descriptor);
+        } else {
+            index++;
+        }
+    }
+}
+
 static struct task_state *add_task(pid_t pid)
 {
     size_t index;
@@ -118,12 +195,16 @@ static struct task_state *add_task(pid_t pid)
 static void finish_task(pid_t pid, int status)
 {
     struct task_state *task = find_task(pid);
+    size_t index;
 
     if (task == NULL) {
         return;
     }
     task->active = 0;
     observer.live_tasks--;
+    for (index = 0; index < task->fd_count; index++)
+        free(task->descriptors[index].path);
+    task->fd_count = 0;
     if (pid == observer.direct_pid) {
         observer.direct_status = status;
         observer.direct_finished = 1;
@@ -256,6 +337,8 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     task->syscall_number = number;
     task->pending_path[0] = '\0';
     task->flags = 0;
+    task->shares_descriptors = 0;
+    task->pending_descriptor = -1;
 
     switch (number) {
     case 2: /* open */
@@ -347,17 +430,22 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
             mark_observer_failure();
         }
         return;
+    case 3: /* close */
+        task->pending_descriptor = (int)registers->rdi;
+        if (task->pending_descriptor < 3 ||
+            tracked_descriptor(task, task->pending_descriptor) == NULL)
+            observer.saw_external_descriptor = 1;
+        return;
     default:
         return;
     }
 }
 
 static void classify_syscall(long number, const struct user_regs_struct *regs,
-                             int entering)
+                             int entering, struct task_state *task)
 {
     long descriptor = (long)regs->rdi;
 
-    (void)entering;
     switch (number) {
     case 41: /* socket */
     case 42: /* connect */
@@ -411,17 +499,38 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         }
         observer.saw_mutation = 1;
         return;
-    case 0:  /* read: source fd provenance is a follow-up milestone */
+    case 0:  /* read */
     case 17: /* pread64 */
     case 19: /* readv */
-        if (descriptor >= STDIN_FILENO) {
-            observer.saw_external_descriptor = 1;
+        if (entering) {
+            const char *path = descriptor < 3 ? NULL :
+                tracked_descriptor(task, (int)descriptor);
+            if (path != NULL)
+                candidate_path("read descriptor", path);
+            else
+                observer.saw_external_descriptor = 1;
         }
+        return;
+    case 3: /* close: remove provenance at syscall exit */
+        return;
+    case 11: /* munmap */
+    case 29: /* ioctl */
+    case 32: /* dup */
+    case 33: /* dup2 */
+    case 72: /* fcntl */
+        reject_unsupported_syscall(number);
         return;
     case 9:  /* mmap */
         if (((int)regs->rdx & PROT_WRITE) != 0 &&
             ((int)regs->r10 & MAP_SHARED) != 0) {
             observer.saw_mutation = 1;
+        }
+        if (entering && ((int)regs->r10 & MAP_ANONYMOUS) == 0) {
+            const char *path = tracked_descriptor(task, (int)regs->r8);
+            if (path != NULL)
+                candidate_path("mapped file", path);
+            else
+                observer.saw_external_descriptor = 1;
         }
         return;
     case 202: /* futex: thread synchronization */
@@ -434,7 +543,12 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 26:  /* msync */
     case 28:  /* madvise */
     case 39:  /* getpid */
+        return;
     case 56:  /* clone: descendants are traced */
+        task->shares_descriptors =
+            (((unsigned long)regs->rdi & CLONE_FILES) != 0);
+        if (task->shares_descriptors) reject_unsupported_syscall(number);
+        return;
     case 57:  /* fork: descendants are traced */
     case 58:  /* vfork: descendants are traced */
     case 59:  /* execve is captured by note_syscall */
@@ -447,13 +561,6 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         if (number == 318) {
             reject_unsupported_syscall(number);
         }
-        return;
-    case 11: /* munmap */
-    case 29: /* ioctl */
-    case 32: /* dup */
-    case 33: /* dup2 */
-    case 72: /* fcntl */
-        reject_unsupported_syscall(number);
         return;
     default:
         reject_unsupported_syscall(number);
@@ -473,17 +580,24 @@ static void syscall_stop(struct task_state *task)
     if (!task->syscall_entry) {
         task->syscall_entry = 1;
         note_syscall((long)registers.orig_rax, &registers, task);
-        classify_syscall((long)registers.orig_rax, &registers, 1);
+        classify_syscall((long)registers.orig_rax, &registers, 1, task);
         return;
     }
 
     task->syscall_entry = 0;
     long result = (long)registers.rax;
+    if (task->syscall_number == 3) {
+        forget_descriptor(task, task->pending_descriptor);
+    }
     if (task->pending_path[0] != '\0' &&
         (task->syscall_number == 2 || task->syscall_number == 257 ||
          task->syscall_number == 437)) {
         if (result >= 0) {
             int access_mode = (int)(task->flags & O_ACCMODE);
+            if (remember_descriptor(task, (int)result, task->flags,
+                                    task->pending_path) < 0) {
+                mark_observer_failure();
+            }
             if (access_mode == O_RDONLY && (task->flags & O_PATH) == 0 &&
                 (task->flags & (O_TRUNC | O_CREAT | O_APPEND)) == 0) {
                 candidate_path("opened file", task->pending_path);
@@ -655,6 +769,14 @@ static void detach_descendants(void)
         } else {
             (void)kill(tasks[index].pid, SIGCONT);
         }
+        {
+            size_t descriptor_index;
+            for (descriptor_index = 0;
+                 descriptor_index < tasks[index].fd_count;
+                 descriptor_index++)
+                free(tasks[index].descriptors[descriptor_index].path);
+            tasks[index].fd_count = 0;
+        }
         tasks[index].active = 0;
     }
 }
@@ -757,8 +879,15 @@ static int trace_child(pid_t child, int explain)
                     observer.saw_unknown_syscall = 1;
                 } else {
                     new_task->syscall_entry = 1;
+                    if (event != PTRACE_EVENT_CLONE ||
+                        !task->shares_descriptors) {
+                        if (copy_descriptors(new_task, task) < 0)
+                            mark_observer_failure();
+                    }
                 }
             }
+        } else if (event == PTRACE_EVENT_EXEC) {
+            forget_cloexec_descriptors(task);
         }
         if (stop_signal == (SIGTRAP | 0x80)) {
             syscall_stop(task);
