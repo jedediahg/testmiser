@@ -96,7 +96,7 @@ int main(void)
             _exit(2);
         }
         byte = 'a';
-        (void)write(acquired[1], &byte, 1);
+        if (write(acquired[1], &byte, 1) != 1) _exit(2);
         tm_lock_release(&second);
         _exit(0);
     }
@@ -155,7 +155,7 @@ int main(void)
         if (tm_lock_acquire_store(store_fd, "sample", command_digest,
                 profile_digest, context_digest, &second) < 0) _exit(2);
         byte = 'a';
-        (void)write(shared_acquired[1], &byte, 1);
+        if (write(shared_acquired[1], &byte, 1) != 1) _exit(2);
         tm_lock_release(&second);
         _exit(0);
     }
