@@ -487,9 +487,13 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
             "$tmp_dir/$cwd_mode.err"
         grep -q 'observed input candidate: opened file: docs/implementation-notes.md' \
             "$tmp_dir/$cwd_mode.err"
-        grep -q 'directory membership is not modeled' \
+        grep -q 'stable-view=no' \
             "$tmp_dir/$cwd_mode.err"
     done
+    "$tm_bin" --explain -- "$cwd_probe" list 2>"$tmp_dir/directory-list.err"
+    grep -q 'observed input candidate: directory listing: docs' \
+        "$tmp_dir/directory-list.err"
+    grep -q 'stable-view=no' "$tmp_dir/directory-list.err"
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'

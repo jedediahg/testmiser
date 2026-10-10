@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
@@ -22,6 +23,13 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "chdir") == 0) {
         if (chdir("docs") < 0) return 1;
         return consume_file();
+    }
+    if (strcmp(argv[1], "list") == 0) {
+        DIR *stream = opendir("docs");
+        struct dirent *entry;
+        if (stream == NULL) return 1;
+        while ((entry = readdir(stream)) != NULL) (void)entry;
+        return closedir(stream) == 0 ? 0 : 1;
     }
     if (strcmp(argv[1], "fchdir") != 0) return 2;
     directory = open("docs", O_RDONLY | O_DIRECTORY | O_CLOEXEC);

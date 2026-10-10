@@ -54,6 +54,12 @@ static int classify_candidate(const struct tm_observer_candidate *candidate,
         *kind = TM_INPUT_FILE;
         return 0;
     }
+    if (strcmp(candidate->kind, "opened directory") == 0 ||
+        strcmp(candidate->kind, "directory listing") == 0 ||
+        strcmp(candidate->kind, "cwd change") == 0) {
+        *kind = TM_INPUT_DIRECTORY;
+        return 0;
+    }
     if (strcmp(candidate->kind, "absent path") == 0 ||
         strcmp(candidate->kind, "absent executable") == 0) {
         *kind = TM_INPUT_EXISTS;
@@ -86,6 +92,9 @@ static int capture_one(struct tm_observed_input_manifest *manifest,
     if (kind == TM_INPUT_FILE) {
         if (tm_input_capture_file(root_fd, candidate->path, digest) < 0)
             return -1;
+    } else if (kind == TM_INPUT_DIRECTORY) {
+        if (tm_input_capture_directory(root_fd, candidate->path, digest) < 0)
+            return -1;
     } else if (kind == TM_INPUT_EXISTS) {
         if (tm_input_capture_exists(root_fd, candidate->path, &exists) < 0 ||
             exists) {
@@ -114,7 +123,7 @@ static int capture_one(struct tm_observed_input_manifest *manifest,
     }
     observation->kind = kind;
     observation->exists = 0;
-    if (kind == TM_INPUT_FILE) {
+    if (kind == TM_INPUT_FILE || kind == TM_INPUT_DIRECTORY) {
         if (own_field(manifest, digest, &observation->digest) < 0) {
             free(target);
             return -1;

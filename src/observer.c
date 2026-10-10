@@ -80,6 +80,7 @@ static void restore_signal_handlers(const struct sigaction previous[])
 struct fd_entry {
     int descriptor;
     unsigned long flags;
+    int is_directory;
     char *path;
 };
 
@@ -95,6 +96,7 @@ struct task_state {
     int pending_close_on_exec;
     int pending_close_range;
     int pending_cwd_change;
+    int pending_cwd_is_directory;
     unsigned int pending_range_start;
     unsigned int pending_range_end;
     char pending_path[TM_PATH_SIZE];
@@ -281,6 +283,15 @@ static const char *tracked_descriptor(const struct task_state *task, int fd)
     return NULL;
 }
 
+static int descriptor_is_directory(const struct task_state *task, int fd)
+{
+    size_t index;
+    for (index = 0; index < task->fd_count; index++)
+        if (task->descriptors[index].descriptor == fd)
+            return task->descriptors[index].is_directory;
+    return 0;
+}
+
 static void forget_descriptor(struct task_state *task, int fd)
 {
     size_t index;
@@ -295,7 +306,8 @@ static void forget_descriptor(struct task_state *task, int fd)
 }
 
 static int remember_descriptor(struct task_state *task, int fd,
-                               unsigned long flags, const char *path)
+                               unsigned long flags, int is_directory,
+                               const char *path)
 {
     char *copy;
     if (fd < 0 || fd > 1048576 || path == NULL) return -1;
@@ -308,6 +320,7 @@ static int remember_descriptor(struct task_state *task, int fd,
     }
     task->descriptors[task->fd_count].descriptor = fd;
     task->descriptors[task->fd_count].flags = flags;
+    task->descriptors[task->fd_count].is_directory = is_directory;
     task->descriptors[task->fd_count].path = copy;
     task->fd_count++;
     return 0;
@@ -321,6 +334,7 @@ static int copy_descriptors(struct task_state *destination,
         if (remember_descriptor(destination,
                 source->descriptors[index].descriptor,
                 source->descriptors[index].flags,
+                source->descriptors[index].is_directory,
                 source->descriptors[index].path) < 0) return -1;
     return 0;
 }
@@ -554,6 +568,7 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     task->pending_close_on_exec = 0;
     task->pending_close_range = 0;
     task->pending_cwd_change = 0;
+    task->pending_cwd_is_directory = 0;
 
     switch (number) {
     case 2: /* open */
@@ -616,7 +631,8 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
         return;
     case 437: { /* openat2 */
         struct open_how how;
-        const uint64_t allowed_flags = O_RDONLY | O_CLOEXEC | O_LARGEFILE;
+        const uint64_t allowed_flags = O_RDONLY | O_CLOEXEC | O_LARGEFILE |
+                                       O_DIRECTORY;
         if (registers->r10 != sizeof(how) ||
             read_tracee_memory(task->pid, registers->rdx, &how,
                                sizeof(how)) < 0 || how.resolve != 0 ||
@@ -647,6 +663,7 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
         return;
     case 80: /* chdir */
         task->pending_cwd_change = 1;
+        task->pending_cwd_is_directory = 1;
         if (read_tracee_string(task->pid, registers->rdi, raw_path,
                                sizeof(raw_path)) == 0)
             task_path(task->pid, AT_FDCWD, raw_path, task->pending_path,
@@ -657,6 +674,8 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     case 81: /* fchdir */
         task->pending_cwd_change = 1;
         task->pending_descriptor = (int)registers->rdi;
+        task->pending_cwd_is_directory = descriptor_is_directory(
+            task, task->pending_descriptor);
         {
             const char *path = tracked_descriptor(task,
                                                    task->pending_descriptor);
@@ -762,11 +781,18 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         return;
     case 78: /* getdents */
     case 217: /* getdents64 */
-        observer.saw_directory = 1;
+        if (entering) {
+            const char *path = tracked_descriptor(task, (int)descriptor);
+            if (path != NULL && descriptor_is_directory(task, (int)descriptor))
+                candidate_path("directory listing", path);
+            else {
+                observer.saw_directory = 1;
+                if (path == NULL) observer.saw_external_descriptor = 1;
+            }
+        }
         return;
     case 80: /* chdir */
     case 81: /* fchdir */
-        observer.saw_directory = 1;
         return;
     case 1:  /* write */
     case 18: /* pwrite64 */
@@ -799,7 +825,10 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         if (entering) {
             const char *path = descriptor < 3 ? NULL :
                 tracked_descriptor(task, (int)descriptor);
-            if (path != NULL)
+            if (path != NULL &&
+                descriptor_is_directory(task, (int)descriptor))
+                observer.saw_directory = 1;
+            else if (path != NULL)
                 candidate_path("read descriptor", path);
             else
                 observer.saw_external_descriptor = 1;
@@ -912,7 +941,9 @@ static void syscall_stop(struct task_state *task)
             !(task->syscall_number == 33 &&
               result == task->pending_descriptor) &&
             remember_descriptor(task, (int)result,
-                close_on_exec ? O_CLOEXEC : 0, source) < 0)
+                close_on_exec ? O_CLOEXEC : 0,
+                descriptor_is_directory(task, task->pending_descriptor),
+                source) < 0)
             mark_observer_failure();
     }
     if (task->pending_close_range && result == 0) {
@@ -930,21 +961,28 @@ static void syscall_stop(struct task_state *task)
             }
         }
     }
-    if (task->pending_cwd_change && result == 0 &&
-        task->pending_path[0] != '\0')
-        candidate_path("cwd change", task->pending_path);
+    if (task->pending_cwd_change) {
+        if (result == 0 && task->pending_cwd_is_directory &&
+            task->pending_path[0] != '\0')
+            candidate_path("cwd change", task->pending_path);
+        else
+            observer.saw_directory = 1;
+    }
     if (task->pending_path[0] != '\0' &&
         (task->syscall_number == 2 || task->syscall_number == 257 ||
          task->syscall_number == 437)) {
         if (result >= 0) {
             int access_mode = (int)(task->flags & O_ACCMODE);
+            int is_directory = (task->flags & O_DIRECTORY) != 0;
             if (remember_descriptor(task, (int)result, task->flags,
-                                    task->pending_path) < 0) {
+                                    is_directory, task->pending_path) < 0) {
                 mark_observer_failure();
             }
             if (access_mode == O_RDONLY && (task->flags & O_PATH) == 0 &&
                 (task->flags & (O_TRUNC | O_CREAT | O_APPEND)) == 0) {
-                candidate_path("opened file", task->pending_path);
+                candidate_path(is_directory ? "opened directory" :
+                                                "opened file",
+                               task->pending_path);
             } else if ((task->flags & O_PATH) != 0) {
                 observer.saw_metadata = 1;
             } else {
