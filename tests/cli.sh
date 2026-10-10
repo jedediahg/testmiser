@@ -8,6 +8,15 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
 mkdir -p "$tmp_dir/repo/.tm/results"
+"$tm_bin" --root "$tmp_dir/repo" -- /bin/true
+set +e
+"$tm_bin" --root "$tmp_dir/missing-root" -- sh -c \
+    'touch "$1"' sh "$tmp_dir/invalid-root-child" \
+    >"$tmp_dir/root.err" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+test ! -e "$tmp_dir/invalid-root-child"
 "$tm_bin" validate --root "$tmp_dir/repo" >"$tmp_dir/validate-empty.out"
 mkdir -p "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 printf '{}\n' >"$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bad.tm.json"
@@ -141,6 +150,12 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
     fi
     if grep -q 'input descriptor provenance is not modeled' "$tmp_dir/openat2.err"; then
         printf '%s\n' 'read from an observed open descriptor was classified as external' >&2
+        exit 1
+    fi
+    grep -q 'observed input candidate: executable: ./build/openat2_probe' \
+        "$tmp_dir/openat2.err"
+    if grep -Fq "$PWD/" "$tmp_dir/openat2.err"; then
+        printf '%s\n' 'explain output leaked an absolute checkout path' >&2
         exit 1
     fi
 fi

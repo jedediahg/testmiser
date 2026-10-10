@@ -20,6 +20,7 @@
 #endif
 
 #include "tm/observer.h"
+#include "tm/repo.h"
 #include "tm/tm.h"
 
 extern char **environ;
@@ -53,6 +54,7 @@ struct task_state {
 
 struct observer_state {
     int explain;
+    const char *repository_root;
     pid_t direct_pid;
     int direct_status;
     int direct_finished;
@@ -307,12 +309,17 @@ static void task_path(pid_t pid, int dirfd, const char *path, char *output,
 static void candidate_path(const char *kind, const char *path)
 {
     char candidate[TM_PATH_SIZE + 32];
+    char *relative_path;
+    const char *display_path;
     size_t index;
 
     if (!observer.explain) {
         return;
     }
-    snprintf(candidate, sizeof(candidate), "%s: %s", kind, path);
+    relative_path = tm_repo_relative_path(observer.repository_root, path);
+    display_path = relative_path == NULL ? "<external>" : relative_path;
+    snprintf(candidate, sizeof(candidate), "%s: %s", kind, display_path);
+    free(relative_path);
     for (index = 0; index < observer.candidate_count; index++) {
         if (strcmp(observer.candidates[index], candidate) == 0) {
             return;
@@ -785,7 +792,7 @@ static void detach_descendants(void)
     }
 }
 
-static int trace_child(pid_t child, int explain)
+static int trace_child(pid_t child, int explain, const char *repository_root)
 {
     int status;
     long options = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK |
@@ -796,6 +803,7 @@ static int trace_child(pid_t child, int explain)
     memset(tasks, 0, sizeof(tasks));
     memset(&observer, 0, sizeof(observer));
     observer.explain = explain;
+    observer.repository_root = repository_root;
     observer.direct_pid = child;
     if (add_task(child) == NULL) {
         return plain_wait(child);
@@ -920,7 +928,8 @@ static int trace_child(pid_t child, int explain)
     return TM_EXIT_INTERNAL_ERROR;
 }
 
-int tm_observe_and_run(char **command, int explain, char *const environment[])
+int tm_observe_and_run(char **command, int explain, char *const environment[],
+                       const char *repository_root)
 {
     pid_t child = fork();
 
@@ -940,15 +949,17 @@ int tm_observe_and_run(char **command, int explain, char *const environment[])
         raise(SIGSTOP);
         exec_command(command, environment);
     }
-    return trace_child(child, explain);
+    return trace_child(child, explain, repository_root);
 }
 
 #else
 
-int tm_observe_and_run(char **command, int explain, char *const environment[])
+int tm_observe_and_run(char **command, int explain, char *const environment[],
+                       const char *repository_root)
 {
     pid_t child = fork();
     int status;
+    (void)repository_root;
     if (environment != NULL) environ = (char **)environment;
 
     if (explain) {

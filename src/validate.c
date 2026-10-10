@@ -4,7 +4,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +14,7 @@
 #include <openssl/evp.h>
 
 #include "tm/result.h"
+#include "tm/repo.h"
 #include "tm/trust.h"
 #include "tm/validate.h"
 
@@ -79,24 +79,6 @@ static int directory_at(int parent, const char *name)
     struct stat st;
     return fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
            S_ISDIR(st.st_mode);
-}
-
-static char *discover_root(void)
-{
-    char *current = realpath(".", NULL);
-    if (current == NULL) return NULL;
-    for (;;) {
-        char marker[PATH_MAX];
-        struct stat st;
-        int n = snprintf(marker, sizeof(marker), "%s/.git", current);
-        if (n > 0 && (size_t)n < sizeof(marker) && lstat(marker, &st) == 0 &&
-            (S_ISDIR(st.st_mode) || S_ISREG(st.st_mode))) return current;
-        if (strcmp(current, "/") == 0) return current;
-        char *slash = strrchr(current, '/');
-        if (slash == NULL) return current;
-        if (slash == current) current[1] = '\0';
-        else *slash = '\0';
-    }
 }
 
 static int check_filename(const char *name, const struct tm_result_summary *s,
@@ -184,8 +166,10 @@ int tm_validate_main(int argc, char **argv)
             return 125;
         }
     }
-    root = root_arg == NULL ? discover_root() : realpath(root_arg, NULL);
-    if (root == NULL) { perror("tm validate: root"); return 125; }
+    if (tm_repo_root(root_arg, &root) < 0) {
+        perror("tm validate: root");
+        return 125;
+    }
     if (policy_path != NULL && tm_trust_policy_load(policy_path, &policy) < 0) {
         perror("tm validate: trust policy"); free(root); return 125;
     }

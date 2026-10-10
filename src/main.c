@@ -6,6 +6,7 @@
 
 #include "tm/observer.h"
 #include "tm/profile.h"
+#include "tm/repo.h"
 #include "tm/tm.h"
 #include "tm/trust.h"
 #include "tm/validate.h"
@@ -15,6 +16,7 @@ struct options {
     int explain;
     const char *profile_path;
     const char *trust_policy_path;
+    const char *root_path;
     int command_index;
 };
 
@@ -49,13 +51,14 @@ static void free_environment(char **environment)
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tm [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
+    fprintf(stream, "Usage: tm [--root DIR] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
     fprintf(stream, "  --explain  explain why the command is running\n");
     fprintf(stream, "  --profile FILE       select an approved profile (currently uncached)\n");
     fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
+    fprintf(stream, "  --root DIR           set repository root (default: nearest .git)\n");
     fprintf(stream, "  --help     show this help\n");
 }
 
@@ -86,6 +89,7 @@ static int parse_options(int argc, char **argv, struct options *options)
     options->explain = 0;
     options->profile_path = NULL;
     options->trust_policy_path = NULL;
+    options->root_path = NULL;
     options->command_index = -1;
 
     for (index = 1; index < argc; index++) {
@@ -98,10 +102,13 @@ static int parse_options(int argc, char **argv, struct options *options)
         } else if (strcmp(argv[index], "--explain") == 0) {
             options->explain = 1;
         } else if (strcmp(argv[index], "--profile") == 0 ||
-                   strcmp(argv[index], "--trust-policy") == 0) {
+                   strcmp(argv[index], "--trust-policy") == 0 ||
+                   strcmp(argv[index], "--root") == 0) {
             const char *option = argv[index];
             const char **destination = strcmp(option, "--profile") == 0 ?
-                &options->profile_path : &options->trust_policy_path;
+                &options->profile_path :
+                (strcmp(option, "--trust-policy") == 0 ?
+                 &options->trust_policy_path : &options->root_path);
             if (*destination != NULL || index + 1 >= argc ||
                 strcmp(argv[index + 1], "--") == 0) {
                 fprintf(stderr, "tm: missing or repeated value for %s\n", option);
@@ -134,6 +141,7 @@ int main(int argc, char **argv)
     struct tm_profile *profile = NULL;
     struct tm_trust_policy *trust_policy = NULL;
     char **child_environment = NULL;
+    char *repository_root = NULL;
     int parse_result;
     int result;
 
@@ -176,10 +184,19 @@ int main(int argc, char **argv)
             return TM_EXIT_INTERNAL_ERROR;
         }
     }
+    if (tm_repo_root(options.root_path, &repository_root) < 0) {
+        fprintf(stderr, "tm: invalid repository root: %s\n",
+                options.root_path == NULL ? "." : options.root_path);
+        free_environment(child_environment);
+        tm_profile_free(profile);
+        tm_trust_policy_free(trust_policy);
+        return TM_EXIT_INTERNAL_ERROR;
+    }
     (void) options.force;
     result = tm_observe_and_run(&argv[options.command_index], options.explain,
-                                child_environment);
+                                child_environment, repository_root);
     free_environment(child_environment);
+    free(repository_root);
     tm_profile_free(profile);
     tm_trust_policy_free(trust_policy);
     return result;
