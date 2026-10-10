@@ -199,6 +199,7 @@ int main(int argc, char **argv)
     struct options options;
     struct tm_profile *profile = NULL;
     struct tm_trust_policy *trust_policy = NULL;
+    struct tm_observer_report observer_report = {0};
     char **child_environment = NULL;
     const char *force_environment;
     char *repository_root = NULL;
@@ -338,7 +339,16 @@ int main(int argc, char **argv)
     if (options.explain && options.output_count > 0 && profile == NULL)
         fprintf(stderr, "tm: reuse rejected: --output requires an approved enforced profile\n");
     result = tm_observe_and_run(&argv[options.command_index], options.explain,
-                                child_environment, repository_root);
+                                child_environment, repository_root,
+                                &observer_report);
+    if (options.explain)
+        for (index = 0; index < observer_report.candidate_count; index++) {
+            const struct tm_observer_candidate *candidate =
+                &observer_report.candidates[index];
+            fprintf(stderr, "tm: observed input candidate: %s: %s\n",
+                    candidate->kind,
+                    candidate->external ? "<external>" : candidate->path);
+        }
     for (index = 0; index < explicit_input_count; index++) {
         if (tm_input_matches(repository_fd, &explicit_inputs[index]) != 0 &&
             options.explain)

@@ -277,6 +277,16 @@ set -e
 test "$status" -eq 29
 grep -q 'tm: RUN:' "$tmp_dir/explain.err"
 if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
+    "$tm_bin" --explain -- /bin/cat /etc/hostname > /dev/null \
+        2>"$tmp_dir/external-candidate.err"
+    grep -q 'observed input candidate: .*: <external>' \
+        "$tmp_dir/external-candidate.err"
+    if grep -Fq '/etc/hostname' "$tmp_dir/external-candidate.err"; then
+        printf '%s\n' 'explain output leaked an external host path' >&2
+        exit 1
+    fi
+fi
+if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
     exec 9<"$tmp_dir/repo/tests/explicit.txt"
     "$tm_bin" --explain -- /bin/true 2>"$tmp_dir/inherited-fd.err"
     exec 9<&-

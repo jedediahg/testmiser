@@ -72,7 +72,7 @@ static void restore_signal_handlers(const struct sigaction previous[])
 
 #define TM_MAX_TASKS 4096
 #define TM_PATH_SIZE 1024
-#define TM_MAX_CANDIDATES 512
+#define TM_MAX_CANDIDATES TM_OBSERVER_MAX_CANDIDATES
 #define TM_MAX_UNSUPPORTED 32
 #define TM_MAX_DESCRIPTORS 128
 
@@ -465,14 +465,17 @@ static void candidate_path(const char *kind, const char *path)
     char *relative_path;
     const char *display_path;
     size_t index;
+    int formatted;
 
-    if (!observer.explain) {
-        return;
-    }
     relative_path = tm_repo_relative_path(observer.repository_root, path);
     display_path = relative_path == NULL ? "<external>" : relative_path;
-    snprintf(candidate, sizeof(candidate), "%s: %s", kind, display_path);
+    formatted = snprintf(candidate, sizeof(candidate), "%s: %s", kind,
+                         display_path);
     free(relative_path);
+    if (formatted < 0 || (size_t)formatted >= sizeof(candidate)) {
+        mark_observer_failure();
+        return;
+    }
     for (index = 0; index < observer.candidate_count; index++) {
         if (strcmp(observer.candidates[index], candidate) == 0) {
             return;
@@ -485,6 +488,44 @@ static void candidate_path(const char *kind, const char *path)
     } else {
         observer.saw_unknown_syscall = 1;
         observer.saw_observer_failure = 1;
+    }
+}
+
+static void copy_candidate_report(struct tm_observer_report *report)
+{
+    size_t index;
+    if (report == NULL) return;
+    report->candidate_count = observer.candidate_count;
+    for (index = 0; index < observer.candidate_count; index++) {
+        const char *record = observer.candidates[index];
+        const char *separator = strstr(record, ": ");
+        struct tm_observer_candidate *candidate = &report->candidates[index];
+        size_t kind_length;
+        if (separator == NULL) {
+            report->candidate_count = index;
+            observer.saw_observer_failure = 1;
+            break;
+        }
+        kind_length = (size_t)(separator - record);
+        if (kind_length >= sizeof(candidate->kind)) {
+            report->candidate_count = index;
+            observer.saw_observer_failure = 1;
+            break;
+        }
+        memcpy(candidate->kind, record, kind_length);
+        candidate->kind[kind_length] = '\0';
+        if (strcmp(separator + 2, "<external>") == 0) {
+            candidate->external = 1;
+            candidate->path[0] = '\0';
+        } else {
+            candidate->external = 0;
+            if (snprintf(candidate->path, sizeof(candidate->path), "%s",
+                         separator + 2) >= (int)sizeof(candidate->path)) {
+                report->candidate_count = index;
+                observer.saw_observer_failure = 1;
+                break;
+            }
+        }
     }
 }
 
@@ -794,8 +835,6 @@ static void syscall_stop(struct task_state *task)
 
 static void report_reasons(void)
 {
-    size_t index;
-
     fprintf(stderr,
             "tm: RUN: observer prototype; cache reuse is disabled\n");
     if (observer.saw_network) {
@@ -825,10 +864,6 @@ static void report_reasons(void)
             fprintf(stderr, " (observer failure)");
         }
         fprintf(stderr, "\n");
-    }
-    for (index = 0; index < observer.candidate_count; index++) {
-        fprintf(stderr, "tm: observed input candidate: %s\n",
-                observer.candidates[index]);
     }
 }
 
@@ -954,7 +989,8 @@ static void detach_descendants(void)
 }
 
 static int trace_child(pid_t child, int explain, const char *repository_root,
-                       int inherited_descriptors)
+                       int inherited_descriptors,
+                       struct tm_observer_report *report)
 {
     int status;
     long options = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK |
@@ -1094,6 +1130,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     if (explain) {
         report_reasons();
     }
+    copy_candidate_report(report);
     if (WIFEXITED(observer.direct_status)) {
         return WEXITSTATUS(observer.direct_status);
     }
@@ -1104,12 +1141,15 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
 }
 
 int tm_observe_and_run(char **command, int explain, char *const environment[],
-                       const char *repository_root)
+                       const char *repository_root,
+                       struct tm_observer_report *report)
 {
     struct sigaction previous[TM_FORWARDED_SIGNAL_COUNT];
     int inherited_descriptors = has_inherited_descriptors();
     pid_t child;
     int result;
+
+    if (report != NULL) memset(report, 0, sizeof(*report));
 
     if (install_signal_forwarding(previous) < 0) {
         perror("tm: install signal forwarding");
@@ -1136,7 +1176,7 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
         exec_command(command, environment);
     }
     result = trace_child(child, explain, repository_root,
-                         inherited_descriptors);
+                         inherited_descriptors, report);
     restore_signal_handlers(previous);
     return result;
 }
@@ -1144,11 +1184,13 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
 #else
 
 int tm_observe_and_run(char **command, int explain, char *const environment[],
-                       const char *repository_root)
+                       const char *repository_root,
+                       struct tm_observer_report *report)
 {
     pid_t child = fork();
     int status;
     (void)repository_root;
+    if (report != NULL) memset(report, 0, sizeof(*report));
     if (environment != NULL) environ = (char **)environment;
 
     if (explain) {
