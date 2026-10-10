@@ -130,7 +130,8 @@ static int hash_file_at(int parent, const char *leaf, char hex[65])
     EVP_MD_CTX *ctx = NULL;
     struct stat before, after;
     unsigned int digest_length = 0;
-    int fd = openat(parent, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = openat(parent, leaf,
+                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     int result = -1, saved;
     if (fd < 0) return -1;
     if (fstat(fd, &before) < 0) goto done;
@@ -317,6 +318,39 @@ done:
     free(leaf);
     errno = saved;
     return result;
+}
+
+int tm_input_capture_exists(int root_fd, const char *path, int *exists)
+{
+    char *leaf = NULL;
+    int parent;
+    struct stat status;
+    if (root_fd < 0 || exists == NULL || !valid_relative_path(path)) {
+        errno = EINVAL;
+        return -1;
+    }
+    parent = open_parent(root_fd, path, &leaf);
+    if (parent < 0) {
+        if (errno == ENOENT || errno == ENOTDIR) {
+            *exists = 0;
+            return 0;
+        }
+        return -1;
+    }
+    if (fstatat(parent, leaf, &status, AT_SYMLINK_NOFOLLOW) == 0) {
+        *exists = 1;
+    } else if (errno == ENOENT) {
+        *exists = 0;
+    } else {
+        int saved = errno;
+        close(parent);
+        free(leaf);
+        errno = saved;
+        return -1;
+    }
+    close(parent);
+    free(leaf);
+    return 0;
 }
 
 static int check_one(int root_fd, const struct tm_input_observation *input)

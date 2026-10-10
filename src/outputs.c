@@ -89,7 +89,8 @@ static int restore_file(int blobfd, int parentfd, const char *leaf,
     for (i = 0; i < 32; i++) name[i * 2 + 1] = entry->digest[8 + i * 2];
     name[64] = '\0';
     if (verify_existing_blob(blobfd, name, entry->digest, entry->size) < 0) return -1;
-    source = openat(blobfd, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    source = openat(blobfd, name,
+                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (source < 0) goto done;
     digest_context = EVP_MD_CTX_new();
     if (digest_context == NULL ||
@@ -402,7 +403,8 @@ static int verify_existing_blob(int blob_fd, const char *name,
     struct stat before, after;
     unsigned int hash_length = 0;
     uint64_t total = 0;
-    int fd = openat(blob_fd, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = openat(blob_fd, name,
+                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     int result = -1, saved;
     char formatted[72];
     static const char digits[] = "0123456789abcdef";
@@ -601,7 +603,8 @@ static int capture_path(int parent_fd, int blob_fd, const char *leaf,
         errno = EOPNOTSUPP; return -1;
     }
     {
-        int fd = openat(parent_fd, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        int fd = openat(parent_fd, leaf,
+                        O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
         char digest[72];
         uint64_t size = 0;
         int result;

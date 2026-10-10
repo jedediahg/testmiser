@@ -26,7 +26,8 @@ static int write_file(const char *path, const char *value)
 int main(void)
 {
     char directory[] = "/tmp/tm-input-test-XXXXXX";
-    char alpha[256], link_path[256], sub[256], nested[256];
+    char alpha[256], link_path[256], sub[256], nested[256], fifo[256];
+    char future[256];
     char file_hex[65], file_digest[72], captured_digest[72];
     int root = -1, status = 1;
     struct tm_input_observation input;
@@ -36,8 +37,10 @@ int main(void)
     snprintf(link_path, sizeof(link_path), "%s/link", directory);
     snprintf(sub, sizeof(sub), "%s/sub", directory);
     snprintf(nested, sizeof(nested), "%s/sub/item", directory);
+    snprintf(fifo, sizeof(fifo), "%s/pipe", directory);
+    snprintf(future, sizeof(future), "%s/future", directory);
     if (write_file(alpha, "hello\n") < 0 || mkdir(sub, 0700) < 0 ||
-        symlink("alpha", link_path) < 0 ||
+        symlink("alpha", link_path) < 0 || mkfifo(fifo, 0600) < 0 ||
         tm_sha256_bytes("hello\n", 6, file_hex) < 0) goto done;
     snprintf(file_digest, sizeof(file_digest), "sha256:%s", file_hex);
     root = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -54,6 +57,26 @@ int main(void)
             "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945") != 0) {
         fprintf(stderr, "directory membership capture failed\n");
         goto done;
+    }
+    if (tm_input_capture_file(root, "pipe", captured_digest) == 0) {
+        fprintf(stderr, "special file was accepted as regular input\n");
+        goto done;
+    }
+    {
+        int exists = 1;
+        if (tm_input_capture_exists(root, "future", &exists) != 0 || exists) {
+            fprintf(stderr, "absent input existence was not captured\n");
+            goto done;
+        }
+        input = (struct tm_input_observation){"future", TM_INPUT_EXISTS,
+                                              NULL, NULL, 0};
+        if (tm_input_matches(root, &input) != 0 ||
+            write_file(future, "x") < 0 ||
+            tm_input_matches(root, &input) != 1) {
+            fprintf(stderr, "absent input state check failed\n");
+            goto done;
+        }
+        if (unlink(future) < 0) goto done;
     }
 
     input = (struct tm_input_observation){"alpha", TM_INPUT_FILE,
@@ -95,6 +118,8 @@ int main(void)
 done:
     if (root >= 0) close(root);
     unlink(nested);
+    unlink(fifo);
+    unlink(future);
     unlink(link_path);
     unlink(alpha);
     rmdir(sub);

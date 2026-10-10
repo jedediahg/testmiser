@@ -427,7 +427,8 @@ static int same_file_contents(int directory, const char *name,
     unsigned char buffer[8192];
     struct stat before, after;
     size_t offset = 0;
-    int fd = openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = openat(directory, name,
+                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     int matches = -1;
     int saved;
     if (fd < 0) return -1;
@@ -931,7 +932,8 @@ static int read_candidate(int directory, const char *name,
     struct stat before, after;
     unsigned char *bytes;
     size_t used = 0;
-    int fd = openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = openat(directory, name,
+                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) return -1;
     if (fstat(fd, &before) < 0 || !S_ISREG(before.st_mode) ||
         before.st_size < 2 || before.st_size > 16 * 1024 * 1024) {

@@ -25,9 +25,16 @@ printf original >"$tmp_dir/repo/tests/explicit.txt"
 grep -q 'declared input changed or became unsafe: tests/explicit.txt' \
     "$tmp_dir/input-changed.err"
 "$tm_bin" --explain --root "$tmp_dir/repo" --input tests/missing.txt -- \
-    sh -c 'exit 0' 2>"$tmp_dir/input-missing.err"
-grep -q 'declared input could not be captured: tests/missing.txt' \
-    "$tmp_dir/input-missing.err"
+    /bin/true 2>"$tmp_dir/input-missing.err"
+if grep -q 'declared input could not be captured: tests/missing.txt' \
+    "$tmp_dir/input-missing.err"; then
+    exit 1
+fi
+"$tm_bin" --explain --root "$tmp_dir/repo" --input tests/missing.txt -- \
+    sh -c 'touch "$1"' sh "$tmp_dir/repo/tests/missing.txt" \
+    2>"$tmp_dir/input-created.err"
+grep -q 'declared input changed or became unsafe: tests/missing.txt' \
+    "$tmp_dir/input-created.err"
 mkdir -p "$tmp_dir/repo/tests/input-dir"
 "$tm_bin" --explain --root "$tmp_dir/repo" --input tests/input-dir -- \
     sh -c 'touch "$1"' sh "$tmp_dir/repo/tests/input-dir/item" \
