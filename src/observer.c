@@ -108,6 +108,7 @@ struct task_state {
 struct observer_state {
     int explain;
     const char *repository_root;
+    int controlled_runtime;
     const char *start_after_exec;
     int observation_started;
     pid_t direct_pid;
@@ -501,6 +502,13 @@ static void candidate_path(const char *kind, const char *path)
     int formatted;
 
     relative_path = tm_repo_relative_path(observer.repository_root, path);
+    if (relative_path == NULL && observer.controlled_runtime) {
+        /* The profile backend exposes only its digest-verified runtime,
+         * empty tmpfs scratch roots, and the /dev/null exception outside the
+         * repository workspace. Those accesses are covered by that view. */
+        free(relative_path);
+        return;
+    }
     if (relative_path == NULL) observer.saw_external_path = 1;
     display_path = relative_path == NULL ? "<external>" : relative_path;
     formatted = snprintf(candidate, sizeof(candidate), "%s: %s", kind,
@@ -1308,6 +1316,7 @@ static int target_executable_matches(const char *target, const char *observed)
 static int trace_child(pid_t child, int explain, const char *repository_root,
                        int inherited_descriptors,
                        const char *start_after_exec,
+                       int controlled_runtime,
                        struct tm_observer_report *report)
 {
     int status;
@@ -1321,6 +1330,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     memset(&observer, 0, sizeof(observer));
     observer.explain = explain;
     observer.repository_root = repository_root;
+    observer.controlled_runtime = controlled_runtime;
     observer.start_after_exec = start_after_exec;
     observer.observation_started = start_after_exec == NULL;
     observer.saw_external_descriptor = inherited_descriptors;
@@ -1527,6 +1537,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 size_t preserved_fd_count,
                                 int null_stdin, int set_umask_022,
                                 const char *start_after_exec,
+                                int controlled_runtime,
                                 struct tm_observer_report *report)
 {
     struct sigaction previous[TM_FORWARDED_SIGNAL_COUNT];
@@ -1573,7 +1584,8 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                      preserved_fd_count);
     }
     result = trace_child(child, explain, repository_root,
-                         inherited_descriptors, start_after_exec, report);
+                         inherited_descriptors, start_after_exec,
+                         controlled_runtime, report);
     restore_signal_handlers(previous);
     return result;
 }
@@ -1584,7 +1596,7 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
 {
     return tm_observe_and_run_with_fds(command, explain, environment,
                                        repository_root, NULL, 0, 0, 0, NULL,
-                                       report);
+                                       0, report);
 }
 
 #else
@@ -1596,6 +1608,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 size_t preserved_fd_count,
                                 int null_stdin, int set_umask_022,
                                 const char *start_after_exec,
+                                int controlled_runtime,
                                 struct tm_observer_report *report)
 {
     pid_t child = fork();
@@ -1606,6 +1619,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
     (void)null_stdin;
     (void)set_umask_022;
     (void)start_after_exec;
+    (void)controlled_runtime;
     if (report != NULL) memset(report, 0, sizeof(*report));
     if (environment != NULL) environ = (char **)environment;
 
@@ -1640,7 +1654,7 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
 {
     return tm_observe_and_run_with_fds(command, explain, environment,
                                        repository_root, NULL, 0, 0, 0, NULL,
-                                       report);
+                                       0, report);
 }
 
 #endif

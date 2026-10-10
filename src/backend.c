@@ -624,7 +624,7 @@ static int run_bubblewrap(const struct argument_vector *arguments,
     *command_result = tm_observe_and_run_with_fds(
         arguments->items, explain, NULL, GUEST_WORKSPACE,
         arguments->preserved_fds, arguments->preserved_fd_count, 1, 1,
-        target, report);
+        target, 1, report);
     free(relative_target);
     return 1;
 }
