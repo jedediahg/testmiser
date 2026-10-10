@@ -40,7 +40,10 @@ int main(void)
         tm_context_capture_linux(&captured) < 0 ||
         tm_json_typeof(captured) != TM_JSON_OBJECT ||
         tm_json_object_get(captured, "kernel_release") == NULL ||
-        tm_json_object_get(captured, "cpu_flags") == NULL ||
+        tm_json_typeof(tm_json_object_get(captured,
+                            "cpu_capabilities")) != TM_JSON_ARRAY ||
+        tm_json_size(tm_json_object_get(captured,
+                            "cpu_capabilities")) == 0 ||
         tm_json_object_get(captured, "resource_limits") == NULL ||
         tm_json_object_get(captured, "supplementary_groups") == NULL) {
         fprintf(stderr, "context fingerprint vector or validation failed\n");

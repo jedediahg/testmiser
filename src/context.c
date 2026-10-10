@@ -80,18 +80,21 @@ int tm_context_capture_linux(struct tm_json_value **execution_context)
 {
     struct tm_json_value *context = NULL, *limits = NULL, *groups_json = NULL;
     struct tm_json_value *affinity_json = NULL, *descriptors = NULL;
+    struct tm_json_value *capabilities_json = NULL;
     struct utsname name;
     cpu_set_t cpus;
     gid_t *groups = NULL;
     int group_count, i, status = -1;
     mode_t mask;
-    const char *cpu_flags = NULL;
+    char *cpu_flags[CPU_SETSIZE] = {0};
+    int current_cpu = -1;
     char *cpu_info = NULL;
     size_t cpu_info_capacity = 0;
     FILE *cpu_file = NULL;
     static const struct { const char *name; int resource; } resources[] = {
         {"as", RLIMIT_AS}, {"core", RLIMIT_CORE}, {"cpu", RLIMIT_CPU},
         {"data", RLIMIT_DATA}, {"fsize", RLIMIT_FSIZE},
+        {"locks", RLIMIT_LOCKS},
         {"memlock", RLIMIT_MEMLOCK}, {"msgqueue", RLIMIT_MSGQUEUE},
         {"nice", RLIMIT_NICE}, {"nofile", RLIMIT_NOFILE},
         {"nproc", RLIMIT_NPROC}, {"rss", RLIMIT_RSS},
@@ -111,9 +114,11 @@ int tm_context_capture_linux(struct tm_json_value **execution_context)
     limits = tm_json_new_object();
     groups_json = tm_json_new_array();
     affinity_json = tm_json_new_array();
+    capabilities_json = tm_json_new_array();
     descriptors = tm_json_new_object();
     if (context == NULL || limits == NULL || groups_json == NULL ||
-        affinity_json == NULL || descriptors == NULL) goto done;
+        affinity_json == NULL || capabilities_json == NULL ||
+        descriptors == NULL) goto done;
 
     if (put_string(context, "os", name.sysname) < 0 ||
         put_string(context, "architecture", name.machine) < 0 ||
@@ -160,18 +165,40 @@ int tm_context_capture_linux(struct tm_json_value **execution_context)
     cpu_file = fopen("/proc/cpuinfo", "r");
     if (cpu_file == NULL) goto done;
     while (getline(&cpu_info, &cpu_info_capacity, cpu_file) >= 0) {
-        char *value;
-        if (strncmp(cpu_info, "flags", 5) != 0) continue;
-        value = strchr(cpu_info, ':');
+        char *value = strchr(cpu_info, ':');
         if (value == NULL) continue;
-        value++;
-        while (*value == ' ' || *value == '\t') value++;
-        value[strcspn(value, "\r\n")] = '\0';
-        cpu_flags = value;
-        break;
+        if (strncmp(cpu_info, "processor", 9) == 0) {
+            char *end;
+            long parsed;
+            errno = 0;
+            parsed = strtol(value + 1, &end, 10);
+            if (errno != 0 || end == value + 1 || parsed < 0 ||
+                parsed >= CPU_SETSIZE) goto done;
+            current_cpu = (int)parsed;
+        } else if (strncmp(cpu_info, "flags", 5) == 0 && current_cpu >= 0) {
+            value++;
+            while (*value == ' ' || *value == '\t') value++;
+            value[strcspn(value, "\r\n")] = '\0';
+            if (cpu_flags[current_cpu] != NULL) goto done;
+            cpu_flags[current_cpu] = strdup(value);
+            if (cpu_flags[current_cpu] == NULL) goto done;
+        }
     }
-    if (cpu_flags == NULL || put_string(context, "cpu_flags", cpu_flags) < 0)
+    if (ferror(cpu_file)) goto done;
+    for (i = 0; i < CPU_SETSIZE; i++) if (CPU_ISSET(i, &cpus)) {
+        struct tm_json_value *capability = tm_json_new_object();
+        if (cpu_flags[i] == NULL || capability == NULL ||
+            put_integer(capability, "cpu", (uint64_t)i) < 0 ||
+            put_string(capability, "flags", cpu_flags[i]) < 0 ||
+            tm_json_array_append(capabilities_json, capability) < 0) {
+            tm_json_free(capability);
+            goto done;
+        }
+    }
+    if (tm_json_size(capabilities_json) == 0 ||
+        tm_json_object_set(context, "cpu_capabilities", capabilities_json) < 0)
         goto done;
+    capabilities_json = NULL;
 
     for (index = 0; index < sizeof(resources) / sizeof(resources[0]); index++)
         if (add_limit(limits, resources[index].name,
@@ -207,7 +234,9 @@ int tm_context_capture_linux(struct tm_json_value **execution_context)
 done:
     if (cpu_file != NULL) fclose(cpu_file);
     free(cpu_info);
+    for (i = 0; i < CPU_SETSIZE; i++) free(cpu_flags[i]);
     free(groups);
+    tm_json_free(capabilities_json);
     tm_json_free(descriptors);
     tm_json_free(affinity_json);
     tm_json_free(groups_json);
