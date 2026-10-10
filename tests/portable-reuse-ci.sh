@@ -21,7 +21,16 @@ if ! command -v bwrap >/dev/null || ! command -v busybox >/dev/null; then
     exit 2
 fi
 sudo chmod u-s "$(command -v bwrap)"
+id
 stat -c 'portable acceptance Bubblewrap: %A %U:%G %n' "$(command -v bwrap)"
+namei -l "$(command -v bwrap)"
+for path in / /usr /usr/bin "$(command -v bwrap)"; do
+    if [[ -w "$path" ]]; then
+        printf 'portable acceptance path is writable: %s\n' "$path"
+    else
+        printf 'portable acceptance path is not writable: %s\n' "$path"
+    fi
+done
 
 make -C "$repo_root" build/tm build/portable-reuse-probe
 sudo install -d -o root -g root -m 0755 "$runtime/bin"
