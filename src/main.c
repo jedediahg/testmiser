@@ -1048,17 +1048,26 @@ int main(int argc, char **argv)
         char record_id[72];
         int shared_store_fd = -1;
         int configured_store_fd = -1;
+        int record_ready = 0, published_anywhere = 0;
         struct tm_output_manifest shared_outputs = {0};
         if (tm_verification_fingerprint(&identity,
                                         verification_fingerprint) == 0 &&
             tm_result_create_with_outputs(&identity, signing_epoch,
                 signing_key, &output_manifest,
-                &record, &record_length, record_id) == 0 &&
-            tm_result_store(repository_fd, record, record_length,
-                            record_id) == 0) {
-            if (options.explain)
-                fprintf(stderr, "tm: signed result published: %s\n",
-                        record_id);
+                &record, &record_length, record_id) == 0)
+            record_ready = 1;
+        if (record_ready) {
+            if (tm_result_store(repository_fd, record, record_length,
+                                record_id) == 0) {
+                published_anywhere = 1;
+                if (options.explain)
+                    fprintf(stderr, "tm: signed result published: %s\n",
+                            record_id);
+            } else if (options.explain) {
+                fprintf(stderr,
+                    "tm: repository result publication failed (%s)\n",
+                    strerror(errno));
+            }
             if (tm_local_store_open_default(&shared_store_fd) == 0) {
                 int blobs_ready = options.output_count == 0 ||
                     (tm_outputs_capture_to_store(repository_fd,
@@ -1069,16 +1078,17 @@ int main(int argc, char **argv)
                 if (blobs_ready &&
                     tm_result_store(shared_store_fd, record, record_length,
                                     record_id) == 0) {
+                    published_anywhere = 1;
                     if (options.explain)
-                        fprintf(stderr, "tm: signed result copied to the per-user shared store\n");
+                        fprintf(stderr, "tm: signed result published to the per-user shared store\n");
                 } else if (options.explain) {
                     fprintf(stderr,
-                        "tm: result remains in this checkout; shared publication failed or outputs changed (%s)\n",
+                        "tm: per-user shared-store publication failed or outputs changed (%s)\n",
                         strerror(errno));
                 }
             } else if (options.explain) {
                 fprintf(stderr,
-                    "tm: result remains in this checkout; per-user shared store is unavailable (%s)\n",
+                    "tm: per-user shared store is unavailable (%s)\n",
                     strerror(errno));
             }
             if (tm_shared_store_open_configured(&configured_store_fd) == 0) {
@@ -1091,6 +1101,7 @@ int main(int argc, char **argv)
                 if (blobs_ready &&
                     tm_result_store(configured_store_fd, record, record_length,
                                     record_id) == 0) {
+                    published_anywhere = 1;
                     if (options.explain)
                         fprintf(stderr, "tm: signed result published to configured shared store\n");
                 } else if (options.explain) {
@@ -1104,9 +1115,12 @@ int main(int argc, char **argv)
                 fprintf(stderr, "tm: configured shared result store is unavailable (%s)\n",
                         strerror(errno));
             }
+            if (!published_anywhere && options.explain)
+                fprintf(stderr,
+                    "tm: signed result could not be published to any store\n");
         } else if (options.explain) {
             fprintf(stderr,
-                "tm: successful command was not published (%s)\n",
+                "tm: successful command could not be signed (%s)\n",
                 strerror(errno));
         }
         tm_output_manifest_clear(&shared_outputs);
