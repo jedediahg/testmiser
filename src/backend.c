@@ -228,10 +228,25 @@ static int build_arguments(struct argument_vector *arguments,
     return 1;
 }
 
-static int run_probe(const struct argument_vector *arguments)
+static int run_probe(const struct argument_vector *arguments,
+                     const struct tm_profile *profile)
 {
+    static const char probe_script[] =
+        "for p in /workspace/.tm/* /workspace/.tm/.[!.]* "
+        "/workspace/.tm/..?*; do "
+        "[ ! -e \"$p\" ] && [ ! -L \"$p\" ] || exit 91; done; "
+        "p=/.tm-runtime-write-probe-$$; "
+        "[ ! -e \"$p\" ] && [ ! -L \"$p\" ] || exit 92; "
+        "if (umask 077; : >\"$p\") 2>/dev/null; then "
+        "rm -f -- \"$p\"; exit 93; fi; "
+        "for scratch do p=\"$scratch/.tm-scratch-probe-$$\"; "
+        "(umask 077; : >\"$p\") || exit 94; "
+        "rm -f -- \"$p\" || exit 95; done; "
+        "p=/workspace/.tm-profile-probe-$$; "
+        ": >\"$p\" && rm -f -- \"$p\"";
     struct argument_vector probe = {0};
     size_t index, separator = arguments->count;
+    size_t scratch_count = tm_profile_scratch_root_count(profile);
     pid_t child;
     int status = 0;
     pid_t waited;
@@ -241,10 +256,19 @@ static int run_probe(const struct argument_vector *arguments)
             break;
         }
     if (separator == arguments->count) goto unavailable;
-    if (init_arguments(&probe, separator + 3) < 0) goto unavailable;
+    if (scratch_count > SIZE_MAX - separator - 6 ||
+        init_arguments(&probe, separator + scratch_count + 6) < 0)
+        goto unavailable;
     for (index = 0; index <= separator; index++)
         if (push_argument(&probe, arguments->items[index]) < 0) goto unavailable;
-    if (push_argument(&probe, "/bin/true") < 0) goto unavailable;
+    if (push_argument(&probe, "/bin/sh") < 0 ||
+        push_argument(&probe, "-c") < 0 ||
+        push_argument(&probe, probe_script) < 0 ||
+        push_argument(&probe, "tm-profile-view-probe") < 0)
+        goto unavailable;
+    for (index = 0; index < scratch_count; index++)
+        if (push_argument(&probe, tm_profile_scratch_root(profile, index)) < 0)
+            goto unavailable;
     child = fork();
     if (child < 0) goto unavailable;
     if (child == 0) {
@@ -329,7 +353,7 @@ int tm_backend_run(const struct tm_profile *profile,
                             working_directory, output_roots,
                             output_root_count, command);
     if (built <= 0) goto done;
-    if (!run_probe(&arguments)) {
+    if (!run_probe(&arguments, profile)) {
         if (explain)
             fprintf(stderr,
                 "tm: RUN: Bubblewrap profile view is unavailable; running once without reuse\n");

@@ -43,8 +43,15 @@ test "$readonly_runtime" = yes || fail 'read-only runtime bind'
 test "$hidden_metadata" = yes || fail 'hidden metadata tmpfs'
 test "$clean_environment" = yes || fail '--clearenv'
 shift
-if [ "$1" = "/bin/true" ]; then
+if [ "$1" = "/bin/sh" ] && [ "$4" = "tm-profile-view-probe" ]; then
+    test "$2" = "-c" || fail 'profile view probe is not a shell check'
+    printf '%s\n' "$3" | /bin/sh -n || fail 'profile view probe syntax'
+    case "$3" in
+        *"/workspace/.tm/"*"/.tm-runtime-write-probe-"*"for scratch do"*) ;;
+        *) fail 'profile view probe omits metadata/runtime/scratch checks' ;;
+    esac
     printf 'probe\n' >>"$TM_FAKE_BWRAP_LOG"
+    exit 0
 else
     printf 'command\n' >>"$TM_FAKE_BWRAP_LOG"
 fi
