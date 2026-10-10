@@ -464,8 +464,12 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         printf '%s\n' 'pathname execveat was unexpectedly rejected' >&2
         exit 1
     fi
+    set +e
     "$tm_bin" --explain -- "$execveat_probe" empty-path \
         2>"$tmp_dir/execveat-empty-path.err"
+    status=$?
+    set -e
+    test "$status" -eq 100
     grep -q 'unsupported syscall(s):.*322' \
         "$tmp_dir/execveat-empty-path.err"
     python_bin=$(command -v python3 || true)
