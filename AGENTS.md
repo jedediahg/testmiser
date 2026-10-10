@@ -6,7 +6,7 @@ The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. 
 
 ## Build, Test, and Development Commands
 
-Run `make` to build the scaffold at `build/tm`; run `make clean` to remove generated output. No automated test suite or test command exists yet. The specification’s examples, such as `tm -- pytest tests/test_risk.py`, describe commands the future utility may wrap, not tests for this repository.
+Run `make` to build `build/tm`, `make test` to run CLI integration checks, and `make clean` to remove generated output. The specification’s examples, such as `tm -- pytest tests/test_risk.py`, describe commands the utility can wrap, not tests for this repository.
 
 ## Coding Style & Naming Conventions
 
@@ -14,7 +14,7 @@ The target implementation is C and Linux-first. Compile with C11 and the Makefil
 
 ## Testing Guidelines
 
-The `tests/` directory is reserved for future unit and integration tests; no framework or coverage target is established. When adding tests, document their framework and invocation. Cover successful reuse, input invalidation, and rerunning after a failed command, consistent with the specification’s safety requirements.
+`tests/cli.sh` exercises help, argument preservation, exit propagation, missing commands, explain mode, and option parsing. It uses POSIX shell and system utilities. There is no coverage target. Add tests for successful reuse, input invalidation, and rerunning after a failed command when the cache is implemented.
 
 ## Commit & Pull Request Guidelines
 

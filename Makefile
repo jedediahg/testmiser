@@ -8,9 +8,12 @@ TARGET := $(BUILD_DIR)/tm
 SOURCES := src/main.c
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
-.PHONY: all clean
+.PHONY: all test clean
 
 all: $(TARGET)
+
+test: $(TARGET)
+	TM_BIN=./$(TARGET) sh tests/cli.sh
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^

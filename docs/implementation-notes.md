@@ -16,8 +16,8 @@ The spec lists candidate Linux tracing backends and filesystem operations withou
 
 ## Process outcomes and CLI
 
-Document the numeric status returned when a child is terminated by a signal, and distinguish that from `tm` internal errors. The CLI examples use both `tm -- <command>` and options before `--`; specify parsing, option ordering, and whether `--` is mandatory.
+The wrapper currently returns `128 + signal` for a signal-terminated child and reserves 125 for internal errors. The CLI accepts `--force` and `--explain` before a mandatory `--`; unknown or incomplete invocations return 125. Confirm these conventions in the spec before stabilizing the CLI contract.
 
-## Initial implementation boundary
+## Implementation sequence
 
-The suggested module list is broad for a first increment. A useful first milestone is a transparent process wrapper with exit-status propagation, followed by an observer prototype and sidecar validation. Keep cache skipping disabled until provenance, observer failure handling, and the conservative fallback rules have an acceptance testable definition.
+The first milestone is implemented: a transparent process wrapper with exit-status propagation and CLI integration checks. Next, prototype the Linux observer and sidecar validation. Keep cache skipping disabled until provenance, observer failure handling, and conservative fallback rules have acceptance-testable definitions.

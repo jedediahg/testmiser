@@ -1,6 +1,8 @@
 #ifndef TM_TM_H
 #define TM_TM_H
 
+#define TM_EXIT_COMMAND_NOT_FOUND 127
+#define TM_EXIT_CANNOT_EXECUTE 126
 #define TM_EXIT_INTERNAL_ERROR 125
 
 #endif
