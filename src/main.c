@@ -16,6 +16,7 @@
 #include "tm/identity.h"
 #include "tm/key.h"
 #include "tm/lock.h"
+#include "tm/local_store.h"
 #include "tm/json.h"
 #include "tm/outputs.h"
 #include "tm/observer.h"
@@ -134,6 +135,21 @@ static void free_environment(char **environment)
     for (index = 0; environment[index] != NULL; index++)
         free(environment[index]);
     free(environment);
+}
+
+static int output_manifests_equal(const struct tm_output_manifest *left,
+                                  const struct tm_output_manifest *right)
+{
+    size_t index;
+    if (left->count != right->count) return 0;
+    for (index = 0; index < left->count; index++) {
+        const struct tm_output_entry *a = &left->entries[index];
+        const struct tm_output_entry *b = &right->entries[index];
+        if (strcmp(a->path, b->path) != 0 || a->kind != b->kind ||
+            a->mode != b->mode || strcmp(a->digest, b->digest) != 0 ||
+            a->size != b->size) return 0;
+    }
+    return 1;
 }
 
 static struct tm_json_value *environment_json(char *const *environment)
@@ -444,6 +460,7 @@ static int find_profile_cache_hit(int repository_fd,
                                   size_t blocked_count,
                                   int probe_only,
                                   char verification_fingerprint[72],
+                                  int *found_in_shared_store,
                                   char record_id[72])
 {
     struct tm_snapshot *snapshot = NULL;
@@ -451,7 +468,8 @@ static int find_profile_cache_hit(int repository_fd,
     int *root_descriptors = NULL;
     unsigned char *record = NULL;
     size_t record_length = 0, root_count, index;
-    int preflight, found = 1;
+    int preflight, found = 1, shared_store_fd = -1;
+    if (found_in_shared_store != NULL) *found_in_shared_store = 0;
     root_count = tm_profile_input_root_count(profile);
     if (root_count > 0) {
         root_paths = calloc(root_count, sizeof(*root_paths));
@@ -487,6 +505,25 @@ static int find_profile_cache_hit(int repository_fd,
             context_fingerprint, trust_policy, root_paths, root_descriptors,
             root_count, output_roots, output_root_count, blocked_fingerprints,
             blocked_count, &record, &record_length, record_id);
+    if (found != 0 && tm_local_store_open_default(&shared_store_fd) == 0) {
+        free(record); record = NULL; record_length = 0;
+        if (probe_only)
+            found = tm_result_find_matching_snapshot_record(shared_store_fd,
+                command_fingerprint, tm_profile_digest(profile),
+                tm_profile_runtime_digest(profile), context_fingerprint,
+                trust_policy, root_paths, root_descriptors, root_count,
+                &record, &record_length, record_id);
+        else
+            found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
+                shared_store_fd, repository_fd, shared_store_fd,
+                command_fingerprint, tm_profile_digest(profile),
+                tm_profile_runtime_digest(profile), context_fingerprint,
+                trust_policy, root_paths, root_descriptors, root_count,
+                output_roots, output_root_count, blocked_fingerprints,
+                blocked_count, &record, &record_length, record_id);
+        if (found == 0 && found_in_shared_store != NULL)
+            *found_in_shared_store = 1;
+    }
     if (found == 0 && probe_only) {
         struct tm_result_summary summary = {0};
         char inspected_id[72];
@@ -505,6 +542,7 @@ done:
         for (index = 0; index < root_count; index++)
             if (root_descriptors[index] >= 0) close(root_descriptors[index]);
     free(record);
+    if (shared_store_fd >= 0) close(shared_store_fd);
     tm_snapshot_free(snapshot);
     free(root_descriptors);
     free(root_paths);
@@ -531,6 +569,7 @@ int main(int argc, char **argv)
     char context_fingerprint[72] = {0};
     char prior_forced_fingerprint[72] = {0};
     int prior_forced_success = 0;
+    int prior_forced_shared = 0;
     char signing_key_id[72] = {0};
     uint64_t signing_epoch = 0;
     struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
@@ -871,11 +910,13 @@ int main(int argc, char **argv)
                 repository_root, command_fingerprint, context_fingerprint,
                 trust_policy, options.output_paths, options.output_count,
                 NULL, 0, 1, prior_forced_fingerprint,
+                &prior_forced_shared,
                 prior_record_id) == 0) {
             prior_forced_success = 1;
             if (options.explain)
-                fprintf(stderr, "tm: forced run is checking trusted prior result %s\n",
-                        prior_record_id);
+                fprintf(stderr, "tm: forced run is checking trusted prior result %s (source=%s)\n",
+                        prior_record_id, prior_forced_shared ?
+                        "per-user shared store" : "repository");
         }
     }
     if (options.explain && options.output_count > 0 && profile == NULL)
@@ -888,17 +929,21 @@ int main(int argc, char **argv)
         reusable_context && command_fingerprint[0] != '\0' &&
         repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
         char candidate_id[72];
+        int candidate_shared = 0;
         if (find_profile_cache_hit(repository_fd, profile, runtime_root,
                 repository_root, command_fingerprint, context_fingerprint,
                 trust_policy, options.output_paths, options.output_count,
                 (const char *const *)attempt_state.blocked_fingerprints,
                 attempt_state.blocked_count,
                 0, NULL,
+                &candidate_shared,
                 candidate_id) == 0) {
             cache_hit = 1;
             result = 0;
             if (options.explain)
-                fprintf(stderr, "tm: SKIP: trusted result %s\n", candidate_id);
+                fprintf(stderr, "tm: SKIP: trusted result %s (source=%s)\n",
+                        candidate_id, candidate_shared ?
+                        "per-user shared store" : "repository");
         } else if (options.explain) {
             fprintf(stderr,
                 "tm: RUN: no trusted result matched the stable input snapshot\n");
@@ -975,6 +1020,8 @@ int main(int argc, char **argv)
         unsigned char *record = NULL;
         size_t record_length = 0;
         char record_id[72];
+        int shared_store_fd = -1;
+        struct tm_output_manifest shared_outputs = {0};
         if (tm_verification_fingerprint(&identity,
                                         verification_fingerprint) == 0 &&
             tm_result_create_with_outputs(&identity, signing_epoch,
@@ -985,11 +1032,35 @@ int main(int argc, char **argv)
             if (options.explain)
                 fprintf(stderr, "tm: signed result published: %s\n",
                         record_id);
+            if (tm_local_store_open_default(&shared_store_fd) == 0) {
+                int blobs_ready = options.output_count == 0 ||
+                    (tm_outputs_capture_to_store(repository_fd,
+                        shared_store_fd, options.output_paths,
+                        options.output_count, &shared_outputs) == 0 &&
+                     output_manifests_equal(&output_manifest,
+                                            &shared_outputs));
+                if (blobs_ready &&
+                    tm_result_store(shared_store_fd, record, record_length,
+                                    record_id) == 0) {
+                    if (options.explain)
+                        fprintf(stderr, "tm: signed result copied to the per-user shared store\n");
+                } else if (options.explain) {
+                    fprintf(stderr,
+                        "tm: result remains in this checkout; shared publication failed or outputs changed (%s)\n",
+                        strerror(errno));
+                }
+            } else if (options.explain) {
+                fprintf(stderr,
+                    "tm: result remains in this checkout; per-user shared store is unavailable (%s)\n",
+                    strerror(errno));
+            }
         } else if (options.explain) {
             fprintf(stderr,
                 "tm: successful command was not published (%s)\n",
                 strerror(errno));
         }
+        tm_output_manifest_clear(&shared_outputs);
+        if (shared_store_fd >= 0) close(shared_store_fd);
         free(record);
     } else if (signing_key != NULL && options.explain && result == 0) {
         fprintf(stderr,
