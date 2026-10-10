@@ -784,7 +784,6 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         return;
     case 5:  /* fstat */
     case 21: /* access */
-    case 79: /* getcwd is tracked through cwd changes only in a later stage */
     case 262: /* newfstatat */
     case 269: /* faccessat */
     case 332: /* statx */
@@ -890,6 +889,7 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 26:  /* msync */
     case 28:  /* madvise */
     case 39:  /* getpid */
+    case 79:  /* getcwd is covered by working-directory and cwd-change inputs */
     case 2:   /* open: path and flags captured by note_syscall */
     case 257: /* openat: path and flags captured by note_syscall */
     case 10:  /* mprotect */

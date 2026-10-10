@@ -11,6 +11,7 @@ clone3_probe=${CLONE3_PROBE:-./build/clone3_probe}
 cwd_probe=${CWD_PROBE:-./build/cwd_probe}
 path_error_probe=${PATH_ERROR_PROBE:-./build/path_error_probe}
 execveat_probe=${EXECVEAT_PROBE:-./build/execveat_probe}
+getcwd_probe=${GETCWD_PROBE:-./build/getcwd_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -418,6 +419,12 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         2>"$tmp_dir/execveat.err"
     if grep -q 'unsupported syscall(s):.*322' "$tmp_dir/execveat.err"; then
         printf '%s\n' 'pathname execveat was unexpectedly rejected' >&2
+        exit 1
+    fi
+    "$tm_bin" --explain -- "$getcwd_probe" 2>"$tmp_dir/getcwd.err"
+    if grep -q 'filesystem metadata observation is not modeled' \
+        "$tmp_dir/getcwd.err"; then
+        printf '%s\n' 'getcwd was incorrectly treated as unmodeled metadata' >&2
         exit 1
     fi
     "$tm_bin" --explain -- "$execveat_probe" empty-path \
