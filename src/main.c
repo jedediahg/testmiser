@@ -36,10 +36,48 @@ struct options {
     int command_index;
 };
 
+static void free_environment(char **environment);
+
 static char **profile_environment(const struct tm_profile *profile)
 {
-    size_t count = tm_profile_environment_count(profile), index;
-    char **environment = calloc(count + 1, sizeof(*environment));
+    static const char *const default_names[] = {"HOME", "TMPDIR", "PATH"};
+    const char *default_values[3] = {NULL, NULL, "/usr/bin:/bin"};
+    size_t count = tm_profile_environment_count(profile), index, extra = 0;
+    size_t scratch_count = tm_profile_scratch_root_count(profile);
+    const char *home = NULL, *tmpdir = NULL, *scratch = NULL;
+    int defaults_allowed = 0, home_allowed = 0, tmpdir_allowed = 0;
+    char **environment;
+
+    if (scratch_count > 0) {
+        scratch = tm_profile_scratch_root(profile, 0);
+        home = scratch;
+        tmpdir = scratch;
+        for (index = 0; index < count; index++) {
+            const char *name = tm_profile_environment_name(profile, index);
+            const char *value = tm_profile_environment_value(profile, index);
+            if (strcmp(name, "HOME") == 0) home = value;
+            if (strcmp(name, "TMPDIR") == 0) tmpdir = value;
+        }
+        for (index = 0; index < scratch_count; index++) {
+            const char *root = tm_profile_scratch_root(profile, index);
+            if (strcmp(home, root) == 0) home_allowed = 1;
+            if (strcmp(tmpdir, root) == 0) tmpdir_allowed = 1;
+        }
+        defaults_allowed = home_allowed && tmpdir_allowed;
+        default_values[0] = scratch;
+        default_values[1] = scratch;
+    }
+    if (defaults_allowed)
+        for (index = 0; index < sizeof(default_names) / sizeof(default_names[0]);
+             index++) {
+            size_t env_index;
+            for (env_index = 0; env_index < count; env_index++)
+                if (strcmp(tm_profile_environment_name(profile, env_index),
+                           default_names[index]) == 0) break;
+            if (env_index == count) extra++;
+        }
+    if (count > SIZE_MAX - extra - 1) return NULL;
+    environment = calloc(count + extra + 1, sizeof(*environment));
     if (environment == NULL) return NULL;
     for (index = 0; index < count; index++) {
         const char *name = tm_profile_environment_name(profile, index);
@@ -52,6 +90,29 @@ static char **profile_environment(const struct tm_profile *profile)
             return NULL;
         }
         (void)snprintf(environment[index], length, "%s=%s", name, value);
+    }
+    if (defaults_allowed) {
+        size_t default_index;
+        for (default_index = 0;
+             default_index < sizeof(default_names) / sizeof(default_names[0]);
+             default_index++) {
+            size_t env_index;
+            const char *name = default_names[default_index];
+            const char *value = default_values[default_index];
+            size_t length;
+            for (env_index = 0; env_index < count; env_index++)
+                if (strcmp(tm_profile_environment_name(profile, env_index),
+                           name) == 0) break;
+            if (env_index != count) continue;
+            length = strlen(name) + strlen(value) + 2;
+            environment[index] = malloc(length);
+            if (environment[index] == NULL) {
+                free_environment(environment);
+                return NULL;
+            }
+            (void)snprintf(environment[index++], length, "%s=%s", name,
+                           value);
+        }
     }
     return environment;
 }

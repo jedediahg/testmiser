@@ -188,6 +188,13 @@ if grep -Fq "$PWD/" "$tmp_dir/profile-approved.err"; then
     printf '%s\n' 'command identity leaked an absolute checkout path' >&2
     exit 1
 fi
+TM_PROFILE_TEST_SECRET=host-secret "$tm_bin" \
+    --profile "$tmp_dir/profile.json" --trust-policy "$tmp_dir/policy.json" \
+    -- /bin/sh -c \
+    'printf "%s|%s|%s|%s|%s\n" "$LANG" "$PATH" "$HOME" "$TMPDIR" "${TM_PROFILE_TEST_SECRET-unset}"' \
+    >"$tmp_dir/profile-default-env.out"
+test "$(cat "$tmp_dir/profile-default-env.out")" = \
+    'C|/usr/bin:/bin|/tmp|/tmp|unset'
 sed 's/"deterministic":true/"deterministic":false/' \
     "$tmp_dir/profile.json" >"$tmp_dir/nondeterministic-profile.json"
 nondeterministic_digest=$("$tm_bin" profile digest \
