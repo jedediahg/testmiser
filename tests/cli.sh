@@ -480,6 +480,13 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         "$tm_bin" --explain -- "$python_bin" -c \
             'import socket; socket.socket()' 2>"$tmp_dir/network.err"
         grep -q 'socket or network operation observed' "$tmp_dir/network.err"
+        "$tm_bin" --explain -- "$python_bin" -c \
+            'import ctypes; assert ctypes.CDLL(None).syscall(1000) == -1' \
+            2>"$tmp_dir/unsupported-syscall.err"
+        grep -q 'unsupported syscall(s):.*1000' \
+            "$tmp_dir/unsupported-syscall.err"
+        grep -q 'observer eligibility: blocked' \
+            "$tmp_dir/unsupported-syscall.err"
     fi
     "$tm_bin" --explain -- /bin/sh -c 'printf x > "$1"' \
         sh "$tmp_dir/child-write" 2>"$tmp_dir/mutation.err"
