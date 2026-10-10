@@ -17,7 +17,8 @@ enum tm_observer_ineligibility {
     TM_OBSERVER_INELIGIBLE_UNSUPPORTED = 1U << 5,
     TM_OBSERVER_INELIGIBLE_OBSERVER_FAILURE = 1U << 6,
     TM_OBSERVER_INELIGIBLE_DESCENDANT = 1U << 7,
-    TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT = 1U << 8
+    TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT = 1U << 8,
+    TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW = 1U << 9
 };
 
 struct tm_observer_candidate {
@@ -31,6 +32,7 @@ struct tm_observer_report {
     struct tm_observer_candidate candidates[TM_OBSERVER_MAX_CANDIDATES];
     unsigned int ineligibility_reasons;
     int observation_complete;
+    int stable_input_view;
 };
 
 /* True only when syscall observation completed and found no unsupported or

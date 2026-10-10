@@ -1159,6 +1159,8 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_DESCENDANT;
         if (observer.saw_external_path)
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT;
+        if (!report->stable_input_view)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW;
         report->observation_complete = !observer.saw_observer_failure &&
             !observer.saw_outliving_descendant;
     }

@@ -10,6 +10,8 @@ int main(void)
     assert(!tm_observer_report_allows_reuse(&report));
 
     report.observation_complete = 1;
+    assert(!tm_observer_report_allows_reuse(&report));
+    report.stable_input_view = 1;
     assert(tm_observer_report_allows_reuse(&report));
 
     report.ineligibility_reasons = TM_OBSERVER_INELIGIBLE_NETWORK;

@@ -462,10 +462,11 @@ int main(int argc, char **argv)
                 int observer_gate =
                     tm_observer_report_allows_reuse(&observer_report);
                 fprintf(stderr,
-                    "tm: observer eligibility: %s (coverage=%s, reasons=0x%08x; this alone cannot authorize reuse)\n",
+                    "tm: observer eligibility: %s (coverage=%s, stable-view=%s, reasons=0x%08x; this alone cannot authorize reuse)\n",
                     observer_gate ? "clear" : "blocked",
                     observer_report.observation_complete ? "complete" :
                                                           "incomplete",
+                    observer_report.stable_input_view ? "yes" : "no",
                     observer_report.ineligibility_reasons);
             }
         }
