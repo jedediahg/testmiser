@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "tm/backend.h"
@@ -41,6 +42,8 @@ int main(void)
     struct tm_profile *profile = NULL;
     int command_result = -1, status = 1, base_descriptor = -1;
     int high_descriptor = -1;
+    mode_t original_umask = 0;
+    int restore_umask = 0;
     char log_contents[64] = {0}, marker_contents[64] = {0};
     FILE *stream;
 
@@ -72,6 +75,8 @@ int main(void)
                 goto done;
         }
     }
+    original_umask = umask(077);
+    restore_umask = 1;
 
     if (tm_backend_run(profile, temporary, repository_root, NULL, 0, command,
                        0, NULL, &command_result) != 1 || command_result != 0) {
@@ -106,6 +111,7 @@ int main(void)
     }
     status = 0;
 done:
+    if (restore_umask) (void)umask(original_umask);
     if (base_descriptor >= 0) close(base_descriptor);
     if (high_descriptor >= 0) close(high_descriptor);
     tm_profile_free(profile);

@@ -47,6 +47,7 @@ test "$temporary_overlay" = yes || fail '--tmp-overlay'
 test "$readonly_runtime" = yes || fail 'read-only runtime bind'
 test "$hidden_metadata" = yes || fail 'hidden metadata tmpfs'
 test "$clean_environment" = yes || fail '--clearenv'
+test "$(umask)" = 0022 || fail 'profile umask is not 022'
 shift
 if [ "$1" = "/bin/sh" ] && [ "$4" = "tm-profile-view-probe" ]; then
     test "$2" = "-c" || fail 'profile view probe is not a shell check'

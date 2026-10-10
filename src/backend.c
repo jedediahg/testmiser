@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -325,6 +326,7 @@ static int run_probe(const struct argument_vector *arguments,
     if (child == 0) {
         int null_fd;
         if (close_child_descriptors() < 0) _exit(125);
+        (void)umask(022);
         null_fd = open("/dev/null", O_RDWR);
         if (null_fd < 0 || dup2(null_fd, STDERR_FILENO) < 0) _exit(125);
         if (null_fd != STDERR_FILENO) close(null_fd);
@@ -351,6 +353,7 @@ static int run_bubblewrap(const struct argument_vector *arguments,
     if (child == 0) {
         int null_fd;
         if (close_child_descriptors() < 0) _exit(125);
+        (void)umask(022);
         null_fd = open("/dev/null", O_RDONLY);
         if (null_fd < 0 || dup2(null_fd, STDIN_FILENO) < 0) _exit(125);
         if (null_fd != STDIN_FILENO) close(null_fd);
