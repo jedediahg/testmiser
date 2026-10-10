@@ -2,7 +2,7 @@
 
 Current implementation update: `TM_SHARED_STORE` configures an optional filesystem-backed shared result store. The CLI searches it after repository and per-user stores and publishes signed records and output blobs to it. On filesystems with coherent `flock`, a private shared lock file serializes equivalent cold misses and waiters recheck the store. The default available mode falls back to per-user locking when shared coordination fails; `TM_COORDINATION_MODE=strict` instead requires a configured shared store and refuses to launch unless it acquires the shared slot. Strict mode is a filesystem-lock prototype, not a lease/fencing coordinator, and it cannot establish partition safety or confirm a lost owner stopped. No remote object-store adapter or cross-provider acceptance proof is implemented. `tm validate --require-trust` verifies referenced output blobs for policy-approved records, and CI classifies both `.tm/results/**` and `.tm/blobs/**` changes as evidence-only before strict validation. Durable local attempt/quarantine state and explicit resolution are implemented.
 
-The portable acceptance harness also creates a linked Git worktree, removes its checked-in evidence, and requires a trusted hit from the producer's same-user cache with output restoration. The harness is a CI release gate; it has not passed on this development host because Bubblewrap cannot create the network namespace and `busybox-static` is unavailable.
+The portable acceptance harness also creates a linked Git worktree, removes its checked-in evidence, and requires a trusted hit from the producer's same-user cache with output restoration. It passed on the development host inside a temporary Debian Bookworm container with Bubblewrap, `busybox-static`, and ptrace enabled. The native WSL2 environment still cannot create the network namespace, so that pass is container evidence rather than native-host support. The harness remains a CI release gate.
 
 The x86-64 observer now rejects `mprotect` calls that request `PROT_WRITE`; it does not yet track mapping provenance across protection upgrades, so allowing these calls would miss a possible shared-file mutation.
 
@@ -108,9 +108,12 @@ provenance, privacy, output restoration, canonical identities, cross-provider
 reuse, coordination, and no implicit repeat policy. The portable acceptance
 harness covers checked-in clean-clone reuse, linked-worktree per-user reuse,
 mounted-store reuse/invalidation, output restoration, and shared-store cold
-miss coordination. It still does not prove GitLab-to-GitHub interoperability,
-lease/fencing behavior, or partition safety; run the gate on the target
-isolated runner before declaring beta readiness.
+miss coordination. The repository has GitLab CI and GitHub Actions workflow
+definitions, but local acceptance does not prove that either provider has
+successfully run the gate or exchanged evidence with the other. GitLab-to-
+GitHub interoperability, lease/fencing behavior, and partition safety remain
+unproven; run the gate on target isolated runners before declaring beta
+readiness.
 
 ## Technical references
 
