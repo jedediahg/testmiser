@@ -33,6 +33,8 @@ id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 git clone --quiet --local "$repo_root" "$work/producer"
 git -C "$work/producer" config user.name 'tm acceptance test'
 git -C "$work/producer" config user.email 'tm-acceptance@localhost'
+mkdir -p "$work/producer/build"
+printf '%s\n' 'unchanged-input' >"$work/producer/build/portable-input.txt"
 
 run_tm() {
     local checkout=$1 cache=$2
@@ -49,7 +51,7 @@ run_tm() {
             "$tm_bin" --root . --profile "$profile" \
             --trust-policy "$trust_policy" "${key_option[@]}" \
             --output build/reports --explain -- \
-            /bin/sh -c 'mkdir -p build/reports; printf "%s\n" "$1" >build/reports/portable-reuse.txt; printf "%s\n" "$1"' \
+            /bin/sh -c 'IFS= read -r input <build/portable-input.txt; mkdir -p build/reports; printf "%s:%s\n" "$1" "$input" >build/reports/portable-reuse.txt; printf "%s:%s\n" "$1" "$input"' \
             tm-acceptance "$id"
     )
 }
@@ -60,8 +62,8 @@ if ! run_tm "$work/producer" "$work/cache-producer" "$signing_key" \
     printf '%s\n' 'Producer execution failed; inspect the profile/backend eligibility diagnostics above.' >&2
     exit 1
 fi
-if [[ "$(cat "$work/producer.out")" != "$id" ||
-      "$(cat "$work/producer/build/reports/portable-reuse.txt")" != "$id" ]]; then
+if [[ "$(cat "$work/producer.out")" != "$id:unchanged-input" ||
+      "$(cat "$work/producer/build/reports/portable-reuse.txt")" != "$id:unchanged-input" ]]; then
     printf '%s\n' 'Producer did not execute and create the expected output.' >&2
     exit 1
 fi
@@ -70,7 +72,7 @@ if grep -R -F "$work/producer" "$work/producer/.tm/results"; then
     printf '%s\n' 'Portable result metadata contains its producer checkout path.' >&2
     exit 1
 fi
-git -C "$work/producer" add -f .tm/results .tm/blobs
+git -C "$work/producer" add -f .tm/results .tm/blobs build/portable-input.txt
 git -C "$work/producer" commit --quiet -m 'Add portable reuse acceptance evidence'
 
 git clone --quiet --local "$work/producer" "$work/consumer"
@@ -87,11 +89,25 @@ if ! run_tm "$work/consumer" "$work/cache-consumer" \
 fi
 if [[ -s "$work/consumer.out" ]] ||
    ! grep -q '^tm: SKIP: trusted result ' "$work/consumer.err" ||
-   [[ "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != "$id" ||
+   [[ "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != "$id:unchanged-input" ||
       -e "$work/consumer/build/reports/stale.txt" ]]; then
     cat "$work/consumer.err" >&2
     printf '%s\n' 'Clean consumer checkout failed to reuse and restore the trusted result.' >&2
     exit 1
 fi
 
-printf '%s\n' 'Portable cross-worktree reuse passed: committed evidence was trusted and restored without a producer key.'
+printf '%s\n' 'changed-input' >"$work/consumer/build/portable-input.txt"
+if ! run_tm "$work/consumer" "$work/cache-consumer" \
+    >"$work/changed.out" 2>"$work/changed.err"; then
+    cat "$work/changed.err" >&2
+    exit 1
+fi
+if [[ "$(cat "$work/changed.out")" != "$id:changed-input" ||
+      "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != "$id:changed-input" ]] ||
+   grep -q '^tm: SKIP: trusted result ' "$work/changed.err"; then
+    cat "$work/changed.err" >&2
+    printf '%s\n' 'Consumer reused evidence after an input changed.' >&2
+    exit 1
+fi
+
+printf '%s\n' 'Portable cross-worktree reuse and input invalidation passed.'
