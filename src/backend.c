@@ -325,6 +325,30 @@ static int push_input_parent_directories(struct argument_vector *arguments,
     return 0;
 }
 
+static int digest_profile_runtime(int runtime_fd,
+                                  const struct tm_profile *profile,
+                                  char output[72])
+{
+#ifdef TM_TEST_BWRAP
+    (void)profile;
+    return tm_runtime_tree_digest_fd(runtime_fd, output);
+#else
+    size_t count = tm_profile_scratch_root_count(profile), index;
+    const char **writable_roots = NULL;
+    int result;
+    if (count != 0) {
+        writable_roots = calloc(count, sizeof(*writable_roots));
+        if (writable_roots == NULL) return -1;
+        for (index = 0; index < count; index++)
+            writable_roots[index] = tm_profile_scratch_root(profile, index);
+    }
+    result = tm_runtime_tree_digest_readonly_fd(runtime_fd, writable_roots,
+                                                count, output);
+    free(writable_roots);
+    return result;
+#endif
+}
+
 static int scratch_contains(const struct tm_profile *profile,
                             const char *path)
 {
@@ -450,7 +474,7 @@ static int build_arguments(struct argument_vector *arguments,
         int runtime_fd = open_directory_without_symlinks(runtime_root);
         char runtime_digest[72];
         if (runtime_fd < 0) return -1;
-        if (tm_runtime_tree_digest_fd(runtime_fd, runtime_digest) < 0) {
+        if (digest_profile_runtime(runtime_fd, profile, runtime_digest) < 0) {
             int saved = errno;
             close(runtime_fd);
             errno = saved;
@@ -664,6 +688,9 @@ int tm_backend_run(const struct tm_profile *profile,
         if (explain && built == 0)
             fprintf(stderr,
                 "tm: RUN: approved profile environment cannot be enforced; using uncached native execution\n");
+        else if (explain && errno == EROFS)
+            fprintf(stderr,
+                "tm: RUN: approved runtime is not a root-owned read-only tree; using uncached native execution\n");
         else if (explain)
             fprintf(stderr,
                 "tm: RUN: approved input view could not be constructed (%s); using uncached native execution\n",

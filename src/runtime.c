@@ -1,15 +1,19 @@
+#define _GNU_SOURCE
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/capability.h>
 #include <openssl/evp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "tm/digest.h"
@@ -23,13 +27,86 @@
 struct runtime_tree {
     EVP_MD_CTX *digest;
     uint64_t entries;
+    int root_descriptor;
+    int require_readonly;
+    int permission_override;
+    const char *const *writable_roots;
+    size_t writable_root_count;
 };
+
+static int process_can_override_permissions(void)
+{
+    struct __user_cap_header_struct header = {
+        _LINUX_CAPABILITY_VERSION_3, 0
+    };
+    struct __user_cap_data_struct data[2];
+    static const int protected_capabilities[] = {
+        CAP_CHOWN, CAP_DAC_OVERRIDE, CAP_FOWNER, CAP_LINUX_IMMUTABLE,
+        CAP_SYS_ADMIN
+    };
+    size_t index;
+    if (syscall(SYS_capget, &header, data) < 0) return -1;
+    for (index = 0; index < sizeof(protected_capabilities) /
+                            sizeof(protected_capabilities[0]); index++) {
+        unsigned int capability = (unsigned int)protected_capabilities[index];
+        if ((data[capability / 32].effective &
+             (1U << (capability % 32))) != 0) return 1;
+    }
+    return 0;
+}
 
 struct runtime_names {
     char **items;
     size_t count;
     size_t capacity;
 };
+
+static int path_is_writable_overlay(const struct runtime_tree *tree,
+                                    const char *path)
+{
+    size_t index;
+    for (index = 0; index < tree->writable_root_count; index++) {
+        const char *root = tree->writable_roots[index];
+        size_t length;
+        while (*root == '/') root++;
+        length = strlen(root);
+        if (length != 0 && (strcmp(path, root) == 0 ||
+            (strncmp(path, root, length) == 0 && path[length] == '/')))
+            return 1;
+    }
+    return 0;
+}
+
+static int require_node_readonly(const struct runtime_tree *tree,
+                                 unsigned char type, const char *path,
+                                 const struct stat *status, int parent,
+                                 const char *name)
+{
+    int descriptor, error;
+    if (!tree->require_readonly || type == 'l' ||
+        path_is_writable_overlay(tree, path)) return 0;
+    /* A pinned descriptor does not freeze bytes. Require the trusted host
+     * administrator to own the tree and prevent all unprivileged classes
+     * from modifying it, so another account cannot race the digest check. */
+    if (geteuid() == 0 || tree->permission_override || status->st_uid != 0 ||
+        (status->st_mode & 0222) != 0) {
+        errno = EROFS;
+        return -1;
+    }
+    if (type == 'd' && parent < 0) {
+        descriptor = faccessat(tree->root_descriptor, ".", W_OK, AT_EACCESS);
+    } else {
+        descriptor = faccessat(parent, name, W_OK, AT_EACCESS);
+    }
+    if (descriptor < 0) {
+        error = errno;
+        if (error == EACCES || error == EROFS) return 0;
+        errno = error;
+        return -1;
+    }
+    errno = EROFS;
+    return -1;
+}
 
 static int update(EVP_MD_CTX *digest, const void *data, size_t length)
 {
@@ -158,6 +235,8 @@ static int add_record(struct runtime_tree *tree, unsigned char type,
         errno = E2BIG;
         return -1;
     }
+    if (require_node_readonly(tree, type, path, status, parent, name) < 0)
+        return -1;
     if (update(tree->digest, &type, 1) < 0 ||
         update_u32(tree->digest, (uint32_t)path_length) < 0 ||
         update(tree->digest, path, path_length) < 0 ||
@@ -263,7 +342,7 @@ static int hash_directory(struct runtime_tree *tree, int directory,
             int child = openat(directory, names.items[index],
                 O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
             if (child < 0 || add_record(tree, 'd', child_path,
-                    &child_status, -1, NULL) < 0 ||
+                    &child_status, directory, names.items[index]) < 0 ||
                 hash_directory(tree, child, child_path, &child_status,
                                depth + 1) < 0) {
                 int child_error = errno;
@@ -300,7 +379,10 @@ done:
     return result;
 }
 
-static int digest_open_directory(int directory, char output[72])
+static int digest_open_directory(int directory, char output[72],
+                                 int require_readonly,
+                                 const char *const *writable_roots,
+                                 size_t writable_root_count)
 {
     static const unsigned char domain[] = "tm-runtime-tree-v1\0";
     unsigned char digest[EVP_MAX_MD_SIZE];
@@ -310,6 +392,14 @@ static int digest_open_directory(int directory, char output[72])
     int result = -1;
 
     if (fstat(directory, &status) < 0) return -1;
+    tree.root_descriptor = directory;
+    tree.require_readonly = require_readonly;
+    tree.writable_roots = writable_roots;
+    tree.writable_root_count = writable_root_count;
+    if (require_readonly) {
+        tree.permission_override = process_can_override_permissions();
+        if (tree.permission_override < 0) return -1;
+    }
     tree.digest = EVP_MD_CTX_new();
     if (tree.digest == NULL ||
         EVP_DigestInit_ex(tree.digest, EVP_sha256(), NULL) != 1 ||
@@ -347,7 +437,32 @@ int tm_runtime_tree_digest_fd(int root_descriptor, char output[72])
     directory = openat(root_descriptor, ".",
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (directory < 0) return -1;
-    result = digest_open_directory(directory, output);
+    result = digest_open_directory(directory, output, 0, NULL, 0);
+    saved = errno;
+    close(directory);
+    errno = saved;
+    return result;
+}
+
+int tm_runtime_tree_digest_readonly_fd(int root_descriptor,
+                                       const char *const *writable_roots,
+                                       size_t writable_root_count,
+                                       char output[72])
+{
+    int directory, result, saved;
+    struct stat status;
+    if (root_descriptor < 0 || output == NULL ||
+        (writable_root_count > 0 && writable_roots == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (fstat(root_descriptor, &status) < 0) return -1;
+    if (!S_ISDIR(status.st_mode)) { errno = ENOTDIR; return -1; }
+    directory = openat(root_descriptor, ".",
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (directory < 0) return -1;
+    result = digest_open_directory(directory, output, 1, writable_roots,
+                                   writable_root_count);
     saved = errno;
     close(directory);
     errno = saved;
@@ -367,7 +482,7 @@ int tm_runtime_tree_digest(const char *root, char output[72])
     free(canonical);
     errno = saved;
     if (directory < 0) return -1;
-    result = digest_open_directory(directory, output);
+    result = digest_open_directory(directory, output, 0, NULL, 0);
     saved = errno;
     close(directory);
     errno = saved;

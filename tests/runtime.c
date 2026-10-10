@@ -74,6 +74,12 @@ int main(void)
         fprintf(stderr, "runtime descriptor digest differed from path digest\n");
         goto done;
     }
+    errno = 0;
+    if (tm_runtime_tree_digest_readonly_fd(root_descriptor, NULL, 0,
+                                           digest_b) == 0 || errno != EROFS) {
+        fprintf(stderr, "runtime tree owned by the caller passed read-only gate\n");
+        goto done;
+    }
     printf("%s\n", digest_a);
     snprintf(alpha, sizeof(alpha), "%s/bin/alpha", second);
     snprintf(alias, sizeof(alias), "%s/lib/alias", second);

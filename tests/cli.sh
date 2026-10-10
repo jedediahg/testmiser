@@ -281,7 +281,7 @@ TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$tm_bin" \
     2>"$tmp_dir/runtime-selected.err"
 grep -q 'runtime identity matches the approved profile' \
     "$tmp_dir/runtime-selected.err"
-grep -q 'Bubblewrap profile view is unavailable' \
+grep -q 'approved runtime is not a root-owned read-only tree' \
     "$tmp_dir/runtime-selected.err"
 test "$(cat "$tmp_dir/runtime-fallback-ran")" = ran
 sed 's/"output_roots":\[\]/"output_roots":["build\/reports"]/' \
