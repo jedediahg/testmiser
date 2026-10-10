@@ -47,6 +47,30 @@ int main(void)
         "\"privacy_class\":\"public\",\"environment\":{},"
         "\"input_roots\":[\"tests\"],\"output_roots\":[\"tests/report\"],"
         "\"scratch_roots\":[\"/tmp\"]}";
+    static const char metadata_input[] =
+        "{\"schema_version\":1,\"repository_id\":\"sample\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v1\","
+        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
+        "\"privacy_class\":\"public\",\"environment\":{},"
+        "\"input_roots\":[\".tm/results\"],\"output_roots\":[],"
+        "\"scratch_roots\":[\"/tmp\"]}";
+    static const char metadata_output[] =
+        "{\"schema_version\":1,\"repository_id\":\"sample\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v1\","
+        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
+        "\"privacy_class\":\"public\",\"environment\":{},"
+        "\"input_roots\":[],\"output_roots\":[\".tm\"],"
+        "\"scratch_roots\":[\"/tmp\"]}";
+    static const char metadata_scratch[] =
+        "{\"schema_version\":1,\"repository_id\":\"sample\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v1\","
+        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
+        "\"privacy_class\":\"public\",\"environment\":{},"
+        "\"input_roots\":[],\"output_roots\":[],"
+        "\"scratch_roots\":[\"/workspace/.tm/scratch\"]}";
     static const char nondeterministic[] =
         "{\"schema_version\":1,\"repository_id\":\"sample\","
         "\"backend_contract\":\"bubblewrap-linux-x86_64-v1\","
@@ -77,6 +101,9 @@ int main(void)
           "sha256:9594caa6d198b87e03b0dbfd5a869f6096ad69f889dd06bf10b8094cabb716dc") != 0)
         goto done;
     if (!tm_profile_allows_input_path(profile, "src/main.c") ||
+        tm_profile_input_root_count(profile) != 2 ||
+        strcmp(tm_profile_input_root(profile, 0), "src") != 0 ||
+        strcmp(tm_profile_input_root(profile, 1), "tests") != 0 ||
         !tm_profile_allows_input_path(profile, "tests") ||
         tm_profile_allows_input_path(profile, "src-old/main.c") ||
         tm_profile_allows_input_path(profile, "../outside") ||
@@ -116,6 +143,18 @@ int main(void)
     }
     if (save(path, overlap) < 0 || tm_profile_load(path, &profile) == 0) {
         fprintf(stderr, "profile accepted overlapping input/output roots\n");
+        goto done;
+    }
+    if (save(path, metadata_input) < 0 || tm_profile_load(path, &profile) == 0) {
+        fprintf(stderr, "profile exposed reserved metadata as an input root\n");
+        goto done;
+    }
+    if (save(path, metadata_output) < 0 || tm_profile_load(path, &profile) == 0) {
+        fprintf(stderr, "profile exposed reserved metadata as an output root\n");
+        goto done;
+    }
+    if (save(path, metadata_scratch) < 0 || tm_profile_load(path, &profile) == 0) {
+        fprintf(stderr, "profile overlapped scratch with reserved metadata\n");
         goto done;
     }
     if (save(path, output_profile) < 0 || tm_profile_load(path, &profile) < 0 ||

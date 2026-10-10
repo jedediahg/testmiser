@@ -14,6 +14,9 @@ const char *tm_profile_runtime_digest(const struct tm_profile *profile);
 size_t tm_profile_scratch_root_count(const struct tm_profile *profile);
 const char *tm_profile_scratch_root(const struct tm_profile *profile,
                                     size_t index);
+size_t tm_profile_input_root_count(const struct tm_profile *profile);
+const char *tm_profile_input_root(const struct tm_profile *profile,
+                                 size_t index);
 int tm_profile_allows_input_path(const struct tm_profile *profile,
                                  const char *path);
 int tm_profile_allows_output_path(const struct tm_profile *profile,

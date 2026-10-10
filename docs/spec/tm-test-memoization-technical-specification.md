@@ -1001,7 +1001,7 @@ child process activity
 
 # 45. Portable Execution Backend
 
-The first portable release requires a backend that realizes the approved execution view: stable inputs/runtime, canonical paths, hidden `.tm`, clean environment, controlled descriptors, private empty scratch roots, and owned output roots. A compatible externally provisioned sandbox/VM may supply this view; `tm` need not implement a general container orchestrator.
+The first portable release requires a backend that realizes the approved execution view: stable inputs/runtime, canonical paths, hidden `.tm`, clean environment, controlled descriptors, private empty scratch roots, and owned output roots. The reference Bubblewrap view starts with an empty workspace, mounts only profile-approved input roots read-only at their canonical paths, and keeps reserved `.tm` metadata in a separate private mount. A compatible externally provisioned sandbox/VM may supply this view; `tm` need not implement a general container orchestrator.
 
 A native observer-only mode may remain available for discovery and uncached execution. It cannot claim portable reuse merely by accepting profile declarations it cannot establish. Mount/user namespaces, read-only snapshots, filesystem mediation, or a controlled VM are implementation options; select and capability-test a reference backend before the portability acceptance gate.
 

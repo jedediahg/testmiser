@@ -142,6 +142,69 @@ static int push_output_mount(struct argument_vector *arguments,
     return result;
 }
 
+static int push_input_mount(struct argument_vector *arguments,
+                            const char *repository_root, const char *path)
+{
+    char *source = NULL, *resolved = NULL, *inside = NULL, *guest = NULL;
+    size_t source_length, guest_length;
+    char *prefix = NULL;
+    int result = -1;
+
+    source_length = strlen(repository_root) + strlen(path) + 2;
+    guest_length = strlen(GUEST_WORKSPACE) + strlen(path) + 2;
+    source = malloc(source_length);
+    guest = malloc(guest_length);
+    if (source == NULL || guest == NULL) goto done;
+    if (snprintf(source, source_length, "%s/%s", repository_root, path) < 0 ||
+        snprintf(guest, guest_length, "%s/%s", GUEST_WORKSPACE, path) < 0) {
+        errno = EIO;
+        goto done;
+    }
+    prefix = malloc(source_length);
+    if (prefix == NULL) goto done;
+    memcpy(prefix, repository_root, strlen(repository_root));
+    {
+        const char *part = path, *slash;
+        size_t prefix_length = strlen(repository_root);
+        while (*part != '\0') {
+            struct stat status;
+            size_t component_length;
+            slash = strchr(part, '/');
+            component_length = slash == NULL ? strlen(part) :
+                                               (size_t)(slash - part);
+            prefix[prefix_length++] = '/';
+            memcpy(prefix + prefix_length, part, component_length);
+            prefix_length += component_length;
+            prefix[prefix_length] = '\0';
+            if (lstat(prefix, &status) < 0) goto done;
+            if (S_ISLNK(status.st_mode)) { errno = ELOOP; goto done; }
+            if (slash != NULL && !S_ISDIR(status.st_mode)) {
+                errno = ENOTDIR;
+                goto done;
+            }
+            if (slash == NULL) break;
+            part = slash + 1;
+        }
+    }
+    resolved = realpath(source, NULL);
+    if (resolved == NULL) goto done;
+    inside = tm_repo_relative_path(repository_root, resolved);
+    if (inside == NULL || inside[0] == '\0') {
+        errno = EXDEV;
+        goto done;
+    }
+    result = push_argument(arguments, "--ro-bind") < 0 ||
+             push_argument(arguments, resolved) < 0 ||
+             push_argument(arguments, guest) < 0 ? -1 : 0;
+done:
+    free(prefix);
+    free(inside);
+    free(resolved);
+    free(guest);
+    free(source);
+    return result;
+}
+
 static int scratch_contains(const struct tm_profile *profile,
                             const char *path)
 {
@@ -226,6 +289,9 @@ static int build_arguments(struct argument_vector *arguments,
         errno = EOVERFLOW; return -1;
     }
     capacity += 3 * tm_profile_environment_count(profile);
+    if (capacity > SIZE_MAX - 4 || tm_profile_input_root_count(profile) >
+        (SIZE_MAX - capacity - 4) / 3) { errno = EOVERFLOW; return -1; }
+    capacity += 3 * tm_profile_input_root_count(profile) + 4;
     if (tm_profile_scratch_root_count(profile) > (SIZE_MAX - capacity) / 2) {
         errno = EOVERFLOW; return -1;
     }
@@ -257,19 +323,24 @@ static int build_arguments(struct argument_vector *arguments,
     if (push_argument(arguments, "--die-with-parent") < 0 ||
         push_pair(arguments, "--ro-bind", runtime_root) < 0 ||
         push_argument(arguments, "/") < 0 ||
-        push_pair(arguments, "--ro-bind", repository_root) < 0 ||
-        push_argument(arguments, GUEST_WORKSPACE) < 0 ||
+        push_pair(arguments, "--tmpfs", GUEST_WORKSPACE) < 0 ||
         push_pair(arguments, "--tmpfs", GUEST_METADATA) < 0 ||
         push_argument(arguments, "--dev-bind") < 0 ||
         push_argument(arguments, "/dev/null") < 0 ||
         push_argument(arguments, "/dev/null") < 0)
         return -1;
+    for (index = 0; index < tm_profile_input_root_count(profile); index++)
+        if (push_input_mount(arguments, repository_root,
+                             tm_profile_input_root(profile, index)) < 0)
+            return -1;
     for (index = 0; index < tm_profile_scratch_root_count(profile); index++)
         if (push_pair(arguments, "--tmpfs",
                       tm_profile_scratch_root(profile, index)) < 0)
             return -1;
     for (index = 0; index < output_root_count; index++)
         if (push_output_mount(arguments, output_roots[index]) < 0) return -1;
+    if (push_pair(arguments, "--remount-ro", GUEST_WORKSPACE) < 0)
+        return -1;
 
     environment_added = add_environment(arguments, profile);
     if (environment_added <= 0) return environment_added;
@@ -417,7 +488,16 @@ int tm_backend_run(const struct tm_profile *profile,
     built = build_arguments(&arguments, profile, runtime, repository_root,
                             working_directory, output_roots,
                             output_root_count, command);
-    if (built <= 0) goto done;
+    if (built <= 0) {
+        if (explain && built == 0)
+            fprintf(stderr,
+                "tm: RUN: approved profile environment cannot be enforced; using uncached native execution\n");
+        else if (explain)
+            fprintf(stderr,
+                "tm: RUN: approved input view could not be constructed (%s); using uncached native execution\n",
+                strerror(errno));
+        goto done;
+    }
     if (!run_probe(&arguments, profile)) {
         if (explain)
             fprintf(stderr,
@@ -426,7 +506,7 @@ int tm_backend_run(const struct tm_profile *profile,
     }
     if (explain)
         fprintf(stderr,
-            "tm: RUN: Bubblewrap read-only workspace and runtime views active; cache reuse remains disabled\n");
+            "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; cache reuse remains disabled\n");
     (void)report;
     result = run_bubblewrap(&arguments, command_result);
 done:

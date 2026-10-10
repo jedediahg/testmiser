@@ -33,9 +33,18 @@ int main(void)
         "\"privacy_class\":\"public\",\"environment\":{},"
         "\"input_roots\":[\"src\"],\"output_roots\":[],"
         "\"scratch_roots\":[\"/tmp\"]}";
+    static const char symlink_profile_json[] =
+        "{\"schema_version\":1,\"repository_id\":\"backend-test\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v2\","
+        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
+        "\"privacy_class\":\"public\",\"environment\":{},"
+        "\"input_roots\":[\"build/.tm-backend-root-link\"],"
+        "\"output_roots\":[],\"scratch_roots\":[\"/tmp\"]}";
     char temporary[] = "/tmp/tm-backend-test-XXXXXX";
     char profile_path[512] = {0}, log_path[512] = {0};
     char marker_path[512] = {0};
+    char input_link_path[512] = {0};
     char *repository_root = NULL;
     char *command[] = {"/bin/sh", "-c", "printf called >> \"$1\"", "sh",
                        marker_path, NULL};
@@ -53,9 +62,15 @@ int main(void)
         snprintf(log_path, sizeof(log_path), "%s/calls.log", temporary) >=
                  (int)sizeof(log_path) ||
         snprintf(marker_path, sizeof(marker_path), "%s/command.out",
-                 temporary) >= (int)sizeof(marker_path)) goto done;
+                 temporary) >= (int)sizeof(marker_path))
+        goto done;
     repository_root = realpath(".", NULL);
-    if (repository_root == NULL || write_file(profile_path, profile_json) < 0 ||
+    if (repository_root == NULL ||
+        snprintf(input_link_path, sizeof(input_link_path),
+                 "%s/build/.tm-backend-root-link", repository_root) < 0 ||
+        strlen(repository_root) + sizeof("/build/.tm-backend-root-link") >
+            sizeof(input_link_path) ||
+        write_file(profile_path, profile_json) < 0 ||
         setenv("TM_FAKE_BWRAP_LOG", log_path, 1) < 0 ||
         tm_profile_load(profile_path, &profile) < 0) goto done;
     {
@@ -109,6 +124,27 @@ int main(void)
         fprintf(stderr, "backend probe or wrapped command ran incorrectly\n");
         goto done;
     }
+    if (symlink("../src", input_link_path) < 0 ||
+        write_file(profile_path, symlink_profile_json) < 0) goto done;
+    tm_profile_free(profile);
+    profile = NULL;
+    if (tm_profile_load(profile_path, &profile) < 0) goto done;
+    command_result = -1;
+    if (tm_backend_run(profile, temporary, repository_root, NULL, 0, command,
+                       0, NULL, &command_result) != 0 || command_result != -1) {
+        fprintf(stderr, "backend accepted a symlinked profile input root\n");
+        goto done;
+    }
+    stream = fopen(log_path, "r");
+    if (stream == NULL || fgets(log_contents, sizeof(log_contents), stream) ==
+                          NULL || fgets(log_contents + 6,
+                          sizeof(log_contents) - 6, stream) == NULL ||
+        fgets(marker_contents, sizeof(marker_contents), stream) != NULL) {
+        if (stream != NULL) fclose(stream);
+        fprintf(stderr, "backend launched Bubblewrap for an unsafe input root\n");
+        goto done;
+    }
+    fclose(stream);
     status = 0;
 done:
     if (restore_umask) (void)umask(original_umask);
@@ -119,6 +155,7 @@ done:
     if (profile_path[0] != '\0') unlink(profile_path);
     if (log_path[0] != '\0') unlink(log_path);
     if (marker_path[0] != '\0') unlink(marker_path);
+    if (input_link_path[0] != '\0') unlink(input_link_path);
     rmdir(temporary);
     if (status != 0) fprintf(stderr, "backend test failed: %s\n",
                              strerror(errno));

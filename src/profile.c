@@ -140,6 +140,23 @@ static int disjoint_input_output_roots(const struct tm_json_value *inputs,
     return 1;
 }
 
+static int avoids_reserved_metadata(const struct tm_json_value *inputs,
+                                    const struct tm_json_value *outputs,
+                                    const struct tm_json_value *scratch)
+{
+    size_t index;
+    for (index = 0; index < tm_json_size(inputs); index++)
+        if (paths_overlap(tm_json_string_value(tm_json_array_get(
+                inputs, index)), ".tm")) return 0;
+    for (index = 0; index < tm_json_size(outputs); index++)
+        if (paths_overlap(tm_json_string_value(tm_json_array_get(
+                outputs, index)), ".tm")) return 0;
+    for (index = 0; index < tm_json_size(scratch); index++)
+        if (paths_overlap(tm_json_string_value(tm_json_array_get(
+                scratch, index)), "/workspace/.tm")) return 0;
+    return 1;
+}
+
 static int valid_environment(const struct tm_json_value *environment)
 {
     size_t i;
@@ -233,7 +250,10 @@ int tm_profile_load(const char *path, struct tm_profile **output)
         !valid_sorted_paths(get(profile->document, "output_roots"), 0) ||
         !valid_sorted_paths(get(profile->document, "scratch_roots"), 1) ||
         !disjoint_input_output_roots(get(profile->document, "input_roots"),
-                                     get(profile->document, "output_roots")))
+                                     get(profile->document, "output_roots")) ||
+        !avoids_reserved_metadata(get(profile->document, "input_roots"),
+                                  get(profile->document, "output_roots"),
+                                  get(profile->document, "scratch_roots")))
         goto invalid;
     if (tm_json_canonicalize(profile->document, &canonical,
                              &canonical_length) < 0 ||
@@ -297,6 +317,20 @@ const char *tm_profile_scratch_root(const struct tm_profile *profile,
     if (profile == NULL) return NULL;
     return tm_json_string_value(tm_json_array_get(
         get(profile->document, "scratch_roots"), index));
+}
+
+size_t tm_profile_input_root_count(const struct tm_profile *profile)
+{
+    return profile == NULL ? 0 :
+        tm_json_size(get(profile->document, "input_roots"));
+}
+
+const char *tm_profile_input_root(const struct tm_profile *profile,
+                                  size_t index)
+{
+    if (profile == NULL) return NULL;
+    return tm_json_string_value(tm_json_array_get(
+        get(profile->document, "input_roots"), index));
 }
 
 static int path_within_roots(const struct tm_json_value *roots,

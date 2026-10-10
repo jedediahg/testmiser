@@ -14,7 +14,11 @@ fi
 
 unshare_all=no
 die_with_parent=no
-readonly_workspace=no
+workspace_tmpfs=no
+workspace_readonly=no
+input_mount=no
+expected_input_mount=no
+whole_workspace_bind=no
 workspace_overlay=no
 readonly_runtime=no
 hidden_metadata=no
@@ -47,16 +51,31 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
             shift
             ;;
         --die-with-parent) die_with_parent=yes ;;
+        --remount-ro)
+            if [ "$2" = /workspace ]; then workspace_readonly=yes; fi
+            shift
+            ;;
         --overlay-src|--tmp-overlay) workspace_overlay=yes ;;
         --clearenv) clean_environment=yes ;;
         --ro-bind)
             if [ "$#" -lt 3 ]; then exit 90; fi
             if [ "$3" = / ]; then readonly_runtime=yes; fi
-            if [ "$3" = /workspace ]; then readonly_workspace=yes; fi
+            case "$3" in
+                /workspace) whole_workspace_bind=yes ;;
+                /workspace/*)
+                    input_mount=yes
+                    if [ "$3" = /workspace/src ]; then
+                        test "$2" = "$(pwd -P)/src" ||
+                            fail 'input root source differs from approved checkout path'
+                        expected_input_mount=yes
+                    fi
+                    ;;
+            esac
             shift 2
             ;;
         --tmpfs)
             if [ "$#" -lt 2 ]; then exit 90; fi
+            if [ "$2" = /workspace ]; then workspace_tmpfs=yes; fi
             if [ "$2" = /workspace/.tm ]; then hidden_metadata=yes; fi
             shift
             ;;
@@ -78,7 +97,11 @@ else
     test "$unshare_all" = yes || fail 'namespace isolation is missing'
 fi
 test "$die_with_parent" = yes || fail '--die-with-parent'
-test "$readonly_workspace" = yes || fail 'read-only workspace bind'
+test "$workspace_tmpfs" = yes || fail 'workspace tmpfs is missing'
+test "$workspace_readonly" = yes || fail 'workspace remount is not read-only'
+test "$input_mount" = yes || fail 'approved input roots are not mounted'
+test "$expected_input_mount" = yes || fail 'profile input root was not mounted at its canonical path'
+test "$whole_workspace_bind" = no || fail 'entire checkout is exposed'
 test "$workspace_overlay" = no || fail 'writable workspace overlay is present'
 test "$readonly_runtime" = yes || fail 'read-only runtime bind'
 test "$hidden_metadata" = yes || fail 'hidden metadata tmpfs'
