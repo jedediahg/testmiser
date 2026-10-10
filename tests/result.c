@@ -297,18 +297,23 @@ static int test_store(const unsigned char *record, size_t length,
                 O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
             if (filler_fd < 0 || close(filler_fd) < 0) goto done;
         }
+        stage = 14;
         if (tm_result_find(rootfd,
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 summary.verification_fingerprint, trust, &found,
                 &found_length, record_id) != -1 || found != NULL) goto done;
+        stage = 15;
         for (index = 0; index < 257; index++) {
             (void)snprintf(filler, sizeof(filler), "unrelated-%03zu", index);
             if (unlinkat(verifyfd, filler, 0) < 0) goto done;
         }
+        stage = 16;
     }
+    stage = 17;
     fd = openat(verifyfd, filename, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0 || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
         (st.st_mode & 0777) != 0644 || st.st_size != (off_t)length) goto done;
+    stage = 18;
     stored = malloc(length);
     if (stored == NULL) goto done;
     while (used < length) {
@@ -318,11 +323,14 @@ static int test_store(const unsigned char *record, size_t length,
         used += (size_t)n;
     }
     if (memcmp(stored, record, length) != 0) goto done;
+    stage = 19;
     close(fd); fd = -1;
     fd = openat(verifyfd, filename, O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0 || write(fd, "x", 1) != 1) goto done;
+    stage = 20;
     close(fd); fd = -1;
     if (tm_result_store(rootfd, record, length, record_id) == 0) goto done;
+    stage = 21;
 
     /* Refuse a symlink at the repository-controlled .tm boundary. */
     close(verifyfd); verifyfd = -1;
