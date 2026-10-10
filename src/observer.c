@@ -464,7 +464,13 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 48: /* shutdown */
     case 49: /* bind */
     case 50: /* listen */
+    case 51: /* getsockname */
+    case 52: /* getpeername */
     case 53: /* socketpair */
+    case 54: /* setsockopt */
+    case 55: /* getsockopt */
+    case 299: /* recvmmsg */
+    case 307: /* sendmmsg */
     case 288: /* accept4 */
         observer.saw_network = 1;
         return;

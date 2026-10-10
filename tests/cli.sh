@@ -4,6 +4,7 @@ set -eu
 tm_bin=${TM_BIN:-./build/tm}
 openat2_probe=${OPENAT2_PROBE:-./build/openat2_probe}
 open_mode_probe=${OPEN_MODE_PROBE:-./build/open_mode_probe}
+network_syscall_probe=${NETWORK_SYSCALL_PROBE:-./build/network_syscall_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -211,6 +212,9 @@ set -e
 test "$status" -eq 29
 grep -q 'tm: RUN:' "$tmp_dir/explain.err"
 if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
+    "$tm_bin" --explain -- "$network_syscall_probe" \
+        2>"$tmp_dir/network-syscalls.err"
+    grep -q 'socket or network operation observed' "$tmp_dir/network-syscalls.err"
     python_bin=$(command -v python3 || true)
     if [ -n "$python_bin" ]; then
         "$tm_bin" --explain -- "$python_bin" -c \
