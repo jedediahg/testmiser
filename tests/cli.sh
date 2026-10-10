@@ -192,8 +192,10 @@ grep -q 'portable backend is not enforced' "$tmp_dir/profile-approved.err"
 grep -q '^tm: command fingerprint: sha256:[0-9a-f]\{64\}$' \
     "$tmp_dir/profile-approved.err"
 if ! grep -q '^tm: context fingerprint: sha256:[0-9a-f]\{64\} (diagnostic only; reuse remains disabled)$' \
+    "$tmp_dir/profile-approved.err" &&
+   ! grep -q '^tm: context fingerprint: sha256:[0-9a-f]\{64\} (one reuse eligibility input)$' \
     "$tmp_dir/profile-approved.err"; then
-grep -q '^tm: reuse rejected: .*could not be fingerprinted (' \
+    grep -q '^tm: reuse rejected: .*could not be fingerprinted (' \
         "$tmp_dir/profile-approved.err"
 fi
 "$tm_bin" --profile "$tmp_dir/profile.json" \
