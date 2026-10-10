@@ -48,6 +48,16 @@ test:
 portable_acceptance:
   stage: test
   interruptible: true
+  rules:
+    - changes:
+        - src/**/*
+        - include/**/*
+        - tests/**/*
+        - scripts/**/*
+        - docs/spec/**/*
+        - Makefile
+        - .gitlab-ci.yml
+        - .github/workflows/ci.yml
   tags:
     - linux-bwrap
   needs:

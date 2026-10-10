@@ -11,6 +11,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    outputs:
+      results_only: ${{ steps.verify.outputs.results_only }}
     env:
       TM_REQUIRE_PTRACE: "1"
     steps:
@@ -18,6 +20,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Verify source changes and result evidence
+        id: verify
         env:
           TM_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           TM_DIFF_HEAD: ${{ github.sha }}
@@ -31,6 +34,7 @@ jobs:
               results_only=true
             fi
           fi
+          echo "results_only=$results_only" >> "$GITHUB_OUTPUT"
 
           if [[ "$results_only" == true ]]; then
             echo "Result-only change: validating trusted evidence without running unrelated tests."
@@ -45,6 +49,7 @@ jobs:
 
   portable-acceptance:
     needs: test
+    if: needs.test.outputs.results_only != 'true'
     runs-on: ${{ vars.TM_PORTABLE_ACCEPTANCE_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
