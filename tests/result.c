@@ -124,9 +124,11 @@ static int test_store(const unsigned char *record, size_t length,
     int rootfd = -1, clonefd = -1, sharedfd = -1, tmfd = -1;
     int resultsfd = -1, commandfd = -1;
     int verifyfd = -1, snapshot_rootfd = -1, fd = -1, result = -1;
+    int stage = 1;
     if (mkdtemp(root) == NULL || mkdtemp(clone) == NULL ||
         mkdtemp(shared_store) == NULL ||
         mkdtemp(outside) == NULL) goto done;
+    stage = 2;
     rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (rootfd < 0 || tm_result_inspect(record, length, &summary, record_id) < 0 ||
         strcmp(record_id, expected_id) != 0 ||
@@ -147,6 +149,7 @@ static int test_store(const unsigned char *record, size_t length,
         memcmp(found, record, length) != 0 || strcmp(record_id, expected_id) != 0)
         goto done;
     free(found); found = NULL;
+    stage = 3;
     {
         const char *snapshot_paths[] = {"tests"};
         int snapshot_roots[1];
@@ -193,6 +196,7 @@ static int test_store(const unsigned char *record, size_t length,
         close(snapshot_rootfd); snapshot_rootfd = -1;
         tm_snapshot_free(input_snapshot); input_snapshot = NULL;
     }
+    stage = 4;
     if (tm_result_find_matching_inputs(rootfd, rootfd,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.profile_digest,
@@ -202,6 +206,7 @@ static int test_store(const unsigned char *record, size_t length,
         found_length != length || strcmp(record_id, expected_id) != 0)
         goto done;
     free(found); found = NULL;
+    stage = 5;
     if (tm_result_find_matching_inputs(rootfd, rootfd,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.profile_digest,
@@ -225,6 +230,7 @@ static int test_store(const unsigned char *record, size_t length,
         memcmp(found, record, length) != 0 || strcmp(record_id, expected_id) != 0)
         goto done;
     free(found); found = NULL;
+    stage = 6;
     if (tm_result_find_matching_inputs(sharedfd, clonefd,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.profile_digest,
@@ -248,6 +254,7 @@ static int test_store(const unsigned char *record, size_t length,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.verification_fingerprint, trust, &found, &found_length,
             record_id) != 1 || found != NULL) goto done;
+    stage = 7;
     fd = openat(clonefd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
     if (fd < 0) goto done;
     { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
@@ -260,6 +267,7 @@ static int test_store(const unsigned char *record, size_t length,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.verification_fingerprint, trust, &found, &found_length,
             record_id) != 1 || found != NULL) goto done;
+    stage = 8;
     fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
     if (fd < 0) goto done;
     { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
@@ -334,6 +342,9 @@ static int test_store(const unsigned char *record, size_t length,
     }
     result = 0;
 done:
+    if (result != 0)
+        fprintf(stderr, "result store test failed at stage %d: %s\n", stage,
+                strerror(errno));
     if (fd >= 0) close(fd);
     if (snapshot_rootfd >= 0) close(snapshot_rootfd);
     tm_snapshot_free(input_snapshot);
