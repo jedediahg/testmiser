@@ -14,6 +14,27 @@
 #include "tm/result.h"
 #include "tm/trust.h"
 
+static const unsigned char result_signature_domain[] = "tm-result-v2";
+
+static int signature_message(const unsigned char *payload, size_t payload_size,
+                             unsigned char **message, size_t *message_size)
+{
+    size_t domain_size = sizeof(result_signature_domain);
+    if (payload_size > SIZE_MAX - domain_size) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    *message = malloc(domain_size + payload_size);
+    if (*message == NULL) {
+        errno = ENOMEM;
+        return -1;
+    }
+    memcpy(*message, result_signature_domain, domain_size);
+    memcpy(*message + domain_size, payload, payload_size);
+    *message_size = domain_size + payload_size;
+    return 0;
+}
+
 static int object_put(struct tm_json_value *object, const char *key,
                       struct tm_json_value *value)
 {
@@ -232,6 +253,8 @@ int tm_result_create(const struct tm_verification_identity *identity,
     unsigned char signature_b64[EVP_ENCODE_LENGTH(TM_ED25519_SIGNATURE_SIZE)];
     unsigned char *payload_bytes = NULL;
     size_t payload_length = 0;
+    unsigned char *message = NULL;
+    size_t message_length = 0;
     unsigned char *envelope_bytes = NULL;
     size_t envelope_length = 0;
     unsigned char *record_with_lf = NULL;
@@ -253,8 +276,10 @@ int tm_result_create(const struct tm_verification_identity *identity,
     payload = make_payload(identity, trust_epoch, verification_fingerprint);
     if (payload == NULL ||
         tm_json_canonicalize(payload, &payload_bytes, &payload_length) < 0 ||
-        tm_ed25519_sign(private_key, payload_bytes, payload_length,
-                        signature) < 0) goto done;
+        signature_message(payload_bytes, payload_length, &message,
+                          &message_length) < 0 ||
+        tm_ed25519_sign(private_key, message, message_length, signature) < 0)
+        goto done;
     encoded_length = EVP_EncodeBlock(signature_b64, signature,
                                      TM_ED25519_SIGNATURE_SIZE);
     if (encoded_length != 88) { errno = EIO; goto done; }
@@ -296,6 +321,7 @@ done:
     tm_json_free(attestation);
     tm_json_free(envelope);
     free(payload_bytes);
+    free(message);
     free(envelope_bytes);
     free(record_with_lf);
     return result;
@@ -632,6 +658,8 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
     size_t canonical_envelope_length = 0;
     unsigned char *canonical_payload = NULL;
     size_t canonical_payload_length = 0;
+    unsigned char *message = NULL;
+    size_t message_length = 0;
     char actual_key_id[72];
     char actual_verification_fingerprint[72];
     int result = -1;
@@ -738,8 +766,10 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
     }
     if (tm_json_canonicalize(payload, &canonical_payload,
                              &canonical_payload_length) < 0 ||
-        tm_ed25519_verify(trusted_public_key, canonical_payload,
-                          canonical_payload_length, signature) < 0) {
+        signature_message(canonical_payload, canonical_payload_length,
+                          &message, &message_length) < 0 ||
+        tm_ed25519_verify(trusted_public_key, message, message_length,
+                          signature) < 0) {
         errno = EKEYREJECTED;
         goto done;
     }
@@ -752,6 +782,7 @@ done:
     free(inputs);
     free(canonical_envelope);
     free(canonical_payload);
+    free(message);
     return result;
 }
 

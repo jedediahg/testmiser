@@ -52,7 +52,7 @@ int main(void)
         "sha256:ba299d5d7bd04d93e635617e6d2e496248711a9fa93bf4360a98c706ad201622"
     };
     const char *expected_id =
-        "sha256:be570567c32c611183e878038c38f8970fba874b7ee15758597b45b11c52a88c";
+        "sha256:b81ff39af68adb02529c1c48e1b810d304e87383951c76c8b37273f002751290";
     EVP_PKEY *private_key = EVP_PKEY_new_raw_private_key_ex(
         NULL, "ED25519", NULL, seed, sizeof(seed));
     unsigned char *record = NULL;
@@ -79,8 +79,12 @@ int main(void)
 
     if (private_key == NULL ||
         tm_result_create(&identity, 3, private_key, &record, &record_length,
-                         record_id) != 0 ||
-        strcmp(record_id, expected_id) != 0 ||
+                         record_id) != 0) goto fail;
+    if (strcmp(record_id, expected_id) != 0) {
+        fprintf(stderr, "signed result record ID changed: %s\n", record_id);
+        goto fail;
+    }
+    if (
         record[record_length - 1] != '\n' ||
         tm_result_verify(record, record_length, private_key, &policy,
                          verified_id) != 0 ||
