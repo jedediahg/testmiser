@@ -2,6 +2,7 @@ image: debian:bookworm-slim
 
 variables:
   GIT_DEPTH: "0"
+  TM_REQUIRE_PTRACE: "1"
 
 workflow:
   rules:
@@ -35,8 +36,8 @@ test:
       if [ "$results_only" = true ]; then
         echo "Result-only change; skipping unrelated application tests."
       else
-        make clean test
-        make clean test CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
+        TM_REQUIRE_PTRACE=1 make clean test
+        TM_REQUIRE_PTRACE=1 make clean test CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
       fi
       if [ "$has_results" = true ]; then
         bash scripts/tm-ci-validate-results.sh

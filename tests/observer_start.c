@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <sys/syscall.h>
@@ -52,6 +53,12 @@ int main(void)
     if (report.candidate_count == 0 &&
         (report.ineligibility_reasons &
          TM_OBSERVER_INELIGIBLE_OBSERVER_FAILURE) != 0) {
+        if (getenv("TM_REQUIRE_PTRACE") != NULL &&
+            strcmp(getenv("TM_REQUIRE_PTRACE"), "1") == 0) {
+            fprintf(stderr,
+                "observer integration test requires ptrace, but tracing is unavailable\n");
+            return 1;
+        }
         puts("observer exec-boundary test skipped: ptrace unavailable");
         return 0;
     }
