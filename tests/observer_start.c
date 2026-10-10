@@ -27,6 +27,7 @@ int main(void)
         report.observation_complete == 0 ||
         tm_observe_and_run_with_fds(command, 0, NULL, "/workspace", NULL,
             0, 0, 0, "/bin/true", 1, &controlled_report) != 0 ||
+        !controlled_report.stable_input_view ||
         (controlled_report.ineligibility_reasons &
          TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT) != 0) {
         fprintf(stderr,

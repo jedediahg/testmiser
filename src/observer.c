@@ -1516,8 +1516,12 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                 TM_OBSERVER_INELIGIBLE_UNMODELED_ERROR;
         if (observer.saw_context)
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_CONTEXT;
+        report->stable_input_view = observer.controlled_runtime;
         if (!report->stable_input_view)
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW;
+        else
+            report->ineligibility_reasons &=
+                ~TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW;
         report->observation_complete = !observer.saw_observer_failure &&
             !observer.saw_outliving_descendant;
     }
