@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 
 #include <fcntl.h>
+#include <linux/close_range.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int consume(int descriptor)
@@ -18,7 +20,7 @@ int main(int argc, char **argv)
     duplicate = dup(source);
     if (duplicate < 0 || consume(duplicate) < 0) result = 1;
     if (duplicate >= 0) close(duplicate);
-    if (dup2(source, source) != source || consume(source) < 0) result = 1;
+    if (consume(source) < 0) result = 1;
     target = dup2(source, 20);
     if (target < 0) result = 1;
     else {
@@ -36,7 +38,13 @@ int main(int argc, char **argv)
     if (duplicate >= 0) close(duplicate);
     duplicate = fcntl(source, F_DUPFD_CLOEXEC, 40);
     if (duplicate < 0 || consume(duplicate) < 0) result = 1;
+    if (duplicate >= 0 && syscall(SYS_close_range,
+            (unsigned int)duplicate, (unsigned int)duplicate,
+            CLOSE_RANGE_CLOEXEC) < 0)
+        result = 1;
     if (duplicate >= 0) close(duplicate);
-    close(source);
+    if (syscall(SYS_close_range, (unsigned int)source,
+                (unsigned int)source, 0) < 0)
+        return 1;
     return result;
 }

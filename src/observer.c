@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #if defined(__linux__) && defined(__x86_64__)
+#include <linux/close_range.h>
 #include <linux/openat2.h>
 #include <sys/ptrace.h>
 #include <sys/user.h>
@@ -92,6 +93,9 @@ struct task_state {
     int pending_descriptor;
     int pending_duplication;
     int pending_close_on_exec;
+    int pending_close_range;
+    unsigned int pending_range_start;
+    unsigned int pending_range_end;
     char pending_path[TM_PATH_SIZE];
     size_t fd_count;
     struct fd_entry descriptors[TM_MAX_DESCRIPTORS];
@@ -547,6 +551,7 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     task->pending_descriptor = -1;
     task->pending_duplication = 0;
     task->pending_close_on_exec = 0;
+    task->pending_close_range = 0;
 
     switch (number) {
     case 2: /* open */
@@ -667,6 +672,17 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
                 registers->rsi == F_DUPFD_CLOEXEC;
         }
         return;
+    case 436: /* close_range: unshare mode is not modeled */
+        if ((registers->rdx & ~((unsigned long)CLOSE_RANGE_CLOEXEC)) != 0) {
+            reject_unsupported_syscall(number);
+            return;
+        }
+        task->pending_range_start = (unsigned int)registers->rdi;
+        task->pending_range_end = (unsigned int)registers->rsi;
+        task->pending_close_on_exec =
+            ((registers->rdx & CLOSE_RANGE_CLOEXEC) != 0);
+        task->pending_close_range = 1;
+        return;
     default:
         return;
     }
@@ -767,6 +783,8 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
             reject_unsupported_syscall(number);
         }
         return;
+    case 436: /* close_range */
+        return;
     case 9:  /* mmap */
         if (((int)regs->rdx & PROT_WRITE) != 0 &&
             ((int)regs->r10 & MAP_SHARED) != 0) {
@@ -852,6 +870,21 @@ static void syscall_stop(struct task_state *task)
             remember_descriptor(task, (int)result,
                 close_on_exec ? O_CLOEXEC : 0, source) < 0)
             mark_observer_failure();
+    }
+    if (task->pending_close_range && result == 0) {
+        size_t index = 0;
+        while (index < task->fd_count) {
+            int fd = task->descriptors[index].descriptor;
+            if ((unsigned int)fd < task->pending_range_start ||
+                (unsigned int)fd > task->pending_range_end) {
+                index++;
+            } else if (task->pending_close_on_exec) {
+                task->descriptors[index].flags |= O_CLOEXEC;
+                index++;
+            } else {
+                forget_descriptor(task, fd);
+            }
+        }
     }
     if (task->pending_path[0] != '\0' &&
         (task->syscall_number == 2 || task->syscall_number == 257 ||
