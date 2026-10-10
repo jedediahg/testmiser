@@ -6,7 +6,7 @@ LDLIBS ?= -lcrypto
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/tm
-SOURCES := src/main.c src/backend.c src/observer.c src/observer_report.c src/observed_inputs.c src/digest.c src/attestation.c src/key.c src/identity.c src/context.c src/input.c src/verification.c src/json.c src/result.c src/outputs.c src/trust.c src/validate.c src/profile.c src/repo.c src/clean.c src/lock.c src/local_store.c src/runtime.c
+SOURCES := src/main.c src/backend.c src/observer.c src/observer_report.c src/observed_inputs.c src/digest.c src/attestation.c src/key.c src/identity.c src/context.c src/input.c src/verification.c src/json.c src/result.c src/outputs.c src/trust.c src/validate.c src/profile.c src/repo.c src/clean.c src/lock.c src/local_store.c src/runtime.c src/snapshot.c
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
 .PHONY: all test clean
@@ -141,9 +141,9 @@ $(BUILD_DIR)/test_runtime: tests/runtime.c src/runtime.c src/digest.c include/tm
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/runtime.c src/runtime.c src/digest.c $(LDLIBS)
 
-$(BUILD_DIR)/test_backend: tests/backend.c tests/fake-bwrap.sh src/backend.c src/profile.c src/repo.c src/runtime.c src/json.c src/digest.c include/tm/backend.h include/tm/profile.h include/tm/runtime.h
+$(BUILD_DIR)/test_backend: tests/backend.c tests/fake-bwrap.sh src/backend.c src/profile.c src/repo.c src/runtime.c src/snapshot.c src/json.c src/digest.c include/tm/backend.h include/tm/profile.h include/tm/runtime.h include/tm/snapshot.h
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -DTM_TEST_BWRAP='"tests/fake-bwrap.sh"' -o $@ tests/backend.c src/backend.c src/profile.c src/repo.c src/runtime.c src/json.c src/digest.c $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -DTM_TEST_BWRAP='"tests/fake-bwrap.sh"' -o $@ tests/backend.c src/backend.c src/profile.c src/repo.c src/runtime.c src/snapshot.c src/json.c src/digest.c $(LDLIBS)
 
 $(BUILD_DIR)/test_observer_report: tests/observer_report.c src/observer_report.c include/tm/observer.h
 	@mkdir -p $(BUILD_DIR)

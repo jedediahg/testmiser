@@ -20,6 +20,7 @@
 #include "tm/profile.h"
 #include "tm/repo.h"
 #include "tm/runtime.h"
+#include "tm/snapshot.h"
 
 #ifndef TM_TEST_BWRAP
 #define BWRAP_PATH "/usr/bin/bwrap"
@@ -260,64 +261,9 @@ static int push_output_mount(struct argument_vector *arguments,
     return result;
 }
 
-static int open_profile_input(int repository_fd, const char *path)
-{
-    int current = fcntl(repository_fd, F_DUPFD_CLOEXEC, 3);
-    char *copy = strdup(path), *part;
-    if (current < 0 || copy == NULL) {
-        int saved = errno;
-        if (current >= 0) close(current);
-        free(copy);
-        errno = saved;
-        return -1;
-    }
-    part = copy;
-    while (part != NULL) {
-        struct stat status;
-        char *slash = strchr(part, '/');
-        int flags = O_PATH | O_CLOEXEC | O_NOFOLLOW;
-        int next;
-        if (slash != NULL) {
-            *slash = '\0';
-            flags |= O_DIRECTORY;
-        }
-        next = openat(current, part, flags);
-        if (next < 0) goto fail;
-        if (fstat(next, &status) < 0) {
-            int saved = errno;
-            close(next);
-            errno = saved;
-            goto fail;
-        }
-        if (S_ISLNK(status.st_mode)) {
-            close(next);
-            errno = ELOOP;
-            goto fail;
-        }
-        if ((!S_ISDIR(status.st_mode) && !S_ISREG(status.st_mode)) ||
-            (slash != NULL && !S_ISDIR(status.st_mode))) {
-            close(next);
-            errno = EOPNOTSUPP;
-            goto fail;
-        }
-        close(current);
-        current = next;
-        part = slash == NULL ? NULL : slash + 1;
-    }
-    free(copy);
-    return current;
-fail:
-    {
-        int saved = errno;
-        close(current);
-        free(copy);
-        errno = saved;
-    }
-    return -1;
-}
-
 static int push_input_mount(struct argument_vector *arguments,
-                            int repository_fd, const char *path)
+                            const struct tm_snapshot *snapshot,
+                            size_t index, const char *path)
 {
     size_t guest_length = strlen(GUEST_WORKSPACE) + strlen(path) + 2;
     char *guest = malloc(guest_length);
@@ -328,12 +274,55 @@ static int push_input_mount(struct argument_vector *arguments,
         errno = EIO;
         return -1;
     }
-    descriptor = open_profile_input(repository_fd, path);
+    descriptor = tm_snapshot_open_root(snapshot, index);
     if (descriptor < 0) { free(guest); return -1; }
     result = push_readonly_bind_fd(arguments, descriptor, guest);
     if (result < 0) close(descriptor);
     free(guest);
     return result;
+}
+
+static int input_parent_was_created(const struct tm_profile *profile,
+                                    size_t root_index, const char *path,
+                                    size_t prefix_length)
+{
+    size_t previous;
+    for (previous = 0; previous < root_index; previous++) {
+        const char *prior = tm_profile_input_root(profile, previous);
+        if (strncmp(prior, path, prefix_length) == 0 &&
+            (prior[prefix_length] == '\0' || prior[prefix_length] == '/'))
+            return 1;
+    }
+    return 0;
+}
+
+static int push_input_parent_directories(struct argument_vector *arguments,
+                                         const struct tm_profile *profile)
+{
+    size_t root_index;
+    for (root_index = 0; root_index < tm_profile_input_root_count(profile);
+         root_index++) {
+        const char *path = tm_profile_input_root(profile, root_index);
+        const char *slash = path;
+        while ((slash = strchr(slash, '/')) != NULL) {
+            size_t prefix_length = (size_t)(slash - path);
+            size_t guest_length = strlen(GUEST_WORKSPACE) + prefix_length + 2;
+            char *guest;
+            int result;
+            if (!input_parent_was_created(profile, root_index, path,
+                                          prefix_length)) {
+                guest = malloc(guest_length);
+                if (guest == NULL) return -1;
+                (void)snprintf(guest, guest_length, "%s/%.*s",
+                               GUEST_WORKSPACE, (int)prefix_length, path);
+                result = push_pair(arguments, "--dir", guest);
+                free(guest);
+                if (result < 0) return -1;
+            }
+            slash++;
+        }
+    }
+    return 0;
 }
 
 static int scratch_contains(const struct tm_profile *profile,
@@ -400,7 +389,7 @@ static int add_environment(struct argument_vector *arguments,
 static int build_arguments(struct argument_vector *arguments,
                            const struct tm_profile *profile,
                            const char *runtime_root,
-                           int repository_fd,
+                           const struct tm_snapshot *snapshot,
                            const char *working_directory,
                            const char *const *output_roots,
                            size_t output_root_count,
@@ -420,9 +409,15 @@ static int build_arguments(struct argument_vector *arguments,
         errno = EOVERFLOW; return -1;
     }
     capacity += 3 * tm_profile_environment_count(profile);
-    if (capacity > SIZE_MAX - 4 || tm_profile_input_root_count(profile) >
-        (SIZE_MAX - capacity - 4) / 3) { errno = EOVERFLOW; return -1; }
-    capacity += 3 * tm_profile_input_root_count(profile) + 4;
+    if (capacity > SIZE_MAX - 4) { errno = EOVERFLOW; return -1; }
+    capacity += 4;
+    for (index = 0; index < tm_profile_input_root_count(profile); index++) {
+        size_t path_length = strlen(tm_profile_input_root(profile, index));
+        if (path_length > (SIZE_MAX - capacity - 3) / 2) {
+            errno = EOVERFLOW; return -1;
+        }
+        capacity += 2 * path_length + 3;
+    }
     if (tm_profile_scratch_root_count(profile) > (SIZE_MAX - capacity) / 2) {
         errno = EOVERFLOW; return -1;
     }
@@ -479,8 +474,9 @@ static int build_arguments(struct argument_vector *arguments,
         push_argument(arguments, "/dev/null") < 0 ||
         push_argument(arguments, "/dev/null") < 0)
         return -1;
+    if (push_input_parent_directories(arguments, profile) < 0) return -1;
     for (index = 0; index < tm_profile_input_root_count(profile); index++)
-        if (push_input_mount(arguments, repository_fd,
+        if (push_input_mount(arguments, snapshot, index,
                              tm_profile_input_root(profile, index)) < 0)
             return -1;
     for (index = 0; index < tm_profile_scratch_root_count(profile); index++)
@@ -622,7 +618,10 @@ int tm_backend_run(const struct tm_profile *profile,
                    struct tm_observer_report *report, int *command_result)
 {
     struct argument_vector arguments = {0};
+    struct tm_snapshot *snapshot = NULL;
+    const char **input_paths = NULL;
     char *runtime = NULL, *current = NULL, *working_directory = NULL;
+    size_t input_count, index;
     int repository_fd = -1, built, result = 0;
 
     if (profile == NULL || runtime_root == NULL || repository_root == NULL ||
@@ -641,7 +640,22 @@ int tm_backend_run(const struct tm_profile *profile,
     if (working_directory == NULL) goto done;
     repository_fd = open_directory_without_symlinks(repository_root);
     if (repository_fd < 0) goto done;
-    built = build_arguments(&arguments, profile, runtime, repository_fd,
+    input_count = tm_profile_input_root_count(profile);
+    if (input_count > 0) {
+        input_paths = calloc(input_count, sizeof(*input_paths));
+        if (input_paths == NULL) goto done;
+        for (index = 0; index < input_count; index++)
+            input_paths[index] = tm_profile_input_root(profile, index);
+        if (tm_snapshot_create(repository_fd, input_paths, input_count,
+                               &snapshot) < 0) {
+            if (explain)
+                fprintf(stderr,
+                    "tm: RUN: approved inputs could not be snapshotted (%s); using uncached native execution\n",
+                    strerror(errno));
+            goto done;
+        }
+    }
+    built = build_arguments(&arguments, profile, runtime, snapshot,
                             working_directory, output_roots,
                             output_root_count, command);
     close(repository_fd);
@@ -670,6 +684,8 @@ int tm_backend_run(const struct tm_profile *profile,
 done:
     if (repository_fd >= 0) close(repository_fd);
     free_arguments(&arguments);
+    tm_snapshot_free(snapshot);
+    free(input_paths);
     free(working_directory);
     free(current);
     free(runtime);

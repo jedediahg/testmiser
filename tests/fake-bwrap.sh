@@ -18,6 +18,7 @@ workspace_tmpfs=no
 workspace_readonly=no
 input_mount=no
 expected_input_mount=no
+workspace_build_dir=no
 whole_workspace_bind=no
 workspace_overlay=no
 readonly_runtime=no
@@ -66,7 +67,17 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
                 /workspace) whole_workspace_bind=yes ;;
                 /workspace/*)
                     input_mount=yes
-                    if [ "$3" = /workspace/src ]; then
+                    if [ "$3" = /workspace/build/tm-backend-input ]; then
+                        test "$(cat "/proc/$$/fd/$2/input.txt")" = original ||
+                            fail 'input mount does not contain the staged snapshot'
+                        test "$(cat "/proc/$$/fd/$2/nested/nested.txt")" = nested ||
+                            fail 'nested input was not copied into the snapshot'
+                        test "$(cat "/proc/$$/fd/$2/readonly/locked.txt")" = locked ||
+                            fail 'read-only input directory was not copied'
+                        test "$(stat -c '%a' "/proc/$$/fd/$2/readonly")" = 500 ||
+                            fail 'input directory mode was not preserved'
+                        test "$(readlink "/proc/$$/fd/$2/link")" = input.txt ||
+                            fail 'relative symlink was not preserved in the snapshot'
                         expected_input_mount=yes
                     fi
                     ;;
@@ -80,11 +91,7 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
                 /workspace) whole_workspace_bind=yes ;;
                 /workspace/*)
                     input_mount=yes
-                    if [ "$3" = /workspace/src ]; then
-                        test "$2" = "$(pwd -P)/src" ||
-                            fail 'input root source differs from approved checkout path'
-                        expected_input_mount=yes
-                    fi
+                    fail 'approved input root bypassed its staged descriptor'
                     ;;
             esac
             shift 2
@@ -93,6 +100,10 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
             if [ "$#" -lt 2 ]; then exit 90; fi
             if [ "$2" = /workspace ]; then workspace_tmpfs=yes; fi
             if [ "$2" = /workspace/.tm ]; then hidden_metadata=yes; fi
+            shift
+            ;;
+        --dir)
+            if [ "$2" = /workspace/build ]; then workspace_build_dir=yes; fi
             shift
             ;;
     esac
@@ -117,6 +128,7 @@ test "$workspace_tmpfs" = yes || fail 'workspace tmpfs is missing'
 test "$workspace_readonly" = yes || fail 'workspace remount is not read-only'
 test "$input_mount" = yes || fail 'approved input roots are not mounted'
 test "$expected_input_mount" = yes || fail 'profile input root was not mounted at its canonical path'
+test "$workspace_build_dir" = yes || fail 'input root parent directory was not created'
 test "$whole_workspace_bind" = no || fail 'entire checkout is exposed'
 test "$workspace_overlay" = no || fail 'writable workspace overlay is present'
 test "$readonly_runtime" = yes || fail 'read-only runtime fd bind'
@@ -131,9 +143,15 @@ if [ "$1" = "/bin/sh" ] && [ "$4" = "tm-profile-view-probe" ]; then
         *"/workspace/.tm/"*"/.tm-runtime-write-probe-"*".tm-workspace-write-probe-"*"for scratch do"*) ;;
         *) fail 'profile view probe omits metadata/runtime/workspace/scratch checks' ;;
     esac
+    if [ "${TM_FAKE_BWRAP_INPUT_FILE+x}" = x ]; then
+        printf changed >"$TM_FAKE_BWRAP_INPUT_FILE"
+    fi
     printf 'probe\n' >>"$TM_FAKE_BWRAP_LOG"
     exit 0
 else
     printf 'command\n' >>"$TM_FAKE_BWRAP_LOG"
+fi
+if [ "${TM_FAKE_BWRAP_INPUT_FILE+x}" = x ]; then
+    printf changed >"$TM_FAKE_BWRAP_INPUT_FILE"
 fi
 exec "$@"

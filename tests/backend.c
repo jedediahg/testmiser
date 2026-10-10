@@ -32,7 +32,7 @@ int main(void)
         "\"runtime_digest\":\"%s\","
         "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
         "\"privacy_class\":\"public\",\"environment\":{},"
-        "\"input_roots\":[\"src\"],\"output_roots\":[],"
+        "\"input_roots\":[\"build/tm-backend-input\"],\"output_roots\":[],"
         "\"scratch_roots\":[\"/tmp\"]}";
     static const char symlink_profile_template[] =
         "{\"schema_version\":1,\"repository_id\":\"backend-test\","
@@ -48,6 +48,10 @@ int main(void)
     char profile_json[1024], symlink_profile_json[1024];
     char marker_path[512] = {0};
     char input_link_path[512] = {0};
+    char input_root_path[512] = {0}, input_file_path[512] = {0};
+    char nested_root_path[512] = {0}, nested_file_path[512] = {0};
+    char readonly_root_path[512] = {0}, readonly_file_path[512] = {0};
+    char input_symlink_path[512] = {0};
     char *repository_root = NULL;
     char *command[] = {"/bin/sh", "-c", "printf called >> \"$1\"", "sh",
                        marker_path, NULL};
@@ -79,8 +83,33 @@ int main(void)
     if (repository_root == NULL ||
         snprintf(input_link_path, sizeof(input_link_path),
                  "%s/build/.tm-backend-root-link", repository_root) < 0 ||
+        snprintf(input_root_path, sizeof(input_root_path),
+                 "%s/build/tm-backend-input", repository_root) < 0 ||
+        snprintf(input_file_path, sizeof(input_file_path),
+                 "%s/build/tm-backend-input/input.txt", repository_root) < 0 ||
+        snprintf(nested_root_path, sizeof(nested_root_path),
+                 "%s/build/tm-backend-input/nested", repository_root) < 0 ||
+        snprintf(nested_file_path, sizeof(nested_file_path),
+                 "%s/build/tm-backend-input/nested/nested.txt",
+                 repository_root) < 0 ||
+        snprintf(readonly_root_path, sizeof(readonly_root_path),
+                 "%s/build/tm-backend-input/readonly", repository_root) < 0 ||
+        snprintf(readonly_file_path, sizeof(readonly_file_path),
+                 "%s/build/tm-backend-input/readonly/locked.txt",
+                 repository_root) < 0 ||
+        snprintf(input_symlink_path, sizeof(input_symlink_path),
+                 "%s/build/tm-backend-input/link", repository_root) < 0 ||
         strlen(repository_root) + sizeof("/build/.tm-backend-root-link") >
             sizeof(input_link_path) ||
+        mkdir(input_root_path, 0700) < 0 ||
+        mkdir(nested_root_path, 0700) < 0 ||
+        mkdir(readonly_root_path, 0700) < 0 ||
+        write_file(input_file_path, "original") < 0 ||
+        write_file(nested_file_path, "nested") < 0 ||
+        write_file(readonly_file_path, "locked") < 0 ||
+        chmod(readonly_root_path, 0500) < 0 ||
+        symlink("input.txt", input_symlink_path) < 0 ||
+        setenv("TM_FAKE_BWRAP_INPUT_FILE", input_file_path, 1) < 0 ||
         write_file(profile_path, profile_json) < 0 ||
         setenv("TM_FAKE_BWRAP_LOG", log_path, 1) < 0 ||
         tm_profile_load(profile_path, &profile) < 0) goto done;
@@ -115,6 +144,15 @@ int main(void)
         }
         goto done;
     }
+    stream = fopen(input_file_path, "r");
+    if (stream == NULL || fgets(marker_contents, sizeof(marker_contents),
+                                stream) == NULL ||
+        strcmp(marker_contents, "changed") != 0) {
+        if (stream != NULL) fclose(stream);
+        fprintf(stderr, "fake Bubblewrap did not mutate the source input\n");
+        goto done;
+    }
+    fclose(stream);
     stream = fopen(log_path, "r");
     if (stream == NULL || fgets(log_contents, sizeof(log_contents), stream) ==
                           NULL || fgets(log_contents + 6,
@@ -135,7 +173,7 @@ int main(void)
         fprintf(stderr, "backend probe or wrapped command ran incorrectly\n");
         goto done;
     }
-    if (symlink("../src", input_link_path) < 0 ||
+    if (symlink("tm-backend-input", input_link_path) < 0 ||
         write_file(profile_path, symlink_profile_json) < 0) goto done;
     tm_profile_free(profile);
     profile = NULL;
@@ -167,6 +205,16 @@ done:
     if (log_path[0] != '\0') unlink(log_path);
     if (marker_path[0] != '\0') unlink(marker_path);
     if (input_link_path[0] != '\0') unlink(input_link_path);
+    if (input_file_path[0] != '\0') unlink(input_file_path);
+    if (nested_file_path[0] != '\0') unlink(nested_file_path);
+    if (input_symlink_path[0] != '\0') unlink(input_symlink_path);
+    if (readonly_root_path[0] != '\0') {
+        (void)chmod(readonly_root_path, 0700);
+        if (readonly_file_path[0] != '\0') unlink(readonly_file_path);
+        rmdir(readonly_root_path);
+    }
+    if (nested_root_path[0] != '\0') rmdir(nested_root_path);
+    if (input_root_path[0] != '\0') rmdir(input_root_path);
     if (runtime_path[0] != '\0') rmdir(runtime_path);
     rmdir(temporary);
     if (status != 0) fprintf(stderr, "backend test failed: %s\n",
