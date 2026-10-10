@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, public interfaces in `include/tm/`, and CLI/unit checks in `tests/`. `docs/implementation-notes.md` records implementation decisions. Observer, digest, Ed25519, fingerprint, and bounded JSON/JCS foundations exist; signed record validation, trust policy, and cache skips are not implemented.
+The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, public interfaces in `include/tm/`, and CLI/unit checks in `tests/`. `docs/implementation-notes.md` records implementation decisions. Observer, digest, Ed25519, fingerprints, bounded JSON/JCS, and output-free signed record validation exist as library foundations; policy loading, controlled execution, and cache skips are not implemented.
 
 ## Build, Test, and Development Commands
 

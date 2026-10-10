@@ -1,6 +1,6 @@
 # Specification Review: Implementation Decisions
 
-The [technical specification](spec/tm-test-memoization-technical-specification.md) now targets portable reuse across local worktrees and developer workstations, GitLab pipelines, and GitHub Actions workflows. This supersedes the earlier local-receipt-only design. The implementation now includes a Linux x86-64 observer prototype, OpenSSL SHA-256 and Ed25519 primitives, command and verification fingerprints, and a bounded JSON/JCS parser/serializer foundation. Signed record schema validation, operator trust policy, controlled execution profiles, and cache reuse remain unimplemented; every command still executes. This document describes target decisions, not completed functionality.
+The [technical specification](spec/tm-test-memoization-technical-specification.md) now targets portable reuse across local worktrees and developer workstations, GitLab pipelines, and GitHub Actions workflows. This supersedes the earlier local-receipt-only design. The implementation now includes a Linux x86-64 observer prototype, OpenSSL SHA-256 and Ed25519 primitives, command and verification fingerprints, bounded JSON/JCS support, and create/verify APIs for signed records with empty output manifests. Trust-policy file loading, nonempty output records/restoration, controlled execution profiles, complete dependency observation, and cache reuse remain unimplemented; every command still executes. This document describes target decisions, not completed functionality.
 
 ## 1. Trust and provenance — portable signed evidence
 
@@ -44,7 +44,7 @@ Follow section 52:
 
 1. Preserve the wrapper contract while developing the observer with skips disabled. The observer, SHA-256, Ed25519, and command/verification fingerprint primitives are present, but the observer does not yet produce complete stable input manifests.
 2. Establish the reference portable execution profile/backend and rejection rules.
-3. Implement canonical schema v2 record encoding/validation, public trust policy, immutable result storage, and required output restoration. Cryptographic and fingerprint primitives alone do not authorize reuse.
+3. Complete schema v2 record encoding/validation (current API rejects nonempty outputs), then implement operator policy loading, immutable result storage, and required output restoration. Cryptographic and fingerprint primitives alone do not authorize reuse.
 4. Demonstrate checked-in-result reuse across clean worktrees/workstations and both GitLab and GitHub, using verification-only consumers.
 5. Implement common result distribution and optional coordination, including failure recovery and invalidation.
 6. Pilot actual workloads and measure eligibility, warm hits, validation cost, and concurrent duplicate rate.

@@ -16,7 +16,7 @@ make clean    # remove generated build files
 
 Build requires a C11 compiler, GNU Make, and OpenSSL development headers/libraries (EVP, `-lcrypto`).
 
-The current executable is a transparent process wrapper with a Linux x86-64 `ptrace` observer prototype, OpenSSL-backed SHA-256/Ed25519 primitives, command and verification fingerprints, and a bounded strict JSON/JCS foundation. It supports `--help`, `--force`, and `--explain`, launches the command directly without a shell, and returns the child's exit code (or 128 plus its terminating signal). With `--explain`, the prototype reports observed executable, file, and metadata path candidates plus rejection reasons. If tracing is unavailable, it runs the command uncached. Every invocation still runs: signed result records, operator trust policy, portable execution profiles, output restoration, and cache skips are not implemented.
+The current executable is a transparent process wrapper with a Linux x86-64 `ptrace` observer prototype, OpenSSL-backed SHA-256/Ed25519 primitives, command and verification fingerprints, a bounded strict JSON/JCS foundation, and a library API for creating and validating signed output-free v2 records against explicit policy expectations. It supports `--help`, `--force`, and `--explain`, launches the command directly without a shell, and returns the child's exit code (or 128 plus its terminating signal). With `--explain`, the prototype reports observed executable, file, and metadata path candidates plus rejection reasons. If tracing is unavailable, it runs the command uncached. Every invocation still runs: operator policy loading, controlled profiles, complete observation/input validation, output restoration, cache lookup, and skips are not implemented.
 
 ## Intended usage
 
