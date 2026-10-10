@@ -84,6 +84,12 @@ int main(void)
         resolved == NULL) goto done;
     EVP_PKEY_free(resolved);
     resolved = NULL;
+    if (tm_trust_policy_approves_profile(policy, "sample", profile) != 0 ||
+        tm_trust_policy_approves_profile(policy, "sample", wrong_profile) == 0 ||
+        tm_trust_policy_approves_profile(policy, "missing", profile) == 0) {
+        fprintf(stderr, "trust policy profile approval mismatch\n");
+        goto done;
+    }
 
     if (tm_trust_policy_authorize(policy, "other", profile, key_id, 2, 2,
                                   &resolved) == 0 ||

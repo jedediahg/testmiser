@@ -22,6 +22,10 @@ int tm_json_object_set(struct tm_json_value *object, const char *key,
 enum tm_json_type tm_json_typeof(const struct tm_json_value *value);
 const struct tm_json_value *tm_json_object_get(
     const struct tm_json_value *object, const char *key);
+const char *tm_json_object_key_at(const struct tm_json_value *object,
+                                  size_t index);
+const struct tm_json_value *tm_json_object_value_at(
+    const struct tm_json_value *object, size_t index);
 const struct tm_json_value *tm_json_array_get(
     const struct tm_json_value *array, size_t index);
 size_t tm_json_size(const struct tm_json_value *value);

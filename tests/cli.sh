@@ -20,6 +20,40 @@ set +e
 status=$?
 set -e
 test "$status" -eq 125
+
+printf '{\n' >"$tmp_dir/bad-profile.json"
+set +e
+"$tm_bin" --profile "$tmp_dir/bad-profile.json" --trust-policy "$tmp_dir/missing-policy.json" \
+    -- sh -c 'touch "$1"' sh "$tmp_dir/profile-child-ran" \
+    >"$tmp_dir/profile.err" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+test ! -e "$tmp_dir/profile-child-ran"
+
+cat >"$tmp_dir/profile.json" <<'EOF'
+{"schema_version":1,"repository_id":"sample","backend_contract":"bubblewrap-linux-x86_64-v1","runtime_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","workspace_path":"/workspace","deterministic":true,"privacy_class":"public","environment":{"LANG":"C"},"input_roots":["src","tests"],"output_roots":[],"scratch_roots":["/tmp"]}
+EOF
+cat >"$tmp_dir/policy.json" <<'EOF'
+{"schema_version":1,"repositories":[{"repository_id":"sample","minimum_trust_epoch":1,"allowed_semantics":[2],"profiles":["sha256:9594caa6d198b87e03b0dbfd5a869f6096ad69f889dd06bf10b8094cabb716dc"],"keys":[],"revoked_key_ids":[]}]}
+EOF
+chmod 600 "$tmp_dir/policy.json"
+set +e
+"$tm_bin" --profile "$tmp_dir/profile.json" --trust-policy "$tmp_dir/policy.json" \
+    --explain -- sh -c 'exit 17' 2>"$tmp_dir/profile-approved.err"
+status=$?
+set -e
+test "$status" -eq 17
+grep -q 'portable backend is unavailable' "$tmp_dir/profile-approved.err"
+sed 's/"LANG":"C"/"LANG":"C.UTF-8"/' "$tmp_dir/profile.json" >"$tmp_dir/unapproved-profile.json"
+set +e
+"$tm_bin" --profile "$tmp_dir/unapproved-profile.json" --trust-policy "$tmp_dir/policy.json" \
+    -- sh -c 'touch "$1"' sh "$tmp_dir/unapproved-child-ran" \
+    >"$tmp_dir/unapproved.out" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+test ! -e "$tmp_dir/unapproved-child-ran"
 chmod 600 "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bad.tm.json"
 
 "$tm_bin" --help >"$tmp_dir/help.out"

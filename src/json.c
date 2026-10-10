@@ -167,6 +167,19 @@ const struct tm_json_value *tm_json_object_get(const struct tm_json_value *o,
             return o->data.object.items[i].value;
     return NULL;
 }
+const char *tm_json_object_key_at(const struct tm_json_value *o, size_t i)
+{
+    if (o == NULL || o->type != TM_JSON_OBJECT || i >= o->data.object.count)
+        return NULL;
+    return o->data.object.items[i].key;
+}
+const struct tm_json_value *tm_json_object_value_at(
+    const struct tm_json_value *o, size_t i)
+{
+    if (o == NULL || o->type != TM_JSON_OBJECT || i >= o->data.object.count)
+        return NULL;
+    return o->data.object.items[i].value;
+}
 const struct tm_json_value *tm_json_array_get(const struct tm_json_value *a,
                                                size_t i)
 {

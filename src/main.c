@@ -4,22 +4,28 @@
 #include <string.h>
 
 #include "tm/observer.h"
+#include "tm/profile.h"
 #include "tm/tm.h"
+#include "tm/trust.h"
 #include "tm/validate.h"
 
 struct options {
     int force;
     int explain;
+    const char *profile_path;
+    const char *trust_policy_path;
     int command_index;
 };
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tm [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
+    fprintf(stream, "Usage: tm [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
     fprintf(stream, "  --explain  explain why the command is running\n");
+    fprintf(stream, "  --profile FILE       select an approved profile (currently uncached)\n");
+    fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
     fprintf(stream, "  --help     show this help\n");
 }
 
@@ -29,6 +35,8 @@ static int parse_options(int argc, char **argv, struct options *options)
 
     options->force = 0;
     options->explain = 0;
+    options->profile_path = NULL;
+    options->trust_policy_path = NULL;
     options->command_index = -1;
 
     for (index = 1; index < argc; index++) {
@@ -40,6 +48,17 @@ static int parse_options(int argc, char **argv, struct options *options)
             options->force = 1;
         } else if (strcmp(argv[index], "--explain") == 0) {
             options->explain = 1;
+        } else if (strcmp(argv[index], "--profile") == 0 ||
+                   strcmp(argv[index], "--trust-policy") == 0) {
+            const char *option = argv[index];
+            const char **destination = strcmp(option, "--profile") == 0 ?
+                &options->profile_path : &options->trust_policy_path;
+            if (*destination != NULL || index + 1 >= argc ||
+                strcmp(argv[index + 1], "--") == 0) {
+                fprintf(stderr, "tm: missing or repeated value for %s\n", option);
+                return -1;
+            }
+            *destination = argv[++index];
         } else if (strcmp(argv[index], "--help") == 0 ||
                    strcmp(argv[index], "-h") == 0) {
             print_usage(stdout);
@@ -63,7 +82,10 @@ static int parse_options(int argc, char **argv, struct options *options)
 int main(int argc, char **argv)
 {
     struct options options;
+    struct tm_profile *profile = NULL;
+    struct tm_trust_policy *trust_policy = NULL;
     int parse_result;
+    int result;
 
     if (argc > 1 && strcmp(argv[1], "validate") == 0)
         return tm_validate_main(argc, argv);
@@ -72,6 +94,32 @@ int main(int argc, char **argv)
         return parse_result > 0 ? 0 : TM_EXIT_INTERNAL_ERROR;
     }
 
+    if (options.trust_policy_path != NULL &&
+        tm_trust_policy_load(options.trust_policy_path, &trust_policy) < 0) {
+        fprintf(stderr, "tm: invalid trust policy: %s\n",
+                options.trust_policy_path);
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    if (options.profile_path != NULL) {
+        if (tm_profile_load(options.profile_path, &profile) < 0) {
+            fprintf(stderr, "tm: invalid profile: %s\n", options.profile_path);
+            tm_trust_policy_free(trust_policy);
+            return TM_EXIT_INTERNAL_ERROR;
+        }
+        if (trust_policy == NULL ||
+            tm_trust_policy_approves_profile(trust_policy,
+                tm_profile_repository_id(profile), tm_profile_digest(profile)) < 0) {
+            fprintf(stderr, "tm: profile is not approved by trust policy\n");
+            tm_profile_free(profile);
+            tm_trust_policy_free(trust_policy);
+            return TM_EXIT_INTERNAL_ERROR;
+        }
+        if (options.explain)
+            fprintf(stderr, "tm: RUN: profile approved; portable backend is unavailable, so reuse is disabled\n");
+    }
     (void) options.force;
-    return tm_observe_and_run(&argv[options.command_index], options.explain);
+    result = tm_observe_and_run(&argv[options.command_index], options.explain);
+    tm_profile_free(profile);
+    tm_trust_policy_free(trust_policy);
+    return result;
 }

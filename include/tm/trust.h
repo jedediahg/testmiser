@@ -31,6 +31,11 @@ int tm_trust_policy_authorize(const struct tm_trust_policy *policy,
                               uint64_t semantics_version,
                               EVP_PKEY **public_key);
 
+/* Check whether an operator policy approves this repository/profile pair. */
+int tm_trust_policy_approves_profile(const struct tm_trust_policy *policy,
+                                     const char *repository_id,
+                                     const char *profile_digest);
+
 /* Classify a claim and return its public key when that key is provisioned,
  * even if the profile or epoch is no longer approved. */
 enum tm_trust_status tm_trust_policy_classify(

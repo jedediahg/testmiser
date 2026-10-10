@@ -317,6 +317,29 @@ static int array_contains_string(const struct tm_json_value *array,
     return 0;
 }
 
+int tm_trust_policy_approves_profile(const struct tm_trust_policy *policy,
+                                     const char *repository_id,
+                                     const char *profile_digest)
+{
+    const struct tm_json_value *repositories;
+    size_t i;
+    if (policy == NULL || repository_id == NULL ||
+        !valid_digest(profile_digest)) { errno = EINVAL; return -1; }
+    repositories = field(policy->document, "repositories");
+    for (i = 0; i < tm_json_size(repositories); i++) {
+        const struct tm_json_value *repo = tm_json_array_get(repositories, i);
+        const char *candidate = string_field(repo, "repository_id");
+        if (candidate != NULL && strcmp(candidate, repository_id) == 0) {
+            if (array_contains_string(field(repo, "profiles"), profile_digest))
+                return 0;
+            errno = EACCES;
+            return -1;
+        }
+    }
+    errno = EACCES;
+    return -1;
+}
+
 enum tm_trust_status tm_trust_policy_classify(
     const struct tm_trust_policy *policy, const char *repository_id,
     const char *profile_digest, const char *key_id, uint64_t trust_epoch,
