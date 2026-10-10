@@ -517,13 +517,15 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         2>"$tmp_dir/descriptor-dup.err"
     grep -q 'observed input candidate: read descriptor: Makefile' \
         "$tmp_dir/descriptor-dup.err"
-    if grep -q 'unsupported syscall(s):.*\(32\|33\|72\|292\|436\)' \
+    if grep -Eq 'unsupported syscall\(s\):.*[[:space:]](32|33|72|292|436)([[:space:]]|$)' \
         "$tmp_dir/descriptor-dup.err"; then
+        cat "$tmp_dir/descriptor-dup.err" >&2
         printf '%s\n' 'modeled descriptor operation was classified as unsupported' >&2
         exit 1
     fi
     if grep -q 'inherited or untracked descriptor provenance is not modeled' \
         "$tmp_dir/descriptor-dup.err"; then
+        cat "$tmp_dir/descriptor-dup.err" >&2
         printf '%s\n' 'duplicated tracked descriptor lost its input provenance' >&2
         exit 1
     fi
