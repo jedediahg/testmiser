@@ -584,18 +584,17 @@ int main(int argc, char **argv)
             result = tm_observe_and_run(&argv[options.command_index],
                 options.explain, child_environment, repository_root,
                 &observer_report);
-            if (options.explain) {
-                int observer_gate =
-                    tm_observer_report_allows_reuse(&observer_report);
-                fprintf(stderr,
-                    "tm: observer eligibility: %s (coverage=%s, stable-view=%s, reasons=0x%08x; this alone cannot authorize reuse)\n",
-                    observer_gate ? "clear" : "blocked",
-                    observer_report.observation_complete ? "complete" :
-                                                          "incomplete",
-                    observer_report.stable_input_view ? "yes" : "no",
-                    observer_report.ineligibility_reasons);
-            }
         }
+    }
+    if (options.explain) {
+        int observer_gate =
+            tm_observer_report_allows_reuse(&observer_report);
+        fprintf(stderr,
+            "tm: observer eligibility: %s (coverage=%s, stable-view=%s, reasons=0x%08x; this alone cannot authorize reuse)\n",
+            observer_gate ? "clear" : "blocked",
+            observer_report.observation_complete ? "complete" : "incomplete",
+            observer_report.stable_input_view ? "yes" : "no",
+            observer_report.ineligibility_reasons);
     }
     if (options.explain)
         for (index = 0; index < observer_report.candidate_count; index++) {

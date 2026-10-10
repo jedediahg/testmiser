@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "tm/backend.h"
+#include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/runtime.h"
 
@@ -56,6 +57,7 @@ int main(void)
     char *command[] = {"/bin/sh", "-c", "printf called >> \"$1\"", "sh",
                        marker_path, NULL};
     struct tm_profile *profile = NULL;
+    struct tm_observer_report observer_report = {0};
     int command_result = -1, status = 1, base_descriptor = -1;
     int high_descriptor = -1;
     mode_t original_umask = 0;
@@ -134,7 +136,8 @@ int main(void)
     restore_umask = 1;
 
     if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
-                       0, NULL, &command_result) != 1 || command_result != 0) {
+                       0, &observer_report, &command_result) != 1 ||
+        command_result != 0) {
         stream = fopen(log_path, "r");
         if (stream != NULL) {
             char diagnostic[128];
@@ -142,6 +145,12 @@ int main(void)
                 fputs(diagnostic, stderr);
             fclose(stream);
         }
+        goto done;
+    }
+    if (observer_report.stable_input_view ||
+        (observer_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW) == 0) {
+        fprintf(stderr, "profile observer incorrectly claimed a stable report\n");
         goto done;
     }
     stream = fopen(input_file_path, "r");

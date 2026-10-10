@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -1165,8 +1166,48 @@ static int collect_traced_child(pid_t child)
     }
 }
 
-static void exec_command(char **command, char *const environment[])
+static int descriptor_is_preserved(const int *preserved, size_t count,
+                                   int descriptor)
 {
+    size_t index;
+    for (index = 0; index < count; index++)
+        if (preserved[index] == descriptor) return 1;
+    return 0;
+}
+
+static int close_unpreserved_descriptors(const int *preserved, size_t count)
+{
+    DIR *directory = opendir("/proc/self/fd");
+    struct dirent *entry;
+    int scan_descriptor;
+    if (directory == NULL) return count == 0 ? 0 : -1;
+    scan_descriptor = dirfd(directory);
+    while ((entry = readdir(directory)) != NULL) {
+        char *end;
+        long descriptor;
+        if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+        descriptor = strtol(entry->d_name, &end, 10);
+        if (*end != '\0' || descriptor <= STDERR_FILENO ||
+            descriptor == scan_descriptor || descriptor > INT32_MAX ||
+            descriptor_is_preserved(preserved, count, (int)descriptor))
+            continue;
+        (void)close((int)descriptor);
+    }
+    if (closedir(directory) < 0) return -1;
+    for (size_t index = 0; index < count; index++) {
+        int flags = fcntl(preserved[index], F_GETFD);
+        if (flags < 0 || fcntl(preserved[index], F_SETFD,
+                               flags & ~FD_CLOEXEC) < 0) return -1;
+    }
+    return 0;
+}
+
+static void exec_command(char **command, char *const environment[],
+                         const int *preserved_fds,
+                         size_t preserved_fd_count)
+{
+    if (close_unpreserved_descriptors(preserved_fds, preserved_fd_count) < 0)
+        _exit(TM_EXIT_INTERNAL_ERROR);
     if (environment != NULL) environ = (char **)environment;
     execvp(command[0], command);
     if (errno == ENOENT || errno == ENOTDIR) {
@@ -1235,6 +1276,16 @@ static void detach_descendants(void)
     }
 }
 
+static void mark_report_observer_failure(struct tm_observer_report *report)
+{
+    if (report == NULL) return;
+    report->observation_complete = 0;
+    report->stable_input_view = 0;
+    report->ineligibility_reasons |=
+        TM_OBSERVER_INELIGIBLE_OBSERVER_FAILURE |
+        TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW;
+}
+
 static int trace_child(pid_t child, int explain, const char *repository_root,
                        int inherited_descriptors,
                        struct tm_observer_report *report)
@@ -1253,6 +1304,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     observer.saw_external_descriptor = inherited_descriptors;
     observer.direct_pid = child;
     if (add_task(child) == NULL) {
+        mark_report_observer_failure(report);
         return plain_wait(child);
     }
     do {
@@ -1262,10 +1314,12 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     if (waited < 0) {
         observer.saw_unknown_syscall = 1;
         observer.saw_observer_failure = 1;
+        mark_report_observer_failure(report);
         perror("tm: observer waitpid");
         return collect_traced_child(child);
     }
     if (WIFEXITED(status)) {
+        mark_report_observer_failure(report);
         if (explain) {
             fprintf(stderr,
                     "tm: RUN: ptrace setup unavailable; command completed uncached\n");
@@ -1273,15 +1327,18 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
         return WEXITSTATUS(status);
     }
     if (WIFSIGNALED(status)) {
+        mark_report_observer_failure(report);
         return 128 + WTERMSIG(status);
     }
     if (!WIFSTOPPED(status)) {
         observer.saw_unknown_syscall = 1;
+        mark_report_observer_failure(report);
         return TM_EXIT_INTERNAL_ERROR;
     }
     if (ptrace(PTRACE_SETOPTIONS, child, NULL, (void *)options) < 0) {
         observer.saw_unknown_syscall = 1;
         observer.saw_observer_failure = 1;
+        mark_report_observer_failure(report);
         if (explain) {
             fprintf(stderr, "tm: RUN: ptrace setup failed; executing uncached\n");
         }
@@ -1378,6 +1435,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     }
 
     if (!observer.direct_finished) {
+        mark_report_observer_failure(report);
         return collect_traced_child(child);
     }
     copy_candidate_report(report);
@@ -1422,9 +1480,13 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     return TM_EXIT_INTERNAL_ERROR;
 }
 
-int tm_observe_and_run(char **command, int explain, char *const environment[],
-                       const char *repository_root,
-                       struct tm_observer_report *report)
+int tm_observe_and_run_with_fds(char **command, int explain,
+                                char *const environment[],
+                                const char *repository_root,
+                                const int *preserved_fds,
+                                size_t preserved_fd_count,
+                                int null_stdin, int set_umask_022,
+                                struct tm_observer_report *report)
 {
     struct sigaction previous[TM_FORWARDED_SIGNAL_COUNT];
     int inherited_descriptors = has_inherited_descriptors();
@@ -1446,16 +1508,28 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
     }
     if (child == 0) {
         restore_signal_handlers(previous);
+        if (close_unpreserved_descriptors(preserved_fds,
+                                          preserved_fd_count) < 0)
+            _exit(TM_EXIT_INTERNAL_ERROR);
+        if (set_umask_022) (void)umask(022);
+        if (null_stdin) {
+            int null_fd = open("/dev/null", O_RDONLY);
+            if (null_fd < 0 || dup2(null_fd, STDIN_FILENO) < 0)
+                _exit(TM_EXIT_INTERNAL_ERROR);
+            if (null_fd != STDIN_FILENO) close(null_fd);
+        }
         if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0) {
             if (explain) {
                 fprintf(stderr,
                         "tm: observer unavailable: %s; running uncached\n",
                         strerror(errno));
             }
-            exec_command(command, environment);
+            exec_command(command, environment, preserved_fds,
+                         preserved_fd_count);
         }
         raise(SIGSTOP);
-        exec_command(command, environment);
+        exec_command(command, environment, preserved_fds,
+                     preserved_fd_count);
     }
     result = trace_child(child, explain, repository_root,
                          inherited_descriptors, report);
@@ -1463,15 +1537,31 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
     return result;
 }
 
-#else
-
 int tm_observe_and_run(char **command, int explain, char *const environment[],
                        const char *repository_root,
                        struct tm_observer_report *report)
 {
+    return tm_observe_and_run_with_fds(command, explain, environment,
+                                       repository_root, NULL, 0, 0, 0, report);
+}
+
+#else
+
+int tm_observe_and_run_with_fds(char **command, int explain,
+                                char *const environment[],
+                                const char *repository_root,
+                                const int *preserved_fds,
+                                size_t preserved_fd_count,
+                                int null_stdin, int set_umask_022,
+                                struct tm_observer_report *report)
+{
     pid_t child = fork();
     int status;
     (void)repository_root;
+    (void)preserved_fds;
+    (void)preserved_fd_count;
+    (void)null_stdin;
+    (void)set_umask_022;
     if (report != NULL) memset(report, 0, sizeof(*report));
     if (environment != NULL) environ = (char **)environment;
 
@@ -1498,6 +1588,14 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
     }
     return WIFSIGNALED(status) ? 128 + WTERMSIG(status) :
                                 TM_EXIT_INTERNAL_ERROR;
+}
+
+int tm_observe_and_run(char **command, int explain, char *const environment[],
+                       const char *repository_root,
+                       struct tm_observer_report *report)
+{
+    return tm_observe_and_run_with_fds(command, explain, environment,
+                                       repository_root, NULL, 0, 0, 0, report);
 }
 
 #endif

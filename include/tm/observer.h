@@ -44,5 +44,14 @@ int tm_observer_report_allows_reuse(const struct tm_observer_report *report);
 int tm_observe_and_run(char **command, int explain, char *const environment[],
                        const char *repository_root,
                        struct tm_observer_report *report);
+/* Run a launcher under observation while allowing it to inherit only the
+ * listed descriptors (for example, pinned Bubblewrap bind sources). */
+int tm_observe_and_run_with_fds(char **command, int explain,
+                                char *const environment[],
+                                const char *repository_root,
+                                const int *preserved_fds,
+                                size_t preserved_fd_count,
+                                int null_stdin, int set_umask_022,
+                                struct tm_observer_report *report);
 
 #endif

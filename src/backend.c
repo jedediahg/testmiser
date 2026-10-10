@@ -603,35 +603,13 @@ unavailable:
 }
 
 static int run_bubblewrap(const struct argument_vector *arguments,
+                          int explain, struct tm_observer_report *report,
                           int *command_result)
 {
-    pid_t child = fork(), waited;
-    int status = 0;
-    if (child < 0) return 0;
-    if (child == 0) {
-        int null_fd;
-        if (close_child_descriptors(arguments->preserved_fds,
-                                    arguments->preserved_fd_count) < 0)
-            _exit(125);
-        (void)umask(022);
-        null_fd = open("/dev/null", O_RDONLY);
-        if (null_fd < 0 || dup2(null_fd, STDIN_FILENO) < 0) _exit(125);
-        if (null_fd != STDIN_FILENO) close(null_fd);
-        execv(arguments->items[0], arguments->items);
-        _exit(127);
-    }
-    do {
-        waited = waitpid(child, &status, 0);
-    } while (waited < 0 && errno == EINTR);
-    if (waited != child) {
-        fprintf(stderr, "tm: wait for Bubblewrap failed: %s\n", strerror(errno));
-        *command_result = 125;
-        return 1;
-    }
-    if (WIFEXITED(status)) *command_result = WEXITSTATUS(status);
-    else if (WIFSIGNALED(status))
-        *command_result = 128 + WTERMSIG(status);
-    else *command_result = 125;
+    *command_result = tm_observe_and_run_with_fds(
+        arguments->items, explain, NULL, GUEST_WORKSPACE,
+        arguments->preserved_fds, arguments->preserved_fd_count, 1, 1,
+        report);
     return 1;
 }
 
@@ -707,7 +685,7 @@ int tm_backend_run(const struct tm_profile *profile,
         fprintf(stderr,
             "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; cache reuse remains disabled\n");
     (void)report;
-    result = run_bubblewrap(&arguments, command_result);
+    result = run_bubblewrap(&arguments, explain, report, command_result);
 done:
     if (repository_fd >= 0) close(repository_fd);
     free_arguments(&arguments);
