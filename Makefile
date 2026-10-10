@@ -55,7 +55,7 @@ $(BUILD_DIR)/open_mode_probe: tests/open_mode_probe.c
 
 $(BUILD_DIR)/descriptor_dup_probe: tests/descriptor_dup_probe.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $<
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -static -o $@ $<
 
 $(BUILD_DIR)/clone3_probe: tests/clone3_probe.c
 	@mkdir -p $(BUILD_DIR)
