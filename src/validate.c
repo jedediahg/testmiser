@@ -122,8 +122,12 @@ static int validate_one(int dirfd, const char *name, const char *command_id,
     struct tm_result_policy verify_policy;
     int valid = 0;
 
-    if (read_record(dirfd, name, &bytes, &length) < 0 ||
-        tm_result_inspect(bytes, length, &summary, record_id) < 0 ||
+    if (read_record(dirfd, name, &bytes, &length) < 0) {
+        if (errno == ELOOP || errno == EINVAL || errno == EFBIG) goto done;
+        valid = -1;
+        goto done;
+    }
+    if (tm_result_inspect(bytes, length, &summary, record_id) < 0 ||
         strcmp(summary.command_id, command_id) != 0 ||
         strcmp(summary.verification_id, verification_id) != 0 ||
         !check_filename(name, &summary, record_id)) goto done;
@@ -150,6 +154,8 @@ static int validate_one(int dirfd, const char *name, const char *command_id,
     valid = 1;
 done:
     if (valid == 0) fprintf(stderr, "tm validate: %s: invalid record\n", name);
+    if (valid == -1) fprintf(stderr, "tm validate: %s: %s\n", name,
+                             strerror(errno));
     EVP_PKEY_free(key);
     tm_result_summary_clear(&summary);
     free(bytes);
@@ -227,6 +233,7 @@ int tm_validate_main(int argc, char **argv)
                     policy, require_trust, counts);
                 if (result == 0) saw_invalid = 1;
                 if (result == 2) saw_invalid = 1;
+                if (result == -1) rc = 125;
             }
             closedir(records); close(verifyfd);
         }
