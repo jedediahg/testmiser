@@ -548,16 +548,22 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         "$tmp_dir/readlink-error.err"
     "$tm_bin" --explain -- "$context_probe" getpid \
         2>"$tmp_dir/context-getpid.err"
-    grep -q 'process identity or resource limits are not part of the verified context' \
+    grep -q 'process identity, credentials, CPU affinity, or resource limits are not part of the verified context' \
         "$tmp_dir/context-getpid.err"
     "$tm_bin" --explain -- "$context_probe" prlimit \
         2>"$tmp_dir/context-prlimit.err"
-    grep -q 'process identity or resource limits are not part of the verified context' \
+    grep -q 'process identity, credentials, CPU affinity, or resource limits are not part of the verified context' \
         "$tmp_dir/context-prlimit.err"
     "$tm_bin" --explain -- "$context_probe" set_tid_address \
         2>"$tmp_dir/context-set-tid-address.err"
-    grep -q 'process identity or resource limits are not part of the verified context' \
+    grep -q 'process identity, credentials, CPU affinity, or resource limits are not part of the verified context' \
         "$tmp_dir/context-set-tid-address.err"
+    for context_observation in getppid gettid getuid; do
+        "$tm_bin" --explain -- "$context_probe" "$context_observation" \
+            2>"$tmp_dir/context-$context_observation.err"
+        grep -q 'process identity, credentials, CPU affinity, or resource limits are not part of the verified context' \
+            "$tmp_dir/context-$context_observation.err"
+    done
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'

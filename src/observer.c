@@ -904,6 +904,19 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 10:  /* mprotect */
     case 11:  /* munmap */
         return;
+    case 102: /* getuid */
+    case 104: /* getgid */
+    case 107: /* geteuid */
+    case 108: /* getegid */
+    case 110: /* getppid */
+    case 111: /* getpgrp */
+    case 115: /* getgroups */
+    case 117: /* getresuid */
+    case 119: /* getresgid */
+    case 121: /* getpgid */
+    case 124: /* getsid */
+    case 186: /* gettid */
+    case 204: /* sched_getaffinity exposes host CPU topology */
     case 218: /* set_tid_address returns the volatile caller TID */
     case 39:  /* getpid is a volatile execution-context observation */
     case 302: /* prlimit64 can observe or change resource limits */
@@ -1083,7 +1096,7 @@ static void report_reasons(void)
     }
     if (observer.saw_context) {
         fprintf(stderr,
-            "tm: reuse rejected: process identity or resource limits are not part of the verified context\n");
+            "tm: reuse rejected: process identity, credentials, CPU affinity, or resource limits are not part of the verified context\n");
     }
     if (observer.saw_unknown_syscall) {
         size_t unsupported_index;

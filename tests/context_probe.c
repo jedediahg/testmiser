@@ -10,6 +10,12 @@ int main(int argc, char **argv)
     if (argc != 2) return 2;
     if (strcmp(argv[1], "getpid") == 0)
         return syscall(SYS_getpid) > 0 ? 0 : 1;
+    if (strcmp(argv[1], "getppid") == 0)
+        return syscall(SYS_getppid) >= 0 ? 0 : 1;
+    if (strcmp(argv[1], "gettid") == 0)
+        return syscall(SYS_gettid) > 0 ? 0 : 1;
+    if (strcmp(argv[1], "getuid") == 0)
+        return syscall(SYS_getuid) >= 0 ? 0 : 1;
     if (strcmp(argv[1], "set_tid_address") == 0) {
         int tid = 0;
         return syscall(SYS_set_tid_address, &tid) > 0 ? 0 : 1;
