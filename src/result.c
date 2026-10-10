@@ -9,6 +9,7 @@
 #include "tm/digest.h"
 #include "tm/json.h"
 #include "tm/result.h"
+#include "tm/trust.h"
 
 static int object_put(struct tm_json_value *object, const char *key,
                       struct tm_json_value *value)
@@ -535,5 +536,59 @@ done:
     free(inputs);
     free(canonical_envelope);
     free(canonical_payload);
+    return result;
+}
+
+int tm_result_verify_trusted(const unsigned char *record, size_t record_length,
+                             const struct tm_trust_policy *trust_policy,
+                             const char *expected_verification_fingerprint,
+                             char record_id[72])
+{
+    struct tm_json_value *document = NULL;
+    const struct tm_json_value *payload;
+    const struct tm_json_value *environment;
+    const struct tm_json_value *attestation;
+    const struct tm_json_value *epoch_json;
+    const struct tm_json_value *semantics_json;
+    const char *repository_id;
+    const char *profile_digest;
+    const char *key_id;
+    uint64_t trust_epoch;
+    uint64_t semantics_version;
+    EVP_PKEY *public_key = NULL;
+    struct tm_result_policy expected;
+    int result = -1;
+
+    if (record == NULL || record_length < 2 || record[record_length - 1] != '\n' ||
+        trust_policy == NULL || expected_verification_fingerprint == NULL ||
+        record_id == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (tm_json_parse(record, record_length - 1, &document) < 0) goto done;
+    payload = tm_json_object_get(document, "payload");
+    attestation = tm_json_object_get(document, "attestation");
+    environment = tm_json_object_get(payload, "environment");
+    repository_id = get_string(payload, "repository_id");
+    profile_digest = get_string(environment, "profile_digest");
+    key_id = get_string(attestation, "key_id");
+    epoch_json = tm_json_object_get(payload, "trust_epoch");
+    semantics_json = tm_json_object_get(payload, "tm_semantics_version");
+    trust_epoch = tm_json_integer_value(epoch_json);
+    semantics_version = tm_json_integer_value(semantics_json);
+    if (repository_id == NULL || profile_digest == NULL || key_id == NULL ||
+        trust_epoch == UINT64_MAX || semantics_version == UINT64_MAX ||
+        tm_trust_policy_authorize(trust_policy, repository_id, profile_digest,
+                                  key_id, trust_epoch, semantics_version,
+                                  &public_key) < 0) goto done;
+    expected = (struct tm_result_policy){
+        repository_id, profile_digest, 0, expected_verification_fingerprint
+    };
+    result = tm_result_verify(record, record_length, public_key, &expected,
+                              record_id);
+
+done:
+    tm_json_free(document);
+    EVP_PKEY_free(public_key);
     return result;
 }

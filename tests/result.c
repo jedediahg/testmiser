@@ -1,12 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <openssl/evp.h>
 
 #include "tm/result.h"
+#include "tm/trust.h"
 
 static int must_reject(const unsigned char *record, size_t length,
                        EVP_PKEY *key, const struct tm_result_policy *policy)
@@ -59,6 +62,15 @@ int main(void)
     char verified_id[72];
     const char *signature_marker = "\"signature\":\"";
     char *signature_text;
+    struct tm_trust_policy *trust = NULL;
+    char policy_path[] = "/tmp/tm-result-policy-XXXXXX";
+    char policy_json[2048];
+    unsigned char public_bytes[32];
+    size_t public_length = sizeof(public_bytes);
+    unsigned char public_b64[EVP_ENCODE_LENGTH(32)];
+    int policy_fd = -1;
+    int policy_length;
+    int public_b64_length;
 
     if (private_key == NULL ||
         tm_result_create(&identity, 3, private_key, &record, &record_length,
@@ -69,6 +81,49 @@ int main(void)
                          verified_id) != 0 ||
         strcmp(verified_id, expected_id) != 0) {
         fprintf(stderr, "signed result golden vector failed\n");
+        goto fail;
+    }
+    if (EVP_PKEY_get_raw_public_key(private_key, public_bytes,
+                                    &public_length) != 1 ||
+        public_length != sizeof(public_bytes)) goto fail;
+    public_b64_length = EVP_EncodeBlock(public_b64, public_bytes,
+                                        sizeof(public_bytes));
+    if (public_b64_length != 44) goto fail;
+    public_b64[public_b64_length] = '\0';
+    policy_length = snprintf(policy_json, sizeof(policy_json),
+        "{\"schema_version\":1,\"repositories\":[{"
+        "\"repository_id\":\"sample\",\"minimum_trust_epoch\":3,"
+        "\"allowed_semantics\":[2],"
+        "\"profiles\":[\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"],"
+        "\"keys\":[{\"key_id\":\"sha256:21fe31dfa154a261626bf854046fd2271b7bed4b6abe45aa58877ef47f9721b9\","
+        "\"public_key\":\"%s\",\"role\":\"test\"}],\"revoked_key_ids\":[]}]}",
+        public_b64);
+    if (policy_length < 0 || policy_length >= (int)sizeof(policy_json)) goto fail;
+    policy_fd = mkstemp(policy_path);
+    if (policy_fd < 0) goto fail;
+    if (write(policy_fd, policy_json, (size_t)policy_length) != policy_length) {
+        close(policy_fd);
+        policy_fd = -1;
+        goto fail;
+    }
+    if (close(policy_fd) < 0) {
+        policy_fd = -1;
+        goto fail;
+    }
+    policy_fd = -1;
+    if (tm_trust_policy_load(policy_path, &trust) != 0 ||
+        tm_result_verify_trusted(record, record_length, trust,
+                                 policy.expected_verification_fingerprint,
+                                 verified_id) != 0 ||
+        strcmp(verified_id, expected_id) != 0) {
+        fprintf(stderr, "operator-policy result verification failed\n");
+        goto fail;
+    }
+    if (tm_result_verify_trusted(
+            record, record_length, trust,
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            verified_id) == 0) {
+        fprintf(stderr, "trusted verifier ignored current fingerprint\n");
         goto fail;
     }
 
@@ -117,6 +172,8 @@ int main(void)
     free(tampered);
     free(noncanonical);
     free(record);
+    tm_trust_policy_free(trust);
+    unlink(policy_path);
     EVP_PKEY_free(private_key);
     return 0;
 
@@ -124,6 +181,9 @@ fail:
     free(tampered);
     free(noncanonical);
     free(record);
+    if (policy_fd >= 0) close(policy_fd);
+    tm_trust_policy_free(trust);
+    unlink(policy_path);
     EVP_PKEY_free(private_key);
     return 1;
 }

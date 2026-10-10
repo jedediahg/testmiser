@@ -8,6 +8,8 @@
 
 #include "tm/verification.h"
 
+struct tm_trust_policy;
+
 struct tm_result_policy {
     const char *repository_id;
     const char *approved_profile_digest;
@@ -28,5 +30,12 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
                      EVP_PKEY *trusted_public_key,
                      const struct tm_result_policy *policy,
                      char record_id[72]);
+
+/* Resolve the claimed repository/profile/key from operator policy, then verify
+ * the record against a freshly computed current fingerprint. */
+int tm_result_verify_trusted(const unsigned char *record, size_t record_length,
+                             const struct tm_trust_policy *trust_policy,
+                             const char *expected_verification_fingerprint,
+                             char record_id[72]);
 
 #endif

@@ -600,7 +600,25 @@ The first reusable release MUST authenticate portable results with public-key si
 
 Operator-controlled trust policy maps stable repository IDs to approved profile digests, public keys/producer roles, allowed semantics, minimum trust epoch, and revocations. The same policy may approve local developer, GitLab, and GitHub producers. Consumers may be stricter: a CI policy need not accept every developer's key. Cross-machine reuse succeeds only when the producing key/profile is approved by the consumer.
 
-Policy can be distributed as an administrator-managed file or a signed bundle verified by a root provisioned outside the checkout. A checked-in profile/key list cannot grant itself authority. Mirrors/worktrees share repository identity through this policy, not inferred remote URL equivalence. Trust-policy updates do not change input fingerprints, but may make old results unacceptable.
+The reference administrator-managed policy file uses strict JSON schema version 1:
+
+    {
+      "schema_version": 1,
+      "repositories": [{
+        "repository_id": "example-project",
+        "minimum_trust_epoch": 1,
+        "allowed_semantics": [2],
+        "profiles": ["sha256:<64 lowercase hex digits>"],
+        "keys": [{
+          "key_id": "sha256:<64 lowercase hex digits>",
+          "public_key": "<base64 raw 32-byte Ed25519 key>",
+          "role": "developer"
+        }],
+        "revoked_key_ids": []
+      }]
+    }
+
+Objects have exactly the shown keys; repository IDs, profile digests, and key IDs must be unique within their scopes. The role value is an operator-facing label and does not grant authority by itself. Policy files are supplied outside the checkout, limited to 1 MiB, regular files owned by root or the invoking user, and not group/world writable. A signed bundle can replace this reference file only when verified by a root provisioned outside the checkout. A checked-in profile/key list cannot grant itself authority. Mirrors/worktrees share repository identity through this policy, not inferred remote URL equivalence. Trust-policy updates do not change input fingerprints, but may make old results unacceptable.
 
 A producer signs only results established by its trusted supervisor after complete eligible observation. The signer must not be an API that signs arbitrary JSON submitted by a test. For untrusted PR/MR code, isolate the supervisor, signing capability, policy, transport credentials, and evidence channel from the child. Putting a signing key in an environment variable of the same unrestricted job is insufficient. Verification-only jobs can consume trusted records without access to signing credentials; uncached executions in such jobs do not become trusted shared results automatically.
 
