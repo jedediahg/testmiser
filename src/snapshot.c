@@ -166,8 +166,13 @@ static int compare_names(const void *left, const void *right)
 
 static int read_names(int directory_fd, char ***names_out, size_t *count_out)
 {
+    struct name_node {
+        char *name;
+        struct name_node *next;
+    };
     DIR *directory;
     struct dirent *entry;
+    struct name_node *head = NULL, **tail = &head;
     char **names = NULL;
     size_t count = 0;
     int copy = openat(directory_fd, ".",
@@ -186,16 +191,29 @@ static int read_names(int directory_fd, char ***names_out, size_t *count_out)
             strcmp(entry->d_name, "..") == 0) continue;
         if (count >= SNAPSHOT_ENTRY_LIMIT) { errno = E2BIG; goto fail; }
         {
-            char **resized = realloc(names, (count + 1) * sizeof(*names));
-            if (resized == NULL) goto fail;
-            names = resized;
-            names[count] = strdup(entry->d_name);
-            if (names[count] == NULL) goto fail;
+            struct name_node *node = malloc(sizeof(*node));
+            if (node == NULL) goto fail;
+            node->name = strdup(entry->d_name);
+            if (node->name == NULL) { free(node); goto fail; }
+            node->next = NULL;
+            *tail = node;
+            tail = &node->next;
             count++;
         }
     }
     if (closedir(directory) < 0) goto names_fail;
-    qsort(names, count, sizeof(*names), compare_names);
+    names = calloc(count == 0 ? 1 : count, sizeof(*names));
+    if (names == NULL) goto names_fail;
+    {
+        size_t index = 0;
+        while (head != NULL) {
+            struct name_node *node = head;
+            names[index++] = node->name;
+            head = node->next;
+            free(node);
+        }
+    }
+    if (count > 1) qsort(names, count, sizeof(*names), compare_names);
     *names_out = names;
     *count_out = count;
     return 0;
@@ -206,7 +224,13 @@ fail:
         errno = saved;
     }
 names_fail:
-    while (count > 0) free(names[--count]);
+    while (head != NULL) {
+        struct name_node *node = head;
+        head = node->next;
+        free(node->name);
+        free(node);
+    }
+    while (names != NULL && count > 0) free(names[--count]);
     free(names);
     return -1;
 }
