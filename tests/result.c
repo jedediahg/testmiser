@@ -10,6 +10,7 @@
 
 #include <openssl/evp.h>
 
+#include "tm/attestation.h"
 #include "tm/result.h"
 #include "tm/identity.h"
 #include "tm/snapshot.h"
@@ -641,14 +642,21 @@ int main(void)
     };
     const char *expected_id =
         "sha256:1b7606c1405e680b8c0ccc04144fb3600f385dc4825b2581e4d0282e13f7c1ea";
+    unsigned char second_seed[32] = {0};
     EVP_PKEY *private_key = EVP_PKEY_new_raw_private_key_ex(
         NULL, "ED25519", NULL, seed, sizeof(seed));
+    EVP_PKEY *second_private_key = NULL;
     unsigned char *record = NULL;
+    unsigned char *second_record = NULL;
     unsigned char *tampered = NULL;
     unsigned char *noncanonical = NULL;
     size_t record_length = 0;
+    size_t second_record_length = 0;
     char record_id[72];
+    char second_record_id[72];
     char verified_id[72];
+    char first_key_id[72];
+    char second_key_id[72];
     struct tm_result_summary summary = {0};
     const char *signature_marker = "\"signature\":\"";
     char *signature_text;
@@ -661,11 +669,17 @@ int main(void)
     unsigned char public_bytes[32];
     size_t public_length = sizeof(public_bytes);
     unsigned char public_b64[EVP_ENCODE_LENGTH(32)];
+    unsigned char second_public_bytes[32];
+    size_t second_public_length = sizeof(second_public_bytes);
+    unsigned char second_public_b64[EVP_ENCODE_LENGTH(32)];
     int policy_fd = -1, input_root_fd = -1, input_file_fd = -1;
     int policy_length;
     int public_b64_length;
 
-    if (private_key == NULL ||
+    second_seed[0] = 0x5a;
+    second_private_key = EVP_PKEY_new_raw_private_key_ex(
+        NULL, "ED25519", NULL, second_seed, sizeof(second_seed));
+    if (private_key == NULL || second_private_key == NULL ||
         tm_result_create(&identity, 3, private_key, &record, &record_length,
                          record_id) != 0) goto fail;
     if (strcmp(record_id, expected_id) != 0) {
@@ -697,6 +711,32 @@ int main(void)
         fprintf(stderr, "signed result golden vector failed\n");
         goto fail;
     }
+    if (tm_ed25519_key_id(private_key, first_key_id) < 0 ||
+        tm_ed25519_key_id(second_private_key, second_key_id) < 0 ||
+        strcmp(first_key_id, summary.key_id) != 0 ||
+        strcmp(first_key_id, second_key_id) == 0) {
+        fprintf(stderr, "independent producer key vector failed\n");
+        goto fail;
+    }
+    tm_result_summary_clear(&summary);
+    if (tm_result_create(&identity, 3, second_private_key, &second_record,
+                         &second_record_length, second_record_id) != 0 ||
+        tm_result_verify(second_record, second_record_length,
+                         second_private_key, &policy, verified_id) != 0 ||
+        strcmp(verified_id, second_record_id) != 0 ||
+        strcmp(second_record_id, record_id) == 0 ||
+        tm_result_inspect(second_record, second_record_length, &summary,
+                          verified_id) != 0 ||
+        strcmp(summary.key_id, second_key_id) != 0 ||
+        strcmp(summary.command_id,
+               "0000000000000000000000000000000000000000000000000000000000000000") != 0 ||
+        strcmp(summary.verification_id,
+               "ba299d5d7bd04d93e635617e6d2e496248711a9fa93bf4360a98c706ad201622") != 0) {
+        tm_result_summary_clear(&summary);
+        fprintf(stderr, "independent producer identity vector failed\n");
+        goto fail;
+    }
+    tm_result_summary_clear(&summary);
     tampered = malloc(record_length);
     if (tampered == NULL) goto fail;
     memcpy(tampered, record, record_length);
@@ -785,16 +825,25 @@ int main(void)
         public_length != sizeof(public_bytes)) goto fail;
     public_b64_length = EVP_EncodeBlock(public_b64, public_bytes,
                                         sizeof(public_bytes));
-    if (public_b64_length != 44) goto fail;
+    if (public_b64_length != 44 ||
+        EVP_PKEY_get_raw_public_key(second_private_key, second_public_bytes,
+                                    &second_public_length) != 1 ||
+        second_public_length != sizeof(second_public_bytes)) goto fail;
     public_b64[public_b64_length] = '\0';
+    public_b64_length = EVP_EncodeBlock(second_public_b64,
+                                        second_public_bytes,
+                                        sizeof(second_public_bytes));
+    if (public_b64_length != 44) goto fail;
+    second_public_b64[public_b64_length] = '\0';
     policy_length = snprintf(policy_json, sizeof(policy_json),
         "{\"schema_version\":1,\"repositories\":[{"
         "\"repository_id\":\"sample\",\"minimum_trust_epoch\":3,"
         "\"allowed_semantics\":[2],"
         "\"profiles\":[\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"],"
-        "\"keys\":[{\"key_id\":\"sha256:21fe31dfa154a261626bf854046fd2271b7bed4b6abe45aa58877ef47f9721b9\","
-        "\"public_key\":\"%s\",\"role\":\"test\"}],\"revoked_key_ids\":[]}]}",
-        public_b64);
+        "\"keys\":[{\"key_id\":\"%s\",\"public_key\":\"%s\",\"role\":\"test\"},"
+        "{\"key_id\":\"%s\",\"public_key\":\"%s\",\"role\":\"test\"}],"
+        "\"revoked_key_ids\":[]}]}" ,
+        first_key_id, public_b64, second_key_id, second_public_b64);
     if (policy_length < 0 || policy_length >= (int)sizeof(policy_json)) goto fail;
     policy_fd = mkstemp(policy_path);
     if (policy_fd < 0) goto fail;
@@ -814,6 +863,13 @@ int main(void)
                                  verified_id) != 0 ||
         strcmp(verified_id, expected_id) != 0) {
         fprintf(stderr, "operator-policy result verification failed\n");
+        goto fail;
+    }
+    if (tm_result_verify_trusted(
+            second_record, second_record_length, trust,
+            policy.expected_verification_fingerprint, verified_id) != 0 ||
+        strcmp(verified_id, second_record_id) != 0) {
+        fprintf(stderr, "second approved producer result verification failed\n");
         goto fail;
     }
     if (tm_result_verify_trusted(
@@ -922,6 +978,7 @@ int main(void)
 
     free(tampered);
     free(noncanonical);
+    free(second_record);
     free(record);
     tm_result_summary_clear(&summary);
     tm_trust_policy_free(trust);
@@ -931,11 +988,13 @@ int main(void)
     rmdir(input_directory);
     rmdir(input_root);
     EVP_PKEY_free(private_key);
+    EVP_PKEY_free(second_private_key);
     return 0;
 
 fail:
     free(tampered);
     free(noncanonical);
+    free(second_record);
     free(record);
     tm_result_summary_clear(&summary);
     if (policy_fd >= 0) close(policy_fd);
@@ -947,5 +1006,6 @@ fail:
     rmdir(input_directory);
     rmdir(input_root);
     EVP_PKEY_free(private_key);
+    EVP_PKEY_free(second_private_key);
     return 1;
 }

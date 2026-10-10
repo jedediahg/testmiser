@@ -5,10 +5,12 @@ exit propagation and a short-lived descendant. With ptrace permission it also
 checks network and mutation rejection. Unit checks cover SHA-256, Ed25519
 vectors/tamper rejection, command and verification fingerprints, bounded
 JSON/JCS behavior, signed output-free record creation/inspection/trust
-verification, and protected trust-policy loading/authorization. Run all
-checks with `make test`; OpenSSL EVP development files are required. When
-ptrace is unavailable, the CLI suite checks the uncached fallback. Extend
-result tests for policy-driven validation and output manifests.
+verification, protected trust-policy loading/authorization, output manifests,
+and independent Ed25519 producers. The result vectors require two different
+approved keys to produce distinct record IDs for the same verification ID and
+both records to pass trust verification. Run all checks with `make test`;
+OpenSSL EVP development files are required. When ptrace is unavailable, the
+CLI suite checks the uncached fallback.
 
 `portable-reuse.sh` is an opt-in acceptance test for a compatible Linux host.
 It signs an output-bearing run in a temporary producer clone, commits the
