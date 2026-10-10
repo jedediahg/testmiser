@@ -213,8 +213,13 @@ int main(int argc, char **argv)
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
         }
-        if (options.explain)
+        if (options.explain) {
+            if (!tm_profile_is_deterministic(profile))
+                fprintf(stderr, "tm: reuse rejected: profile does not declare deterministic results\n");
+            if (strcmp(tm_profile_privacy_class(profile), "secret-dependent") == 0)
+                fprintf(stderr, "tm: reuse rejected: secret-dependent profiles are not portable\n");
             fprintf(stderr, "tm: RUN: profile approved and its environment applied; portable backend is not enforced, so reuse is disabled\n");
+        }
         child_environment = profile_environment(profile);
         if (child_environment == NULL) {
             fprintf(stderr, "tm: cannot construct profile environment\n");

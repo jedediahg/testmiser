@@ -47,6 +47,13 @@ int main(void)
         "\"privacy_class\":\"public\",\"environment\":{},"
         "\"input_roots\":[\"tests\"],\"output_roots\":[\"tests/report\"],"
         "\"scratch_roots\":[\"/tmp\"]}";
+    static const char nondeterministic[] =
+        "{\"schema_version\":1,\"repository_id\":\"sample\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v1\","
+        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"workspace_path\":\"/workspace\",\"deterministic\":false,"
+        "\"privacy_class\":\"secret-dependent\",\"environment\":{},"
+        "\"input_roots\":[],\"output_roots\":[],\"scratch_roots\":[]}";
     struct tm_profile *profile = NULL;
     char path[] = "/tmp/tm-profile-test-XXXXXX";
     char digest[72];
@@ -64,6 +71,12 @@ int main(void)
     profile = NULL;
     if (tm_profile_load(path, &profile) < 0 ||
         strcmp(digest, tm_profile_digest(profile)) != 0) goto done;
+    tm_profile_free(profile);
+    profile = NULL;
+    if (save(path, nondeterministic) < 0 || tm_profile_load(path, &profile) < 0 ||
+        tm_profile_is_deterministic(profile) != 0 ||
+        strcmp(tm_profile_privacy_class(profile), "secret-dependent") != 0)
+        goto done;
     tm_profile_free(profile);
     profile = NULL;
     if (save(path, unsafe) < 0 || tm_profile_load(path, &profile) == 0) {

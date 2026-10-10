@@ -69,6 +69,28 @@ status=$?
 set -e
 test "$status" -eq 17
 grep -q 'portable backend is not enforced' "$tmp_dir/profile-approved.err"
+sed 's/"deterministic":true/"deterministic":false/' \
+    "$tmp_dir/profile.json" >"$tmp_dir/nondeterministic-profile.json"
+nondeterministic_digest=$("$tm_bin" profile digest \
+    "$tmp_dir/nondeterministic-profile.json" | cut -d ' ' -f 2)
+printf '{"schema_version":1,"repositories":[{"repository_id":"sample","minimum_trust_epoch":1,"allowed_semantics":[2],"profiles":["%s"],"keys":[],"revoked_key_ids":[]}]}' \
+    "$nondeterministic_digest" >"$tmp_dir/nondeterministic-policy.json"
+chmod 600 "$tmp_dir/nondeterministic-policy.json"
+"$tm_bin" --profile "$tmp_dir/nondeterministic-profile.json" \
+    --trust-policy "$tmp_dir/nondeterministic-policy.json" --explain -- /bin/true \
+    2>"$tmp_dir/nondeterministic.err"
+grep -q 'profile does not declare deterministic results' \
+    "$tmp_dir/nondeterministic.err"
+sed 's/"privacy_class":"public"/"privacy_class":"secret-dependent"/' \
+    "$tmp_dir/profile.json" >"$tmp_dir/secret-profile.json"
+secret_digest=$("$tm_bin" profile digest "$tmp_dir/secret-profile.json" | cut -d ' ' -f 2)
+printf '{"schema_version":1,"repositories":[{"repository_id":"sample","minimum_trust_epoch":1,"allowed_semantics":[2],"profiles":["%s"],"keys":[],"revoked_key_ids":[]}]}' \
+    "$secret_digest" >"$tmp_dir/secret-policy.json"
+chmod 600 "$tmp_dir/secret-policy.json"
+"$tm_bin" --profile "$tmp_dir/secret-profile.json" \
+    --trust-policy "$tmp_dir/secret-policy.json" --explain -- /bin/true \
+    2>"$tmp_dir/secret.err"
+grep -q 'secret-dependent profiles are not portable' "$tmp_dir/secret.err"
 sed 's/"LANG":"C"/"LANG":"C","PATH":"\/usr\/bin:\/bin"/' \
     "$tmp_dir/profile.json" >"$tmp_dir/env-profile.json"
 env_profile_digest=$("$tm_bin" profile digest "$tmp_dir/env-profile.json" | cut -d ' ' -f 2)

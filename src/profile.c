@@ -271,6 +271,18 @@ const char *tm_profile_digest(const struct tm_profile *profile)
     return profile == NULL ? NULL : profile->digest;
 }
 
+int tm_profile_is_deterministic(const struct tm_profile *profile)
+{
+    if (profile == NULL) return 0;
+    return tm_json_boolean_value(get(profile->document, "deterministic"));
+}
+
+const char *tm_profile_privacy_class(const struct tm_profile *profile)
+{
+    if (profile == NULL) return NULL;
+    return string_value(profile->document, "privacy_class");
+}
+
 size_t tm_profile_environment_count(const struct tm_profile *profile)
 {
     if (profile == NULL) return 0;
