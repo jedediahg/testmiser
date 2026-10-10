@@ -401,6 +401,20 @@ invalid:
     return -1;
 }
 
+static int canonical_input_order(const struct tm_input_observation *inputs,
+                                 size_t count)
+{
+    size_t index;
+    for (index = 1; index < count; index++) {
+        int order = strcmp(inputs[index - 1].path, inputs[index].path);
+        if (order == 0)
+            order = strcmp(input_kind_name(inputs[index - 1].kind),
+                           input_kind_name(inputs[index].kind));
+        if (order >= 0) return 0;
+    }
+    return 1;
+}
+
 static int strict_base64_signature(const char *encoded,
                                    unsigned char signature[64])
 {
@@ -548,7 +562,8 @@ int tm_result_inspect(const unsigned char *record, size_t record_length,
     if (command_fingerprint == NULL || working_directory == NULL ||
         runtime_digest == NULL || context_digest == NULL ||
         parse_inputs(tm_json_object_get(payload, "inputs"), &inputs,
-                     &input_count) < 0) goto invalid;
+                     &input_count) < 0 ||
+        !canonical_input_order(inputs, input_count)) goto invalid;
     identity = (struct tm_verification_identity){
         repository_id, command_fingerprint, working_directory, profile_digest,
         runtime_digest, context_digest, inputs, input_count
@@ -735,7 +750,8 @@ int tm_result_verify(const unsigned char *record, size_t record_length,
         goto done;
     }
     if (parse_inputs(tm_json_object_get(payload, "inputs"), &inputs,
-                     &input_count) < 0) {
+                     &input_count) < 0 ||
+        !canonical_input_order(inputs, input_count)) {
         errno = EBADMSG;
         goto done;
     }

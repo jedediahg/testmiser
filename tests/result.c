@@ -103,6 +103,45 @@ int main(void)
         goto fail;
     }
     tm_result_summary_clear(&summary);
+    {
+        const struct tm_input_observation ordered_inputs[] = {
+            {"tests/a", TM_INPUT_FILE,
+             "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+             NULL, 0},
+            {"tests/z", TM_INPUT_FILE,
+             "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+             NULL, 0}
+        };
+        struct tm_verification_identity ordered_identity = identity;
+        unsigned char *ordering_record = NULL;
+        size_t ordering_length = 0;
+        char ordering_id[72];
+        char *path_a;
+        char *path_z;
+        ordered_identity.inputs = ordered_inputs;
+        ordered_identity.input_count = 2;
+        if (tm_result_create(&ordered_identity, 3, private_key,
+                             &ordering_record, &ordering_length,
+                             ordering_id) != 0) goto fail;
+        path_a = strstr((char *)ordering_record, "\"path\":\"tests/a\"");
+        path_z = strstr((char *)ordering_record, "\"path\":\"tests/z\"");
+        if (path_a == NULL || path_z == NULL) {
+            free(ordering_record);
+            goto fail;
+        }
+        path_a += strlen("\"path\":\"tests/");
+        path_z += strlen("\"path\":\"tests/");
+        *path_a = 'z';
+        *path_z = 'a';
+        if (tm_result_inspect(ordering_record, ordering_length,
+                              &summary, ordering_id) == 0) {
+            tm_result_summary_clear(&summary);
+            free(ordering_record);
+            fprintf(stderr, "unsorted result inputs were accepted\n");
+            goto fail;
+        }
+        free(ordering_record);
+    }
     if (EVP_PKEY_get_raw_public_key(private_key, public_bytes,
                                     &public_length) != 1 ||
         public_length != sizeof(public_bytes)) goto fail;
