@@ -54,8 +54,16 @@ int main(void)
         tm_profile_load(profile_path, &profile) < 0) goto done;
 
     if (tm_backend_run(profile, temporary, repository_root, NULL, 0, command,
-                       0, NULL, &command_result) != 1 || command_result != 0)
+                       0, NULL, &command_result) != 1 || command_result != 0) {
+        stream = fopen(log_path, "r");
+        if (stream != NULL) {
+            char diagnostic[128];
+            while (fgets(diagnostic, sizeof(diagnostic), stream) != NULL)
+                fputs(diagnostic, stderr);
+            fclose(stream);
+        }
         goto done;
+    }
     stream = fopen(log_path, "r");
     if (stream == NULL || fgets(log_contents, sizeof(log_contents), stream) ==
                           NULL || fgets(log_contents + 6,
