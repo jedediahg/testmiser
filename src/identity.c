@@ -54,6 +54,33 @@ static int valid_utf8(const unsigned char *text)
     return 1;
 }
 
+static int valid_relative_path(const char *path, int allow_root)
+{
+    const char *component;
+    const char *cursor;
+
+    if (path == NULL || path[0] == '\0' || path[0] == '/') {
+        return 0;
+    }
+    if (allow_root && strcmp(path, ".") == 0) {
+        return 1;
+    }
+    component = path;
+    for (cursor = path;; cursor++) {
+        if (*cursor == '/' || *cursor == '\0') {
+            size_t length = (size_t)(cursor - component);
+            if (length == 0 || (length == 1 && component[0] == '.') ||
+                (length == 2 && component[0] == '.' && component[1] == '.')) {
+                return 0;
+            }
+            if (*cursor == '\0') {
+                return 1;
+            }
+            component = cursor + 1;
+        }
+    }
+}
+
 static int reserve(struct json_buffer *buffer, size_t additional)
 {
     size_t required;
@@ -162,7 +189,7 @@ static int append_declarations(struct json_buffer *buffer,
         return -1;
     }
     for (index = 0; index < count; index++) {
-        if (items == NULL || items[index] == NULL ||
+        if (items == NULL || !valid_relative_path(items[index], 0) ||
             !valid_utf8((const unsigned char *)items[index])) {
             free(sorted);
             errno = EILSEQ;
@@ -235,7 +262,9 @@ int tm_command_fingerprint(const struct tm_command_identity *identity,
     int result = -1;
 
     if (identity == NULL || output == NULL || identity->repository_id == NULL ||
-        identity->working_directory == NULL || identity->argc == 0) {
+        !valid_relative_path(identity->working_directory, 1) ||
+        !valid_utf8((const unsigned char *)identity->repository_id) ||
+        identity->argc == 0) {
         errno = EINVAL;
         return -1;
     }
