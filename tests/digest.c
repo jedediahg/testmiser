@@ -30,11 +30,18 @@ int main(void)
         return 1;
     }
     descriptor = mkstemp(path);
-    if (descriptor < 0 || write(descriptor, "abc", 3) != 3 || close(descriptor) < 0) {
+    if (descriptor < 0) {
         perror("digest test setup");
-        if (descriptor >= 0) {
-            close(descriptor);
-        }
+        return 1;
+    }
+    if (write(descriptor, "abc", 3) != 3) {
+        perror("digest test write");
+        close(descriptor);
+        unlink(path);
+        return 1;
+    }
+    if (close(descriptor) < 0) {
+        perror("digest test close");
         unlink(path);
         return 1;
     }

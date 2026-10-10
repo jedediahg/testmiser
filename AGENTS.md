@@ -10,7 +10,7 @@ Run `make` to build `build/tm`, `make test` to run CLI integration checks, and `
 
 ## Coding Style & Naming Conventions
 
-The target implementation is C and Linux-first, using OpenSSL EVP for SHA-256. Build with C11, OpenSSL development headers/libraries, and the Makefile’s `-Wall -Wextra -Wpedantic -Werror` warnings. Use four spaces for indentation. Keep JSON sidecars deterministic. Store repository-controlled paths relative to the repository root, and do not persist user-specific absolute paths.
+The target implementation is C and Linux-first, using OpenSSL EVP for SHA-256 and Ed25519. Build with C11, OpenSSL development headers/libraries, and the Makefile’s `-Wall -Wextra -Wpedantic -Werror` warnings. Use four spaces for indentation. Keep JSON sidecars deterministic. Store repository-controlled paths relative to the repository root, and do not persist user-specific absolute paths.
 
 ## Testing Guidelines
 
