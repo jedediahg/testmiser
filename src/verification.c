@@ -185,6 +185,17 @@ static int append_string(struct buffer *buffer, const char *value)
             if (append_bytes(buffer, escaped, 2) < 0) {
                 return -1;
             }
+        } else if (character == '\b' || character == '\t' ||
+                   character == '\n' || character == '\f' ||
+                   character == '\r') {
+            escaped[0] = '\\';
+            escaped[1] = character == '\b' ? 'b' :
+                         character == '\t' ? 't' :
+                         character == '\n' ? 'n' :
+                         character == '\f' ? 'f' : 'r';
+            if (append_bytes(buffer, escaped, 2) < 0) {
+                return -1;
+            }
         } else if (character < 0x20) {
             escaped[0] = '\\';
             escaped[1] = 'u';

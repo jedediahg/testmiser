@@ -37,6 +37,8 @@ int main(void)
     };
     const char *expected =
         "sha256:ba299d5d7bd04d93e635617e6d2e496248711a9fa93bf4360a98c706ad201622";
+    const char *escaped_expected =
+        "sha256:e9d0548651703103a7f80a977ed38e8f56f1eb0f405a0715af3ce6a1cf62dabc";
     char fingerprint[72];
     char reordered_fingerprint[72];
 
@@ -45,6 +47,13 @@ int main(void)
         fprintf(stderr, "verification fingerprint golden vector failed\n");
         return 1;
     }
+    identity.repository_id = "sample\nid";
+    if (tm_verification_fingerprint(&identity, reordered_fingerprint) != 0 ||
+        strcmp(reordered_fingerprint, escaped_expected) != 0) {
+        fprintf(stderr, "verification JCS escaping vector failed\n");
+        return 1;
+    }
+    identity.repository_id = "sample";
     identity.inputs = reordered;
     if (tm_verification_fingerprint(&identity, reordered_fingerprint) != 0 ||
         strcmp(fingerprint, reordered_fingerprint) != 0) {
