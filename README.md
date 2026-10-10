@@ -22,6 +22,8 @@ The current executable is a transparent command wrapper with a Linux x86-64 `ptr
 
 ## Intended usage
 
+`tm clean --root DIR --records` removes regular `.tm.json` records under that repository's `.tm/results` tree, including tracked records. It preserves trust policy, signing material, content-addressed blobs, and symlinked entries. `tm clean` without `--records` is currently a no-op because rebuildable indexes and staged downloads are not yet implemented.
+
 The wrapper accepts a command after `--` and preserves its argument boundaries:
 
 ```sh
