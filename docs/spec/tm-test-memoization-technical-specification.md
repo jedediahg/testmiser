@@ -387,6 +387,8 @@ Coverage includes:
 - writes, truncation, rename, unlink, links, directory creation, permission changes, and writable mappings for mutation detection;
 - socket creation/use and all process creation/exec paths.
 
+`mprotect` requests that add `PROT_WRITE` MUST mark the invocation non-reusable until mapping provenance is tracked across protection upgrades. A read-only shared mapping can otherwise become a writable shared mapping without another `mmap` event.
+
 `io_uring`, unmodeled ioctls, mount/root/namespace changes, external shared memory/IPC, descriptor passing, device access, and any other unmodeled input channel make the execution non-reusable. Inherited descriptors other than controlled stdin/stdout/stderr are unsupported in 0.1. Input from a terminal, pipe, or uncontrolled stdin forces RUN; use `/dev/null` for eligible commands. Stdout/stderr writes are permitted; replay is governed by the output contract in section 38.
 
 Observer setup failure MUST run the command once without caching. Failure after launch MUST preserve the running invocation where possible and revoke eligibility; it MUST NOT restart a command that may already have performed effects.

@@ -984,6 +984,10 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
                 observer.saw_external_descriptor = 1;
         }
         return;
+    case 10: /* mprotect: mapping provenance is not tracked across upgrades */
+        if (((int)regs->rdx & PROT_WRITE) != 0)
+            observer.saw_mutation = 1;
+        return;
     case 202: /* futex: thread synchronization */
     case 12:  /* brk */
     case 13:  /* rt_sigaction */
@@ -996,7 +1000,6 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 79:  /* getcwd is covered by working-directory and cwd-change inputs */
     case 2:   /* open: path and flags captured by note_syscall */
     case 257: /* openat: path and flags captured by note_syscall */
-    case 10:  /* mprotect */
     case 11:  /* munmap */
         return;
     case 102: /* getuid */

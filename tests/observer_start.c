@@ -16,9 +16,11 @@ int main(void)
     struct tm_observer_report output_report = {0};
     struct tm_observer_report traversal_report = {0};
     struct tm_observer_report failed_report = {0};
+    struct tm_observer_report mprotect_report = {0};
     char repository[4096], output_path[4200] = {0};
     char escape_path[4200] = {0};
     char failed_input_path[4200] = {0};
+    char mprotect_input_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
     char *output_command[] = {"/bin/sh", "-c",
         "mkdir build/tm-observer-output-test/sub && printf data > build/tm-observer-output-test/sub/report", NULL};
@@ -26,6 +28,8 @@ int main(void)
         "printf escape > build/tm-observer-output-test/../tm-observer-output-escape", NULL};
     char *failed_command[] = {"./build/failing_read_probe",
         "build/tm-observer-failed-input", "23", NULL};
+    char *mprotect_command[] = {"./build/mprotect_probe",
+        "build/tm-observer-mprotect-input", NULL};
     size_t index, executable_count = 0;
     int result = tm_observe_and_run_with_fds(command, 0, NULL, "/workspace",
         NULL, 0, 0, 0, "/bin/true", 0, NULL, 0, &report);
@@ -121,6 +125,38 @@ int main(void)
         }
     }
     (void)unlink(failed_input_path);
+    {
+        int descriptor;
+        if (snprintf(mprotect_input_path, sizeof(mprotect_input_path),
+                     "%s/build/tm-observer-mprotect-input", repository) >=
+                (int)sizeof(mprotect_input_path) ||
+            (descriptor = open(mprotect_input_path,
+                O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600)) < 0) {
+            fprintf(stderr, "could not create mprotect observation fixture\n");
+            if (mprotect_input_path[0] != '\0') (void)unlink(mprotect_input_path);
+            return 1;
+        }
+        if (ftruncate(descriptor, 4096) < 0) {
+            close(descriptor);
+            fprintf(stderr, "could not size mprotect observation fixture\n");
+            (void)unlink(mprotect_input_path);
+            return 1;
+        }
+        if (close(descriptor) < 0) {
+            fprintf(stderr, "could not close mprotect observation fixture\n");
+            (void)unlink(mprotect_input_path);
+            return 1;
+        }
+    }
+    if (tm_observe_and_run_with_fds(mprotect_command, 0, NULL, repository,
+            NULL, 0, 0, 0, NULL, 0, NULL, 0, &mprotect_report) != 0 ||
+        (mprotect_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_MUTATION) == 0) {
+        fprintf(stderr, "observer accepted writable mprotect on a shared mapping\n");
+        (void)unlink(mprotect_input_path);
+        return 1;
+    }
+    (void)unlink(mprotect_input_path);
     {
         char report_path[4300], directory_path[4300];
         if (snprintf(report_path, sizeof(report_path), "%s/sub/report",
