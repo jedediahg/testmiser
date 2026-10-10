@@ -1693,9 +1693,41 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
                        const char *repository_root,
                        struct tm_observer_report *report)
 {
-    return tm_observe_and_run_with_fds(command, explain, environment,
-                                       repository_root, NULL, 0, 0, 0, NULL,
-                                       0, NULL, 0, report);
+    const char *start_after_exec = command != NULL ? command[0] : NULL;
+    char *working_directory = NULL, *resolved_target = NULL;
+    int result;
+
+    if (start_after_exec != NULL && start_after_exec[0] != '/' &&
+        strchr(start_after_exec, '/') != NULL) {
+        working_directory = getcwd(NULL, 0);
+        if (working_directory != NULL) {
+            size_t directory_length = strlen(working_directory);
+            size_t target_length = strlen(start_after_exec);
+            if (directory_length <= SIZE_MAX - 2 &&
+                target_length <= SIZE_MAX - directory_length - 2) {
+                resolved_target = malloc(directory_length + target_length + 2);
+                if (resolved_target != NULL) {
+                    memcpy(resolved_target, working_directory,
+                           directory_length);
+                    resolved_target[directory_length] = '/';
+                    memcpy(resolved_target + directory_length + 1,
+                           start_after_exec, target_length + 1);
+                    start_after_exec = resolved_target;
+                } else {
+                    start_after_exec = NULL;
+                }
+            } else {
+                start_after_exec = NULL;
+            }
+        } else {
+            start_after_exec = NULL;
+        }
+    }
+    result = tm_observe_and_run_with_fds(command, explain, environment,
+        repository_root, NULL, 0, 0, 0, start_after_exec, 0, NULL, 0, report);
+    free(resolved_target);
+    free(working_directory);
+    return result;
 }
 
 #else
