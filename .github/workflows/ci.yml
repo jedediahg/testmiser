@@ -45,6 +45,4 @@ jobs:
             bash scripts/tm-ci-validate-results.sh
           fi
       - name: Verify signed cross-worktree reuse
-        env:
-          TM_ALLOW_BACKEND_UNAVAILABLE: "1"
         run: bash tests/portable-reuse-ci.sh
