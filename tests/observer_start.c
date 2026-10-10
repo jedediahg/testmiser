@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "tm/observer.h"
@@ -14,13 +15,17 @@ int main(void)
     struct tm_observer_report controlled_report = {0};
     struct tm_observer_report output_report = {0};
     struct tm_observer_report traversal_report = {0};
+    struct tm_observer_report failed_report = {0};
     char repository[4096], output_path[4200] = {0};
     char escape_path[4200] = {0};
+    char failed_input_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
     char *output_command[] = {"/bin/sh", "-c",
         "mkdir build/tm-observer-output-test/sub && printf data > build/tm-observer-output-test/sub/report", NULL};
     char *traversal_command[] = {"/bin/sh", "-c",
         "printf escape > build/tm-observer-output-test/../tm-observer-output-escape", NULL};
+    char *failed_command[] = {"./build/failing_read_probe",
+        "build/tm-observer-failed-input", "23", NULL};
     size_t index, executable_count = 0;
     int result = tm_observe_and_run_with_fds(command, 0, NULL, "/workspace",
         NULL, 0, 0, 0, "/bin/true", 0, NULL, 0, &report);
@@ -78,6 +83,44 @@ int main(void)
         return 1;
     }
     (void)unlink(escape_path);
+    {
+        static const char input_contents[] = "failure-state-input\n";
+        int descriptor;
+        if (snprintf(failed_input_path, sizeof(failed_input_path),
+                     "%s/build/tm-observer-failed-input", repository) >=
+                (int)sizeof(failed_input_path) ||
+            (descriptor = open(failed_input_path,
+                O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600)) < 0 ||
+            write(descriptor, input_contents, sizeof(input_contents) - 1) !=
+                (ssize_t)(sizeof(input_contents) - 1) || close(descriptor) < 0) {
+            fprintf(stderr, "could not create failed-run input fixture\n");
+            if (failed_input_path[0] != '\0') (void)unlink(failed_input_path);
+            return 1;
+        }
+    }
+    if (tm_observe_and_run_with_fds(failed_command, 0, NULL, repository,
+            NULL, 0, 0, 0, NULL, 1, NULL, 0, &failed_report) != 23 ||
+        !failed_report.observation_complete) {
+        fprintf(stderr, "observer did not preserve a traced failed command\n");
+        (void)unlink(failed_input_path);
+        return 1;
+    }
+    {
+        size_t candidate;
+        int found_input = 0;
+        for (candidate = 0; candidate < failed_report.candidate_count;
+             candidate++)
+            if (strcmp(failed_report.candidates[candidate].path,
+                       "build/tm-observer-failed-input") == 0)
+                found_input = 1;
+        if (!found_input) {
+            fprintf(stderr,
+                    "failed command input was lost from the observer report\n");
+            (void)unlink(failed_input_path);
+            return 1;
+        }
+    }
+    (void)unlink(failed_input_path);
     {
         char report_path[4300], directory_path[4300];
         if (snprintf(report_path, sizeof(report_path), "%s/sub/report",

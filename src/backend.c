@@ -1094,8 +1094,7 @@ int tm_backend_run(const struct tm_profile *profile,
             repository_fd = -1;
         }
     }
-    if (result > 0 && *command_result == 0 &&
-        tm_observer_report_allows_reuse(report)) {
+    if (result > 0 && tm_observer_report_allows_reuse(report)) {
         int *readable_roots = input_count == 0 ? NULL :
             calloc(input_count, sizeof(*readable_roots));
         int capture_result = input_count == 0 ?
