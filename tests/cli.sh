@@ -5,6 +5,16 @@ tm_bin=${TM_BIN:-./build/tm}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
+mkdir -p "$tmp_dir/repo/.tm/results"
+"$tm_bin" validate --root "$tmp_dir/repo" >"$tmp_dir/validate-empty.out"
+mkdir -p "$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+printf '{}\n' >"$tmp_dir/repo/.tm/results/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bad.tm.json"
+set +e
+"$tm_bin" validate --root "$tmp_dir/repo" >"$tmp_dir/validate-invalid.out" 2>&1
+status=$?
+set -e
+test "$status" -eq 1
+
 "$tm_bin" --help >"$tmp_dir/help.out"
 grep -q 'Usage: tm' "$tmp_dir/help.out"
 

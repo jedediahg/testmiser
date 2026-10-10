@@ -5,6 +5,7 @@
 
 #include "tm/observer.h"
 #include "tm/tm.h"
+#include "tm/validate.h"
 
 struct options {
     int force;
@@ -64,6 +65,8 @@ int main(int argc, char **argv)
     struct options options;
     int parse_result;
 
+    if (argc > 1 && strcmp(argv[1], "validate") == 0)
+        return tm_validate_main(argc, argv);
     parse_result = parse_options(argc, argv, &options);
     if (parse_result != 0) {
         return parse_result > 0 ? 0 : TM_EXIT_INTERNAL_ERROR;

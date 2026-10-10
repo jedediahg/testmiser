@@ -96,6 +96,19 @@ int main(void)
         fprintf(stderr, "trust policy accepted an out-of-scope result\n");
         goto done;
     }
+    if (tm_trust_policy_classify(policy, "sample", profile, key_id, 1, 2,
+                                 &resolved) != TM_TRUST_STALE_EPOCH ||
+        resolved == NULL) goto done;
+    EVP_PKEY_free(resolved);
+    resolved = NULL;
+    if (tm_trust_policy_classify(policy, "sample", wrong_profile, key_id,
+                                 2, 2, &resolved) !=
+            TM_TRUST_UNAPPROVED_PROFILE || resolved == NULL) goto done;
+    EVP_PKEY_free(resolved);
+    resolved = NULL;
+    if (tm_trust_policy_classify(policy, "missing", profile, key_id, 2, 2,
+                                 &resolved) != TM_TRUST_UNKNOWN_REPOSITORY ||
+        resolved != NULL) goto done;
 
     tm_trust_policy_free(policy);
     policy = NULL;

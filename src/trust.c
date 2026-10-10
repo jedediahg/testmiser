@@ -317,13 +317,10 @@ static int array_contains_string(const struct tm_json_value *array,
     return 0;
 }
 
-int tm_trust_policy_authorize(const struct tm_trust_policy *policy,
-                             const char *repository_id,
-                             const char *profile_digest,
-                             const char *key_id,
-                             uint64_t trust_epoch,
-                             uint64_t semantics_version,
-                             EVP_PKEY **public_key)
+enum tm_trust_status tm_trust_policy_classify(
+    const struct tm_trust_policy *policy, const char *repository_id,
+    const char *profile_digest, const char *key_id, uint64_t trust_epoch,
+    uint64_t semantics_version, EVP_PKEY **public_key)
 {
     const struct tm_json_value *repositories;
     size_t index;
@@ -332,7 +329,7 @@ int tm_trust_policy_authorize(const struct tm_trust_policy *policy,
         !valid_digest(profile_digest) || !valid_digest(key_id) ||
         public_key == NULL) {
         errno = EINVAL;
-        return -1;
+        return TM_TRUST_POLICY_ERROR;
     }
     *public_key = NULL;
     repositories = field(policy->document, "repositories");
@@ -353,17 +350,6 @@ int tm_trust_policy_authorize(const struct tm_trust_policy *policy,
 
         if (candidate_id == NULL || strcmp(candidate_id, repository_id) != 0)
             continue;
-        if (trust_epoch < tm_json_integer_value(minimum) ||
-            !array_contains_string(profiles, profile_digest) ||
-            array_contains_string(revoked, key_id)) {
-            errno = EACCES;
-            return -1;
-        }
-        for (key_index = 0; key_index < tm_json_size(semantics); key_index++) {
-            if (tm_json_integer_value(tm_json_array_get(semantics, key_index)) ==
-                semantics_version) semantics_allowed = 1;
-        }
-        if (!semantics_allowed) { errno = EACCES; return -1; }
         for (key_index = 0; key_index < tm_json_size(keys); key_index++) {
             const struct tm_json_value *key = tm_json_array_get(keys, key_index);
             const char *candidate_key_id = string_field(key, "key_id");
@@ -372,14 +358,41 @@ int tm_trust_policy_authorize(const struct tm_trust_policy *policy,
                 strcmp(candidate_key_id, key_id) == 0) {
                 if (decode_public_key(public_key_text, public_key) < 0) {
                     errno = EBADMSG;
-                    return -1;
+                    return TM_TRUST_POLICY_ERROR;
                 }
-                return 0;
+                break;
             }
         }
-        errno = EACCES;
-        return -1;
+        if (*public_key == NULL) return TM_TRUST_UNKNOWN_KEY;
+        if (array_contains_string(revoked, key_id)) return TM_TRUST_REVOKED;
+        if (trust_epoch < tm_json_integer_value(minimum))
+            return TM_TRUST_STALE_EPOCH;
+        if (!array_contains_string(profiles, profile_digest))
+            return TM_TRUST_UNAPPROVED_PROFILE;
+        for (key_index = 0; key_index < tm_json_size(semantics); key_index++) {
+            if (tm_json_integer_value(tm_json_array_get(semantics, key_index)) ==
+                semantics_version) semantics_allowed = 1;
+        }
+        if (!semantics_allowed) return TM_TRUST_UNSUPPORTED_SEMANTICS;
+        return TM_TRUST_APPROVED;
     }
+    return TM_TRUST_UNKNOWN_REPOSITORY;
+}
+
+int tm_trust_policy_authorize(const struct tm_trust_policy *policy,
+                             const char *repository_id,
+                             const char *profile_digest,
+                             const char *key_id,
+                             uint64_t trust_epoch,
+                             uint64_t semantics_version,
+                             EVP_PKEY **public_key)
+{
+    enum tm_trust_status status = tm_trust_policy_classify(
+        policy, repository_id, profile_digest, key_id, trust_epoch,
+        semantics_version, public_key);
+    if (status == TM_TRUST_APPROVED) return 0;
+    EVP_PKEY_free(public_key == NULL ? NULL : *public_key);
+    if (public_key != NULL) *public_key = NULL;
     errno = EACCES;
     return -1;
 }
