@@ -325,6 +325,26 @@ int main(int argc, char **argv)
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
         }
+        for (index = 0; index < options.input_count; index++)
+            if (!tm_profile_allows_input_path(profile,
+                                               options.input_paths[index])) {
+                fprintf(stderr,
+                    "tm: profile does not permit declared input: %s\n",
+                    options.input_paths[index]);
+                tm_profile_free(profile);
+                tm_trust_policy_free(trust_policy);
+                return TM_EXIT_INTERNAL_ERROR;
+            }
+        for (index = 0; index < options.output_count; index++)
+            if (!tm_profile_allows_output_path(profile,
+                                                options.output_paths[index])) {
+                fprintf(stderr,
+                    "tm: profile does not permit declared output: %s\n",
+                    options.output_paths[index]);
+                tm_profile_free(profile);
+                tm_trust_policy_free(trust_policy);
+                return TM_EXIT_INTERNAL_ERROR;
+            }
         if (verify_selected_runtime(profile, options.explain) < 0) {
             tm_profile_free(profile);
             tm_trust_policy_free(trust_policy);

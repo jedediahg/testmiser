@@ -277,6 +277,37 @@ const char *tm_profile_runtime_digest(const struct tm_profile *profile)
         string_value(profile->document, "runtime_digest");
 }
 
+static int path_within_roots(const struct tm_json_value *roots,
+                             const char *path)
+{
+    size_t index;
+    if (!valid_relative_path(path)) return 0;
+    for (index = 0; index < tm_json_size(roots); index++) {
+        const char *root = tm_json_string_value(tm_json_array_get(roots, index));
+        size_t length;
+        if (root == NULL) continue;
+        length = strlen(root);
+        if (strcmp(root, path) == 0 ||
+            (strncmp(root, path, length) == 0 && path[length] == '/'))
+            return 1;
+    }
+    return 0;
+}
+
+int tm_profile_allows_input_path(const struct tm_profile *profile,
+                                 const char *path)
+{
+    return profile != NULL && path_within_roots(
+        get(profile->document, "input_roots"), path);
+}
+
+int tm_profile_allows_output_path(const struct tm_profile *profile,
+                                  const char *path)
+{
+    return profile != NULL && path_within_roots(
+        get(profile->document, "output_roots"), path);
+}
+
 int tm_profile_is_deterministic(const struct tm_profile *profile)
 {
     if (profile == NULL) return 0;

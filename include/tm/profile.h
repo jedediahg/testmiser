@@ -10,6 +10,10 @@ void tm_profile_free(struct tm_profile *profile);
 const char *tm_profile_repository_id(const struct tm_profile *profile);
 const char *tm_profile_digest(const struct tm_profile *profile);
 const char *tm_profile_runtime_digest(const struct tm_profile *profile);
+int tm_profile_allows_input_path(const struct tm_profile *profile,
+                                 const char *path);
+int tm_profile_allows_output_path(const struct tm_profile *profile,
+                                  const char *path);
 int tm_profile_is_deterministic(const struct tm_profile *profile);
 const char *tm_profile_privacy_class(const struct tm_profile *profile);
 size_t tm_profile_environment_count(const struct tm_profile *profile);

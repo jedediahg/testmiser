@@ -54,6 +54,14 @@ int main(void)
         "\"workspace_path\":\"/workspace\",\"deterministic\":false,"
         "\"privacy_class\":\"secret-dependent\",\"environment\":{},"
         "\"input_roots\":[],\"output_roots\":[],\"scratch_roots\":[]}";
+    static const char output_profile[] =
+        "{\"schema_version\":1,\"repository_id\":\"sample\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v1\","
+        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
+        "\"privacy_class\":\"public\",\"environment\":{},"
+        "\"input_roots\":[\"src\"],\"output_roots\":[\"build\"],"
+        "\"scratch_roots\":[\"/tmp\"]}";
     struct tm_profile *profile = NULL;
     char path[] = "/tmp/tm-profile-test-XXXXXX";
     char digest[72];
@@ -66,6 +74,14 @@ int main(void)
         strcmp(tm_profile_digest(profile),
           "sha256:9594caa6d198b87e03b0dbfd5a869f6096ad69f889dd06bf10b8094cabb716dc") != 0)
         goto done;
+    if (!tm_profile_allows_input_path(profile, "src/main.c") ||
+        !tm_profile_allows_input_path(profile, "tests") ||
+        tm_profile_allows_input_path(profile, "src-old/main.c") ||
+        tm_profile_allows_input_path(profile, "../outside") ||
+        tm_profile_allows_output_path(profile, "build/report")) {
+        fprintf(stderr, "profile root permissions were not enforced\n");
+        goto done;
+    }
     memcpy(digest, tm_profile_digest(profile), sizeof(digest));
     tm_profile_free(profile);
     profile = NULL;
@@ -85,6 +101,12 @@ int main(void)
     }
     if (save(path, overlap) < 0 || tm_profile_load(path, &profile) == 0) {
         fprintf(stderr, "profile accepted overlapping input/output roots\n");
+        goto done;
+    }
+    if (save(path, output_profile) < 0 || tm_profile_load(path, &profile) < 0 ||
+        !tm_profile_allows_output_path(profile, "build/report.json") ||
+        tm_profile_allows_output_path(profile, "build-old/report.json")) {
+        fprintf(stderr, "profile output root matching was incorrect\n");
         goto done;
     }
     status = 0;
