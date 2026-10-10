@@ -3,6 +3,7 @@ set -eu
 
 tm_bin=${TM_BIN:-./build/tm}
 openat2_probe=${OPENAT2_PROBE:-./build/openat2_probe}
+open_mode_probe=${OPEN_MODE_PROBE:-./build/open_mode_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -127,6 +128,11 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
         printf '%s\n' 'supported read-only openat2 was classified as unsupported' >&2
         exit 1
     fi
+fi
+
+if grep -q 'observer prototype' "$tmp_dir/explain.err" &&
+    "$tm_bin" --explain -- "$open_mode_probe" 2>"$tmp_dir/open-mode.err"; then
+    grep -q 'filesystem mutation observed' "$tmp_dir/open-mode.err"
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'

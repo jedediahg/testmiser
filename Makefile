@@ -13,8 +13,8 @@ OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
 all: $(TARGET)
 
-test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/test_digest $(BUILD_DIR)/test_attestation $(BUILD_DIR)/test_identity $(BUILD_DIR)/test_context $(BUILD_DIR)/test_input $(BUILD_DIR)/test_verification $(BUILD_DIR)/test_json $(BUILD_DIR)/test_result $(BUILD_DIR)/test_trust $(BUILD_DIR)/test_profile
-	TM_BIN=./$(TARGET) OPENAT2_PROBE=./$(BUILD_DIR)/openat2_probe sh tests/cli.sh
+test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_DIR)/test_digest $(BUILD_DIR)/test_attestation $(BUILD_DIR)/test_identity $(BUILD_DIR)/test_context $(BUILD_DIR)/test_input $(BUILD_DIR)/test_verification $(BUILD_DIR)/test_json $(BUILD_DIR)/test_result $(BUILD_DIR)/test_trust $(BUILD_DIR)/test_profile
+	TM_BIN=./$(TARGET) OPENAT2_PROBE=./$(BUILD_DIR)/openat2_probe OPEN_MODE_PROBE=./$(BUILD_DIR)/open_mode_probe sh tests/cli.sh
 	./$(BUILD_DIR)/test_digest
 	./$(BUILD_DIR)/test_attestation
 	./$(BUILD_DIR)/test_identity
@@ -30,6 +30,10 @@ $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BUILD_DIR)/openat2_probe: tests/openat2_probe.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $<
+
+$(BUILD_DIR)/open_mode_probe: tests/open_mode_probe.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
