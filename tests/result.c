@@ -60,6 +60,7 @@ int main(void)
     size_t record_length = 0;
     char record_id[72];
     char verified_id[72];
+    struct tm_result_summary summary = {0};
     const char *signature_marker = "\"signature\":\"";
     char *signature_text;
     struct tm_trust_policy *trust = NULL;
@@ -79,10 +80,18 @@ int main(void)
         record[record_length - 1] != '\n' ||
         tm_result_verify(record, record_length, private_key, &policy,
                          verified_id) != 0 ||
+        strcmp(verified_id, expected_id) != 0 ||
+        tm_result_inspect(record, record_length, &summary, verified_id) != 0 ||
+        strcmp(summary.repository_id, "sample") != 0 ||
+        strcmp(summary.command_id,
+               "0000000000000000000000000000000000000000000000000000000000000000") != 0 ||
+        strcmp(summary.verification_id,
+               "ba299d5d7bd04d93e635617e6d2e496248711a9fa93bf4360a98c706ad201622") != 0 ||
         strcmp(verified_id, expected_id) != 0) {
         fprintf(stderr, "signed result golden vector failed\n");
         goto fail;
     }
+    tm_result_summary_clear(&summary);
     if (EVP_PKEY_get_raw_public_key(private_key, public_bytes,
                                     &public_length) != 1 ||
         public_length != sizeof(public_bytes)) goto fail;
@@ -139,6 +148,11 @@ int main(void)
         fprintf(stderr, "tampered signature was accepted\n");
         goto fail;
     }
+    if (tm_result_inspect(tampered, record_length, &summary, verified_id) != 0) {
+        fprintf(stderr, "structural inspection required a trusted signature\n");
+        goto fail;
+    }
+    tm_result_summary_clear(&summary);
 
     noncanonical[0] = ' ';
     memcpy(noncanonical + 1, record, record_length);
@@ -172,6 +186,7 @@ int main(void)
     free(tampered);
     free(noncanonical);
     free(record);
+    tm_result_summary_clear(&summary);
     tm_trust_policy_free(trust);
     unlink(policy_path);
     EVP_PKEY_free(private_key);
@@ -181,6 +196,7 @@ fail:
     free(tampered);
     free(noncanonical);
     free(record);
+    tm_result_summary_clear(&summary);
     if (policy_fd >= 0) close(policy_fd);
     tm_trust_policy_free(trust);
     unlink(policy_path);

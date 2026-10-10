@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -310,6 +312,18 @@ static const char *get_string(const struct tm_json_value *object,
     return tm_json_string_value(tm_json_object_get(object, key));
 }
 
+static int valid_sha256(const char *digest)
+{
+    size_t index;
+    if (digest == NULL || strlen(digest) != 71 ||
+        memcmp(digest, "sha256:", 7) != 0) return 0;
+    for (index = 7; index < 71; index++) {
+        if (!((digest[index] >= '0' && digest[index] <= '9') ||
+              (digest[index] >= 'a' && digest[index] <= 'f'))) return 0;
+    }
+    return 1;
+}
+
 static int parse_inputs(const struct tm_json_value *array,
                         struct tm_input_observation **output,
                         size_t *output_count)
@@ -384,6 +398,144 @@ static int strict_base64_signature(const char *encoded,
         return -1;
     }
     return 0;
+}
+
+void tm_result_summary_clear(struct tm_result_summary *summary)
+{
+    if (summary == NULL) return;
+    free(summary->repository_id);
+    free(summary->profile_digest);
+    free(summary->key_id);
+    free(summary->verification_fingerprint);
+    memset(summary, 0, sizeof(*summary));
+}
+
+static char *copy_string(const char *value)
+{
+    if (value == NULL) return NULL;
+    return strdup(value);
+}
+
+int tm_result_inspect(const unsigned char *record, size_t record_length,
+                      struct tm_result_summary *summary, char record_id[72])
+{
+    struct tm_json_value *envelope = NULL;
+    struct tm_input_observation *inputs = NULL;
+    size_t input_count = 0;
+    const struct tm_json_value *payload;
+    const struct tm_json_value *attestation;
+    const struct tm_json_value *identity_json;
+    const struct tm_json_value *environment;
+    const struct tm_json_value *result_json;
+    const struct tm_json_value *outputs;
+    const char *repository_id;
+    const char *profile_digest;
+    const char *verification_fingerprint;
+    const char *command_fingerprint;
+    const char *working_directory;
+    const char *runtime_digest;
+    const char *context_digest;
+    const char *key_id;
+    unsigned char ignored_signature[64];
+    unsigned char *canonical_envelope = NULL;
+    size_t canonical_envelope_length = 0;
+    uint64_t trust_epoch;
+    uint64_t semantics_version;
+    struct tm_verification_identity identity;
+    char actual_fingerprint[72];
+    int status = -1;
+
+    if (record == NULL || record_length < 2 || record[record_length - 1] != '\n' ||
+        summary == NULL || record_id == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    memset(summary, 0, sizeof(*summary));
+    if (tm_json_parse(record, record_length - 1, &envelope) < 0 ||
+        tm_json_canonicalize(envelope, &canonical_envelope,
+                             &canonical_envelope_length) < 0 ||
+        canonical_envelope_length != record_length - 1 ||
+        memcmp(canonical_envelope, record, canonical_envelope_length) != 0 ||
+        !expect_object_size(envelope, 2)) goto invalid;
+    payload = tm_json_object_get(envelope, "payload");
+    attestation = tm_json_object_get(envelope, "attestation");
+    if (!expect_object_size(payload, 10) ||
+        !expect_object_size(attestation, 3) ||
+        tm_json_integer_value(tm_json_object_get(payload, "schema_version")) != 2 ||
+        tm_json_integer_value(tm_json_object_get(payload,
+                                                "tm_semantics_version")) != 2)
+        goto invalid;
+    repository_id = get_string(payload, "repository_id");
+    profile_digest = get_string(
+        tm_json_object_get(payload, "environment"), "profile_digest");
+    verification_fingerprint = get_string(payload, "verification_fingerprint");
+    identity_json = tm_json_object_get(payload, "identity");
+    environment = tm_json_object_get(payload, "environment");
+    outputs = tm_json_object_get(payload, "outputs");
+    result_json = tm_json_object_get(payload, "result");
+    if (repository_id == NULL || profile_digest == NULL ||
+        verification_fingerprint == NULL || !expect_object_size(identity_json, 2) ||
+        !expect_object_size(environment, 3) || !expect_object_size(result_json, 2) ||
+        tm_json_typeof(outputs) != TM_JSON_ARRAY || tm_json_size(outputs) != 0 ||
+        tm_json_integer_value(tm_json_object_get(result_json, "exit_code")) != 0 ||
+        tm_json_object_get(result_json, "signal") == NULL ||
+        tm_json_typeof(tm_json_object_get(result_json, "signal")) != TM_JSON_NULL)
+        goto invalid;
+    trust_epoch = tm_json_integer_value(tm_json_object_get(payload, "trust_epoch"));
+    semantics_version = tm_json_integer_value(
+        tm_json_object_get(payload, "tm_semantics_version"));
+    if (trust_epoch == UINT64_MAX || semantics_version == UINT64_MAX) goto invalid;
+    command_fingerprint = get_string(identity_json, "command_fingerprint");
+    working_directory = get_string(identity_json, "working_directory");
+    runtime_digest = get_string(environment, "runtime_digest");
+    context_digest = get_string(environment, "context_digest");
+    if (command_fingerprint == NULL || working_directory == NULL ||
+        runtime_digest == NULL || context_digest == NULL ||
+        parse_inputs(tm_json_object_get(payload, "inputs"), &inputs,
+                     &input_count) < 0) goto invalid;
+    identity = (struct tm_verification_identity){
+        repository_id, command_fingerprint, working_directory, profile_digest,
+        runtime_digest, context_digest, inputs, input_count
+    };
+    if (tm_verification_fingerprint(&identity, actual_fingerprint) < 0 ||
+        strcmp(actual_fingerprint, verification_fingerprint) != 0 ||
+        strlen(command_fingerprint) != 71 ||
+        strlen(verification_fingerprint) != 71) goto invalid;
+    if (get_string(attestation, "algorithm") == NULL ||
+        strcmp(get_string(attestation, "algorithm"), "ed25519") != 0 ||
+        !valid_sha256(get_string(attestation, "key_id")) ||
+        strict_base64_signature(get_string(attestation, "signature"),
+                                ignored_signature) < 0) goto invalid;
+    key_id = get_string(attestation, "key_id");
+    summary->repository_id = copy_string(repository_id);
+    summary->profile_digest = copy_string(profile_digest);
+    summary->key_id = copy_string(key_id);
+    summary->verification_fingerprint = copy_string(verification_fingerprint);
+    if (summary->repository_id == NULL || summary->profile_digest == NULL ||
+        summary->key_id == NULL || summary->verification_fingerprint == NULL) {
+        errno = ENOMEM;
+        goto done;
+    }
+    memcpy(summary->command_id, command_fingerprint + 7, 64);
+    summary->command_id[64] = '\0';
+    memcpy(summary->verification_id, verification_fingerprint + 7, 64);
+    summary->verification_id[64] = '\0';
+    summary->trust_epoch = trust_epoch;
+    summary->semantics_version = semantics_version;
+    if (format_sha256(canonical_envelope, canonical_envelope_length,
+                      record_id) < 0) goto done;
+    status = 0;
+    goto done;
+
+invalid:
+    errno = EBADMSG;
+
+done:
+    if (status != 0) tm_result_summary_clear(summary);
+    tm_json_free(envelope);
+    free(inputs);
+    free(canonical_envelope);
+    return status;
 }
 
 int tm_result_verify(const unsigned char *record, size_t record_length,

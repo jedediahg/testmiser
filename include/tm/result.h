@@ -17,6 +17,17 @@ struct tm_result_policy {
     const char *expected_verification_fingerprint;
 };
 
+struct tm_result_summary {
+    char *repository_id;
+    char *profile_digest;
+    char *key_id;
+    char *verification_fingerprint;
+    char command_id[65];
+    char verification_id[65];
+    uint64_t trust_epoch;
+    uint64_t semantics_version;
+};
+
 /* Build a signed v2 success record with an empty output manifest. The returned
  * JSON ends with exactly one LF. */
 int tm_result_create(const struct tm_verification_identity *identity,
@@ -37,5 +48,11 @@ int tm_result_verify_trusted(const unsigned char *record, size_t record_length,
                              const struct tm_trust_policy *trust_policy,
                              const char *expected_verification_fingerprint,
                              char record_id[72]);
+
+/* Validate canonical structure and reconstruct the fingerprint without
+ * asserting that the signature is trusted or that current files are fresh. */
+int tm_result_inspect(const unsigned char *record, size_t record_length,
+                      struct tm_result_summary *summary, char record_id[72]);
+void tm_result_summary_clear(struct tm_result_summary *summary);
 
 #endif
