@@ -40,7 +40,7 @@ static int trusted_executable_directories(const char *executable_path)
     for (;;) {
         char *separator = strrchr(parent, '/');
         struct stat status;
-        int descriptor, access_error;
+        int descriptor;
         if (separator == NULL) { errno = EINVAL; break; }
         if (separator == parent) separator[1] = '\0';
         else *separator = '\0';
@@ -59,17 +59,7 @@ static int trusted_executable_directories(const char *executable_path)
             errno = EPERM;
             break;
         }
-        if (faccessat(descriptor, ".", W_OK, AT_EACCESS) == 0) {
-            close(descriptor);
-            errno = EPERM;
-            break;
-        }
-        access_error = errno;
         close(descriptor);
-        if (access_error != EACCES && access_error != EROFS) {
-            errno = access_error;
-            break;
-        }
         if (strcmp(parent, "/") == 0) {
             trusted = 1;
             break;
@@ -112,17 +102,6 @@ int tm_backend_executable_identity(char **resolved_path, char digest[72])
         return -1;
     }
     if (trusted_executable_directories(path) < 0) {
-        saved = errno;
-        free(path);
-        errno = saved;
-        return -1;
-    }
-    if (faccessat(AT_FDCWD, path, W_OK, AT_EACCESS) == 0) {
-        free(path);
-        errno = EPERM;
-        return -1;
-    }
-    if (errno != EACCES && errno != EROFS) {
         saved = errno;
         free(path);
         errno = saved;
