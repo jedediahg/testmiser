@@ -16,12 +16,16 @@ approved files. If the backend cannot enforce the profile, ordinary runs fall
 back to execution without reuse. A producer invocation with `--signing-key`
 fails closed if the controlled backend cannot start.
 
-This repository's GitHub Actions acceptance job runs Bubblewrap inside a
-disposable privileged Debian container as a non-root user because the hosted
-job runner does not allow the required network namespace. That verifies the
-implementation in a capable environment; it does not prove an adopter's
-GitLab runner has the same namespace, ptrace, filesystem, or UID behavior. Run
-the acceptance gate on the target runner pool before enabling skips there.
+The GitHub Actions acceptance job runs Bubblewrap inside a disposable
+privileged Debian container as a non-root user. Standard GitHub-hosted runners
+still deny the required network namespace, even for that nested container, so
+the acceptance job fails there. Set the repository variable
+`TM_PORTABLE_ACCEPTANCE_RUNNER` to an isolated Linux runner label whose Docker
+daemon permits the nested namespace and ptrace operations. The GitLab gate uses
+the `linux-bwrap` runner tag for the same reason. Provision only runners that
+pass the portable acceptance gate; a successful repository workflow does not
+prove a separate project's runner has the same namespace, ptrace, filesystem,
+or UID behavior.
 
 Keep producers and consumers on a compatible execution context. `tm` includes
 host kernel identity, CPU features/affinity, resource limits, descriptor state,
