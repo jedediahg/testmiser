@@ -770,6 +770,7 @@ Target commands for the first portable release (not claims of current implementa
 
 ```text
 tm [--root DIR] [--profile FILE] [--trust-policy FILE] [--input FILE] [--output PATH] [--force] [--explain] -- COMMAND [ARGUMENT ...]
+tm profile digest FILE
 tm validate [--root DIR] [--trust-policy FILE] [--require-trust]
 tm clean [--root DIR] [--records]
 ```

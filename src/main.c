@@ -29,6 +29,25 @@ static void print_usage(FILE *stream)
     fprintf(stream, "  --help     show this help\n");
 }
 
+static int profile_command(int argc, char **argv)
+{
+    struct tm_profile *profile = NULL;
+    int result;
+    if (argc != 4 || strcmp(argv[2], "digest") != 0) {
+        fprintf(stderr, "Usage: tm profile digest FILE\n");
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    if (tm_profile_load(argv[3], &profile) < 0) {
+        fprintf(stderr, "tm: invalid profile: %s\n", argv[3]);
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    result = printf("%s %s\n", tm_profile_repository_id(profile),
+                    tm_profile_digest(profile)) < 0 ?
+             TM_EXIT_INTERNAL_ERROR : 0;
+    tm_profile_free(profile);
+    return result;
+}
+
 static int parse_options(int argc, char **argv, struct options *options)
 {
     int index;
@@ -89,6 +108,8 @@ int main(int argc, char **argv)
 
     if (argc > 1 && strcmp(argv[1], "validate") == 0)
         return tm_validate_main(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "profile") == 0)
+        return profile_command(argc, argv);
     parse_result = parse_options(argc, argv, &options);
     if (parse_result != 0) {
         return parse_result > 0 ? 0 : TM_EXIT_INTERNAL_ERROR;

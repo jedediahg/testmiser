@@ -49,7 +49,7 @@ Follow section 52:
 5. Implement common result distribution and optional coordination, including failure recovery and invalidation.
 6. Pilot actual workloads and measure eligibility, warm hits, validation cost, and concurrent duplicate rate.
 
-The profile schema, transport interface, and reference backend selection remain implementation deliverables that must be frozen before enabling portable hits. Their required behavior is defined in the spec. There is no local-only caching milestone that counts as completing the product objective.
+Profile schema v1 is now frozen, parsed, operator-approved by repository ID plus canonical digest, and exposed through `tm profile digest FILE`. The selected bubblewrap contract is not yet enforced: v1 still needs an immutable runtime provision/mapping contract, and the backend must prove network and mount namespace capabilities before launch. This WSL2 development host cannot create the required network namespace (`bwrap --unshare-all` fails with `Operation not permitted`), so profile invocations remain uncached. The portable store/transport format and shared coordinator are also open implementation work. There is no local-only caching milestone that counts as completing the product objective.
 
 ## How the no-repeat objective works
 

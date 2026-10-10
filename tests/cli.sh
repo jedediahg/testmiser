@@ -34,6 +34,8 @@ test ! -e "$tmp_dir/profile-child-ran"
 cat >"$tmp_dir/profile.json" <<'EOF'
 {"schema_version":1,"repository_id":"sample","backend_contract":"bubblewrap-linux-x86_64-v1","runtime_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","workspace_path":"/workspace","deterministic":true,"privacy_class":"public","environment":{"LANG":"C"},"input_roots":["src","tests"],"output_roots":[],"scratch_roots":["/tmp"]}
 EOF
+test "$("$tm_bin" profile digest "$tmp_dir/profile.json")" = \
+    'sample sha256:9594caa6d198b87e03b0dbfd5a869f6096ad69f889dd06bf10b8094cabb716dc'
 cat >"$tmp_dir/policy.json" <<'EOF'
 {"schema_version":1,"repositories":[{"repository_id":"sample","minimum_trust_epoch":1,"allowed_semantics":[2],"profiles":["sha256:9594caa6d198b87e03b0dbfd5a869f6096ad69f889dd06bf10b8094cabb716dc"],"keys":[],"revoked_key_ids":[]}]}
 EOF
