@@ -63,7 +63,18 @@ portable_acceptance:
   needs:
     - test
   before_script:
-    - sudo apt-get update
-    - sudo apt-get install --yes --no-install-recommends build-essential libssl-dev bubblewrap busybox-static jq
+    - apt-get update
+    - apt-get install --yes --no-install-recommends build-essential libssl-dev bubblewrap busybox-static jq sudo git
   script:
-    - bash tests/portable-reuse-ci.sh
+    - |
+      useradd --create-home --shell /bin/bash tm-acceptance
+      printf 'tm-acceptance ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/tm-acceptance
+      chmod 0440 /etc/sudoers.d/tm-acceptance
+      sudo -u tm-acceptance -H git config --global --add safe.directory "$CI_PROJECT_DIR"
+      sudo -u tm-acceptance -H git config --global --add safe.directory "$CI_PROJECT_DIR/.git"
+      sudo -u tm-acceptance -H git clone --quiet --no-hardlinks --local \
+        "$CI_PROJECT_DIR" /home/tm-acceptance/testmiser
+      sudo -u tm-acceptance -H env \
+        TM_ACCEPTANCE_SHARED_STORE="${TM_ACCEPTANCE_SHARED_STORE:-}" \
+        TM_REQUIRE_PTRACE=1 bash -c \
+        'cd /home/tm-acceptance/testmiser && bash tests/portable-reuse-ci.sh'
