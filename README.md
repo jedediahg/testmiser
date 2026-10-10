@@ -1,6 +1,6 @@
 # TestMiser
 
-`tm` is a planned Linux-first C utility that memoizes successful verification commands. It aims to observe the files and execution context used by a command, record a deterministic fingerprint, and skip the command on later runs only when its previous successful result is still safe to reuse.
+`tm` is a Linux-first C utility that memoizes successful verification commands. It observes files and execution context, records signed result evidence, and skips a command only when a previous successful result is still safe to reuse.
 
 The project is in early development. The design is in [the technical specification](docs/spec/tm-test-memoization-technical-specification.md); open design questions from review are tracked in [implementation notes](docs/implementation-notes.md).
 
@@ -57,4 +57,4 @@ docs/           implementation review notes
 
 ## Development status
 
-The MVP target is Linux and C. It is intended to remain test-framework independent and to use SHA-256 plus deterministic JSON sidecars. Sidecars and `.tm` state must never become test inputs or trigger broad test runs. Run `make test` for the CLI and unit suite. CI classifies `.tm/results` and `.tm/blobs` changes as evidence-only and runs `tm validate --require-trust`, which checks referenced output blobs; mixed/source changes run the regular suite and validate changed evidence. Configure the public, operator-approved JSON policy in GitHub Actions as the `TM_TRUST_POLICY_JSON` repository variable or in GitLab as a protected `TM_TRUST_POLICY_JSON` variable. Without policy, new sidecars are untrusted and cannot pass strict validation. Both providers also run GCC's `-fanalyzer` with the regular suite for code changes. See [AGENTS.md](AGENTS.md) for contributor guidance.
+The implementation is not yet beta-ready. Run `make test` for the CLI and unit suite. This repository's CI runs that suite directly; it does not wrap `make test` in `tm`. Evidence-only changes are strictly validated with `tm validate --require-trust`, while mixed/source changes run the suite and validate changed evidence. An application CI job can reuse committed evidence only when it invokes the same command through `tm` with a matching approved profile, runtime, and public trust policy, for example `tm --profile .tm/profiles/portable-linux.json --trust-policy .tm/trust.json -- ./build/unit_tests`. See [the opt-in portability acceptance test](tests/README.md) for the required producer/consumer setup. The current development host cannot complete Bubblewrap network namespace setup, and cross-provider portability has not been demonstrated. CI also runs GCC's `-fanalyzer` for code changes. See [AGENTS.md](AGENTS.md) for contributor guidance.
