@@ -10,6 +10,8 @@ int tm_input_capture_file(int root_fd, const char *path, char digest[72]);
 /* Capture a stable directory-membership digest. File contents require their
  * own file observations; the directory digest records names and entry kinds. */
 int tm_input_capture_directory(int root_fd, const char *path, char digest[72]);
+/* Capture membership for the directory represented by root_fd itself. */
+int tm_input_capture_directory_root(int root_fd, char digest[72]);
 
 /* Capture whether a canonical path is absent without following symlinks. */
 int tm_input_capture_exists(int root_fd, const char *path, int *exists);

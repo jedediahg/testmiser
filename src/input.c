@@ -335,6 +335,16 @@ done:
     return result;
 }
 
+int tm_input_capture_directory_root(int root_fd, char digest[72])
+{
+    char hex[65];
+    if (root_fd < 0 || digest == NULL) { errno = EINVAL; return -1; }
+    if (hash_directory_at(root_fd, ".", hex) < 0) return -1;
+    memcpy(digest, "sha256:", 7);
+    memcpy(digest + 7, hex, sizeof(hex));
+    return 0;
+}
+
 int tm_input_capture_exists(int root_fd, const char *path, int *exists)
 {
     char *leaf = NULL;

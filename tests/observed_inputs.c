@@ -9,6 +9,7 @@
 
 #include "tm/input.h"
 #include "tm/observed_inputs.h"
+#include "tm/snapshot.h"
 
 static int write_file(const char *path, const char *text)
 {
@@ -30,6 +31,10 @@ int main(void)
     char subdirectory[512] = {0}, child[512] = {0}, extra[512] = {0};
     struct tm_observer_report report = {0};
     struct tm_observed_input_manifest manifest = {0};
+    struct tm_snapshot *snapshot = NULL;
+    const char *snapshot_paths[] = {"subdir"};
+    int snapshot_root = -1, snapshot_roots[1];
+    char snapshot_digest[72];
     int root = -1, status = 1;
 
     if (mkdtemp(directory) == NULL) return 1;
@@ -102,6 +107,39 @@ int main(void)
     }
     tm_observed_input_manifest_clear(&manifest);
 
+    if (tm_snapshot_create(root, snapshot_paths, 1, &snapshot) < 0 ||
+        (snapshot_root = tm_snapshot_open_root(snapshot, 0)) < 0 ||
+        write_file(child, "changed after snapshot\n") < 0) goto done;
+    snapshot_roots[0] = snapshot_root;
+    report.candidate_count = 2;
+    snprintf(report.candidates[0].kind,
+             sizeof(report.candidates[0].kind), "directory listing");
+    snprintf(report.candidates[0].path,
+             sizeof(report.candidates[0].path), "subdir");
+    snprintf(report.candidates[1].kind,
+             sizeof(report.candidates[1].kind), "opened file");
+    snprintf(report.candidates[1].path,
+             sizeof(report.candidates[1].path), "subdir/child");
+    if (tm_observer_capture_snapshot_inputs(&report, snapshot_paths,
+            snapshot_roots, 1, &manifest) < 0 || manifest.count != 2 ||
+        strcmp(manifest.items[0].path, "subdir") != 0 ||
+        manifest.items[0].kind != TM_INPUT_DIRECTORY ||
+        strcmp(manifest.items[1].path, "subdir/child") != 0 ||
+        manifest.items[1].kind != TM_INPUT_FILE ||
+        tm_input_capture_directory_root(snapshot_root, snapshot_digest) < 0 ||
+        strcmp(snapshot_digest, manifest.items[0].digest) != 0 ||
+        tm_input_capture_file(snapshot_root, "child", snapshot_digest) < 0 ||
+        strcmp(snapshot_digest, manifest.items[1].digest) != 0 ||
+        tm_input_matches(root, &manifest.items[1]) == 0) {
+        fprintf(stderr, "snapshot input manifest did not retain consumed bytes\n");
+        goto done;
+    }
+    tm_observed_input_manifest_clear(&manifest);
+    close(snapshot_root);
+    snapshot_root = -1;
+    tm_snapshot_free(snapshot);
+    snapshot = NULL;
+
     snprintf(report.candidates[0].kind,
              sizeof(report.candidates[0].kind), "metadata probe");
     if (tm_observer_capture_inputs(&report, root, &manifest) == 0) {
@@ -118,6 +156,8 @@ int main(void)
     status = 0;
 done:
     tm_observed_input_manifest_clear(&manifest);
+    if (snapshot_root >= 0) close(snapshot_root);
+    tm_snapshot_free(snapshot);
     if (root >= 0) close(root);
     unlink(link_path);
     unlink(child);

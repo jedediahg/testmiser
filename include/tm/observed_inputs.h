@@ -16,6 +16,12 @@ struct tm_observed_input_manifest {
 int tm_observer_capture_inputs(const struct tm_observer_report *report,
                                int repository_root_fd,
                                struct tm_observed_input_manifest *manifest);
+/* As above, but resolve each repository-relative candidate through the
+ * approved-root snapshots used by the controlled workspace. */
+int tm_observer_capture_snapshot_inputs(
+    const struct tm_observer_report *report,
+    const char *const *root_paths, const int *root_descriptors,
+    size_t root_count, struct tm_observed_input_manifest *manifest);
 void tm_observed_input_manifest_clear(
     struct tm_observed_input_manifest *manifest);
 
