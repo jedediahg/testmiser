@@ -156,6 +156,72 @@ fail:
     return -1;
 }
 
+int tm_lock_acquire_store(int store_root_fd, const char *repository_id,
+                          const char *command_fingerprint,
+                          const char *profile_digest,
+                          const char *context_digest, struct tm_lock *lock)
+{
+    static const unsigned char domain[] = "tm-shared-lock-v1\0";
+    unsigned char material[sizeof(domain) - 1 + 4 + 128 + 3 * (4 + 71)];
+    size_t offset = sizeof(domain) - 1;
+    char digest[65];
+    char filename[80];
+    struct stat status;
+    int locks = -1, descriptor = -1, saved;
+
+    if (store_root_fd < 0 || !valid_repository_id(repository_id) ||
+        !valid_digest(command_fingerprint) || !valid_digest(profile_digest) ||
+        !valid_digest(context_digest) || lock == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    lock->fd = -1;
+    if (fstat(store_root_fd, &status) < 0) return -1;
+    if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
+        (status.st_mode & 077) != 0) {
+        errno = EACCES;
+        return -1;
+    }
+    memcpy(material, domain, offset);
+    if (append_field(material, sizeof(material), &offset, repository_id) < 0 ||
+        append_field(material, sizeof(material), &offset,
+                     command_fingerprint) < 0 ||
+        append_field(material, sizeof(material), &offset, profile_digest) < 0 ||
+        append_field(material, sizeof(material), &offset, context_digest) < 0 ||
+        tm_sha256_bytes(material, offset, digest) < 0) return -1;
+    if (snprintf(filename, sizeof(filename), "%s.lock", digest) >=
+        (int)sizeof(filename)) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    locks = open_private_directory(store_root_fd, "locks");
+    if (locks < 0) goto fail;
+    descriptor = openat(locks, filename,
+                        O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (descriptor < 0) goto fail;
+    if (fstat(descriptor, &status) < 0) goto fail;
+    if (!S_ISREG(status.st_mode) || status.st_uid != getuid() ||
+        (status.st_mode & 077) != 0 || status.st_nlink != 1) {
+        errno = EACCES;
+        goto fail;
+    }
+    while (flock(descriptor, LOCK_EX) < 0) {
+        if (errno == EINTR) continue;
+        goto fail;
+    }
+    lock->fd = descriptor;
+    descriptor = -1;
+    close(locks);
+    return 0;
+
+fail:
+    saved = errno;
+    if (descriptor >= 0) close(descriptor);
+    if (locks >= 0) close(locks);
+    errno = saved;
+    return -1;
+}
+
 int tm_lock_acquire_default(const char *repository_id,
                             const char *command_fingerprint,
                             const char *profile_digest,

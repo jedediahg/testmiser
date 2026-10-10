@@ -604,6 +604,7 @@ int main(int argc, char **argv)
     const char *unavailable_inputs[TM_MAX_EXPLICIT_INPUTS];
     size_t explicit_input_count = 0, unavailable_input_count = 0, index;
     int repository_fd = -1;
+    int lock_store_fd = -1;
     int backend_used = 0;
     int reusable_context = 0;
     int lock_eligible_profile = 0;
@@ -870,7 +871,20 @@ int main(int argc, char **argv)
         strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
         reusable_context && command_fingerprint[0] != '\0' &&
         repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
-        if (tm_lock_acquire_default(tm_profile_repository_id(profile),
+        if (tm_shared_store_open_configured(&lock_store_fd) == 0) {
+            if (tm_lock_acquire_store(lock_store_fd,
+                    tm_profile_repository_id(profile), command_fingerprint,
+                    tm_profile_digest(profile), context_fingerprint,
+                    &invocation_lock) == 0) {
+                invocation_lock_acquired = 1;
+            } else if (options.explain) {
+                fprintf(stderr, "tm: shared-store invocation lock unavailable; concurrent cold runs may duplicate work\n");
+            }
+            close(lock_store_fd);
+            lock_store_fd = -1;
+        }
+        if (!invocation_lock_acquired &&
+            tm_lock_acquire_default(tm_profile_repository_id(profile),
                 command_fingerprint, tm_profile_digest(profile),
                 context_fingerprint, &invocation_lock) == 0) {
             invocation_lock_acquired = 1;
@@ -902,11 +916,11 @@ int main(int argc, char **argv)
                     tm_lock_release(&invocation_lock);
                     invocation_lock_acquired = 0;
                     if (options.explain)
-                        fprintf(stderr, "tm: reuse rejected: execution context changed while waiting for the local invocation lock\n");
+                        fprintf(stderr, "tm: reuse rejected: execution context changed while waiting for the invocation lock\n");
                 }
             }
-        } else if (options.explain) {
-            fprintf(stderr, "tm: local invocation lock unavailable; concurrent cold runs may duplicate work\n");
+        } else if (!invocation_lock_acquired && options.explain) {
+            fprintf(stderr, "tm: invocation lock unavailable; concurrent cold runs may duplicate work\n");
         }
     }
     if (invocation_lock_acquired && profile != NULL &&

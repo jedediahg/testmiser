@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "tm/lock.h"
+#include "tm/local_store.h"
 
 static const char *profile_digest =
     "sha256:1111111111111111111111111111111111111111111111111111111111111111";
@@ -41,7 +42,10 @@ int main(void)
     char link[] = "/tmp/tm-lock-link-XXXXXX";
     char lock_directory[256] = {0};
     struct tm_lock held = {-1}, independent = {-1}, rejected = {-1};
+    struct tm_lock shared_held = {-1};
     int ready[2] = {-1, -1}, acquired[2] = {-1, -1};
+    int shared_ready[2] = {-1, -1}, shared_acquired[2] = {-1, -1};
+    int store_fd = -1;
     pid_t child = -1;
     char *old_xdg_cache = NULL;
     int had_xdg_cache = 0;
@@ -126,6 +130,54 @@ int main(void)
     if (tm_lock_acquire(cache, "Bad Repo", command_digest, profile_digest,
                         context_digest, &rejected) == 0) goto done;
     stage = 7;
+    if (tm_local_store_open(cache, &store_fd) < 0 ||
+        tm_lock_acquire_store(store_fd, "sample", command_digest,
+            profile_digest, context_digest, &shared_held) < 0 ||
+        pipe(shared_ready) < 0 || pipe(shared_acquired) < 0) goto done;
+    child = fork();
+    if (child < 0) goto done;
+    if (child == 0) {
+        struct tm_lock second = {-1};
+        char byte = 'r';
+        close(shared_held.fd);
+        close(shared_ready[0]);
+        close(shared_acquired[0]);
+        if (write(shared_ready[1], &byte, 1) != 1) _exit(2);
+        if (tm_lock_acquire_store(store_fd, "sample", command_digest,
+                profile_digest, context_digest, &second) < 0) _exit(2);
+        byte = 'a';
+        (void)write(shared_acquired[1], &byte, 1);
+        tm_lock_release(&second);
+        _exit(0);
+    }
+    close(shared_ready[1]); shared_ready[1] = -1;
+    close(shared_acquired[1]); shared_acquired[1] = -1;
+    {
+        char byte;
+        struct pollfd event = {shared_acquired[0], POLLIN, 0};
+        int polled;
+        if (read(shared_ready[0], &byte, 1) != 1 || byte != 'r') goto done;
+        polled = poll(&event, 1, 100);
+        if (polled != 0) {
+            fprintf(stderr, "shared-store lock became available early\n");
+            goto done;
+        }
+        tm_lock_release(&shared_held);
+        polled = poll(&event, 1, 5000);
+        if (polled != 1 || read(shared_acquired[0], &byte, 1) != 1 ||
+            byte != 'a') {
+            fprintf(stderr, "shared-store lock did not release\n");
+            goto done;
+        }
+    }
+    {
+        int child_status;
+        if (waitpid(child, &child_status, 0) != child ||
+            !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0)
+            goto done;
+        child = -1;
+    }
+    stage = 8;
     status = 0;
 
 done:
@@ -140,9 +192,15 @@ done:
     if (ready[1] >= 0) close(ready[1]);
     if (acquired[0] >= 0) close(acquired[0]);
     if (acquired[1] >= 0) close(acquired[1]);
+    if (shared_ready[0] >= 0) close(shared_ready[0]);
+    if (shared_ready[1] >= 0) close(shared_ready[1]);
+    if (shared_acquired[0] >= 0) close(shared_acquired[0]);
+    if (shared_acquired[1] >= 0) close(shared_acquired[1]);
     tm_lock_release(&held);
     tm_lock_release(&independent);
     tm_lock_release(&rejected);
+    tm_lock_release(&shared_held);
+    if (store_fd >= 0) close(store_fd);
     if (link[0] != '\0') unlink(link);
     if (cache[0] != '\0') {
         DIR *directory;
@@ -159,6 +217,20 @@ done:
             closedir(directory);
         }
         snprintf(lock_directory, sizeof(lock_directory), "%s/testmiser/locks", cache);
+        rmdir(lock_directory);
+        snprintf(lock_directory, sizeof(lock_directory), "%s/testmiser/store/locks", cache);
+        if ((directory = opendir(lock_directory)) != NULL) {
+            while ((entry = readdir(directory)) != NULL) {
+                char file[320];
+                if (strcmp(entry->d_name, ".") == 0 ||
+                    strcmp(entry->d_name, "..") == 0) continue;
+                if (snprintf(file, sizeof(file), "%s/%s", lock_directory,
+                             entry->d_name) < (int)sizeof(file)) unlink(file);
+            }
+            closedir(directory);
+        }
+        rmdir(lock_directory);
+        snprintf(lock_directory, sizeof(lock_directory), "%s/testmiser/store", cache);
         rmdir(lock_directory);
         snprintf(lock_directory, sizeof(lock_directory), "%s/testmiser", cache);
         rmdir(lock_directory);

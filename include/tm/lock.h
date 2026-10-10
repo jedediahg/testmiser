@@ -16,6 +16,12 @@ int tm_lock_acquire_default(const char *repository_id,
                             const char *profile_digest,
                             const char *context_digest,
                             struct tm_lock *lock);
+/* Acquire the same slot under the configured shared result store, allowing
+ * clients on a coherent shared filesystem to serialize cold misses. */
+int tm_lock_acquire_store(int store_root_fd, const char *repository_id,
+                          const char *command_fingerprint,
+                          const char *profile_digest,
+                          const char *context_digest, struct tm_lock *lock);
 void tm_lock_release(struct tm_lock *lock);
 
 #endif
