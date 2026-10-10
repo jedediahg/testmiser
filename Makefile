@@ -6,7 +6,7 @@ LDLIBS ?= -lcrypto
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/tm
-SOURCES := src/main.c src/backend.c src/observer.c src/observer_report.c src/observed_inputs.c src/digest.c src/attestation.c src/identity.c src/context.c src/input.c src/verification.c src/json.c src/result.c src/outputs.c src/trust.c src/validate.c src/profile.c src/repo.c src/clean.c src/lock.c src/local_store.c src/runtime.c
+SOURCES := src/main.c src/backend.c src/observer.c src/observer_report.c src/observed_inputs.c src/digest.c src/attestation.c src/key.c src/identity.c src/context.c src/input.c src/verification.c src/json.c src/result.c src/outputs.c src/trust.c src/validate.c src/profile.c src/repo.c src/clean.c src/lock.c src/local_store.c src/runtime.c
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
 .PHONY: all test clean

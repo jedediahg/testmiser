@@ -19,6 +19,17 @@ trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
 test "$("$tm_bin" --version)" = 'tm 0.1'
 
+"$tm_bin" key generate "$tmp_dir/producer-key.pem" >"$tmp_dir/key.json"
+test "$(stat -c '%a' "$tmp_dir/producer-key.pem")" = 600
+grep -Eq '^\{"key_id":"sha256:[0-9a-f]{64}","public_key":"[A-Za-z0-9+/]{43}="\}$' \
+    "$tmp_dir/key.json"
+cp "$tmp_dir/producer-key.pem" "$tmp_dir/producer-key.saved"
+if "$tm_bin" key generate "$tmp_dir/producer-key.pem" >/dev/null 2>&1; then
+    printf '%s\n' 'key generation overwrote an existing private key' >&2
+    exit 1
+fi
+cmp "$tmp_dir/producer-key.pem" "$tmp_dir/producer-key.saved"
+
 mkdir -p "$tmp_dir/repo/.tm/results"
 "$tm_bin" --root "$tmp_dir/repo" -- /bin/true
 mkdir -p "$tmp_dir/repo/.tm/results/command/verification" \

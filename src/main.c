@@ -12,6 +12,7 @@
 #include "tm/clean.h"
 #include "tm/context.h"
 #include "tm/identity.h"
+#include "tm/key.h"
 #include "tm/json.h"
 #include "tm/outputs.h"
 #include "tm/observer.h"
@@ -187,6 +188,8 @@ static void print_usage(FILE *stream)
 {
     fprintf(stream, "Usage: tm [--root DIR] [--input PATH ...] [--output PATH ...] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
     fprintf(stream, "       tm --version\n");
+    fprintf(stream, "       tm key generate PRIVATE_KEY_FILE\n");
+    fprintf(stream, "                         create a local Ed25519 producer key\n");
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
@@ -392,6 +395,18 @@ int main(int argc, char **argv)
         return profile_command(argc, argv);
     if (argc > 1 && strcmp(argv[1], "runtime") == 0)
         return runtime_command(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "key") == 0) {
+        if (argc != 4 || strcmp(argv[2], "generate") != 0) {
+            fprintf(stderr, "Usage: tm key generate PRIVATE_KEY_FILE\n");
+            return TM_EXIT_INTERNAL_ERROR;
+        }
+        if (tm_key_generate(argv[3]) < 0) {
+            fprintf(stderr, "tm: cannot create private key %s: %s\n",
+                    argv[3], strerror(errno));
+            return TM_EXIT_INTERNAL_ERROR;
+        }
+        return 0;
+    }
     parse_result = parse_options(argc, argv, &options);
     if (parse_result != 0) {
         return parse_result > 0 ? 0 : TM_EXIT_INTERNAL_ERROR;
