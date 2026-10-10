@@ -20,6 +20,7 @@ int main(void)
     struct tm_observer_report failed_report = {0};
     struct tm_observer_report mprotect_report = {0};
     struct tm_observer_report getcwd_report = {0};
+    struct tm_observer_report metadata_report = {0};
     struct tm_observer_report descriptor_report = {0};
     char repository[4096], output_path[4200] = {0};
     char escape_path[4200] = {0};
@@ -34,6 +35,7 @@ int main(void)
     char *mprotect_command[] = {"./build/mprotect_probe",
         "build/tm-observer-mprotect-input", NULL};
     char *getcwd_command[] = {"./build/getcwd_probe", NULL};
+    char *metadata_command[] = {"./build/metadata_probe", "Makefile", NULL};
     char *descriptor_command[] = {"./build/descriptor_dup_probe", "Makefile", NULL};
     size_t index, executable_count = 0;
     int result;
@@ -76,6 +78,15 @@ int main(void)
         fprintf(stderr,
             "observer treated getcwd as unmodeled filesystem metadata (reasons=0x%08x)\n",
             getcwd_report.ineligibility_reasons);
+        return 1;
+    }
+    if (tm_observe_and_run(metadata_command, 0, NULL, repository,
+            &metadata_report) != 0 ||
+        (metadata_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_METADATA) == 0) {
+        fprintf(stderr,
+            "observer accepted unmodeled stat metadata (reasons=0x%08x)\n",
+            metadata_report.ineligibility_reasons);
         return 1;
     }
     if (tm_observe_and_run(descriptor_command, 0, NULL, repository,
