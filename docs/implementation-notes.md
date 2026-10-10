@@ -1,88 +1,91 @@
 # Specification Review: Implementation Decisions
 
-Reviewed against [the technical specification](spec/tm-test-memoization-technical-specification.md), `src/main.c`, `include/tm/tm.h`, and the current Makefile. These decisions describe the target implementation. Today only the command wrapper exists; every invocation runs.
+The [technical specification](spec/tm-test-memoization-technical-specification.md) now targets portable reuse across local worktrees and developer workstations, GitLab pipelines, and GitHub Actions workflows. This supersedes the earlier local-receipt-only design. The working tree contains observer development; cache reuse remains disabled. This document describes target decisions, not completed functionality.
 
-## 1. Trust and provenance — resolved
+## 1. Trust and provenance — portable signed evidence
 
-**Decision:** Version 0.1 trusts a local supervisor's private authenticated receipt, not Git ancestry or committed JSON (spec sections 25–27).
+Use Ed25519 signatures over the complete canonical result payload, including repository identity, inputs, environment/profile identity, output manifest, trust epoch, and successful outcome (spec sections 25–27). Consumers receive approved public keys, never shared private signing keys. A new clone can reuse checked-in results without first running the test locally.
 
-The supervisor keeps a random 256-bit key and success receipts outside the checkout. A receipt authenticates the entire canonical sidecar, including the input manifest, execution identity, policy, and result. The store is scoped to a repository instance and trust domain. Editing a sidecar, cloning the repository, losing the store, or rotating the key causes execution. `tm validate` checks structure; it never grants trust.
+Operator-controlled policy approves stable repository IDs, producer keys, profile digests, semantics, epochs, and revocations. A checked-in key or profile cannot approve itself. Local, GitLab, and GitHub producers use the same format; consumer policy decides which producers it accepts. A developer's result is usable in CI only if CI approves that developer's producer key/profile.
 
-A developer account is the local trust boundary. Running hostile code under that same account can expose its private store, so CI must isolate the supervisor/store from untrusted children before enabling reuse. Owner-only permissions alone are insufficient. Fresh CI jobs execute; importing receipts between machines is deferred until an authenticated transport and issuer policy exist.
+Untrusted test code must not access the signing capability or forge the supervisor's evidence. CI consumers can verify records without credentials; producing trusted records for untrusted PR/MR code requires an isolated supervisor. Signing arbitrary uploaded JSON in a later privileged job would not establish provenance.
 
-Before every real run, including `--force`, revoke the previous receipt durably. Publish a replacement only after an eligible successful run. Otherwise a forced failure could leave an earlier success available to skip the next invocation. Serialize validation, revocation, execution, and publication with one command lock.
+Failures never become reusable successes. Track pending/failed attempts across local worktrees; quarantine contradictory same-fingerprint forced failures and distribute authenticated invalidations when connected. Preserve successes for unrelated input states. Offline verification uses an approved trust snapshot and cannot promise awareness of later revocations.
 
-## 2. Environment identity — resolved
+## 2. Environment identity — public, stable, and actually enforced
 
-**Decision:** Fingerprint the whole environment delivered to the child, plus an explicit execution context and controlled runtime (sections 8, 15, 17–18, and 30).
+Portable command/context identities use SHA-256, without per-workstation HMAC keys. Signing keys and producer identities do not change a verification fingerprint. Stable repository identity is independent of checkout path, remote URL, branch, or CI provider (sections 7–8 and 17–18).
 
-Canonicalize UTF-8 `[name, value]` pairs sorted by name. Omission means unset; a present empty string means empty. Duplicate names and unsupported encodings disable reuse. Remove wrapper-only `TM_FORCE` consistently before delivery to the child. Do not omit any remaining variable from the fingerprint. An environment allowlist cannot establish completeness for arbitrary commands.
+Construct a clean child environment from approved constants and explicit public inputs. Hash the entire environment actually delivered. Remove volatile GitLab/GitHub IDs, tokens, and host paths before execution; excluding them only from the fingerprint would be unsound. Unset and empty values differ, and argument boundaries remain significant.
 
-Use a private HMAC for environment/context and command identity. Plain hashes of small secrets can be guessed offline. Store neither raw argv nor environment values in sidecars. Include kernel/architecture/ABI, CPU feature identity, effective credentials/groups, umask, resource limits, and standard descriptor/TTY context. Unsupported context means execution without reuse.
+The execution backend must realize canonical workspace/runtime paths, controlled HOME/TMPDIR, locale/timezone, descriptor policy, identity, and limits. Runtime content, observable kernel/CPU/ABI differences, and unnormalized metadata remain real inputs. A container image digest alone does not make different hosts equivalent; use compatible contexts or an enforced common VM/runtime contract.
 
-A runtime version string is insufficient: executable/interpreter content, libraries, loader configuration, and system data must be covered by an immutable runtime digest and operator-enforced read-only coverage. An image digest does not cover mutable mounts or the host kernel. Host-specific values and local HMAC keys intentionally limit portability of success reuse.
+Only declared public inputs may enter portable records. Secret-dependent shared results are deferred: plain hashes can reveal guessable secrets, while sharing HMAC keys would undermine the public-consumer model. Supervisor transport/signing credentials never reach the child.
 
-Use RFC 8785 canonical JSON, a closed schema, explicit input sorting, and domain-separated digest preimages. Reject unknown versions/fields, duplicates, unsafe paths, and malformed hashes. Golden vectors are a prerequisite for the implementation's reuse gate.
+## 3. Observation limits — supported execution contract
 
-## 3. Observation limits and external state — resolved
+Retain Linux x86-64 `ptrace`, complete descendant tracking, explicit syscall classification, and conservative rejection of unsupported observations (sections 12–15). A trusted signature does not compensate for incomplete discovery.
 
-**Decision:** Begin with `ptrace` on Linux x86-64 native ABI, with an explicit syscall classification table and no skips during prototyping (sections 12–15 and 28–31).
+Test socket/network access, external mutable services, unmodeled IPC/descriptors/syscalls, or uncontrolled nondeterminism prevent publication. Supervisor result downloads/uploads are outside this observation boundary and are allowed. Observer failure after launch never restarts the command.
 
-Track all threads/descendants before first exec, descriptor and cwd changes, executable/interpreter loading, file reads/mappings, existence probes, symlinks, and directory enumeration. Unsupported observations invalidate the whole execution. File contents do not validate timestamps, ownership, inode identity, or other metadata returned by `stat`; the MVP declines reuse where it cannot model those observations.
+The portable backend provides stable input/runtime views, hides `.tm` metadata, starts scratch/output roots empty, and controls the delivered environment. A native discovery mode can run uncached when those guarantees are unavailable. Normalized filesystem metadata must actually be exposed consistently, not merely omitted from the hash.
 
-Any socket creation or communication attempt disables reuse, including failed attempts, DNS, loopback, Unix sockets, and inherited sockets. A fixture hash cannot override this. Unknown syscalls, `io_uring`, uncontrolled descriptors, shared memory, namespace changes, trace loss, unsupported ABI changes, or escaped descendants also disable publication. A failed observer never restarts an already launched command.
+## 4. Process outcomes and CLI — retained with portable additions
 
-Tracing cannot establish determinism. The operator must explicitly enable a profile for a deterministic command, and reliably detected uncontrolled time/randomness still prevents reuse. The profile also establishes stable input/runtime views and no required artifacts or effects. Without these preconditions, commands execute normally.
+Normal child exit codes pass through; signal termination returns `128 + signal`; wrapper usage/internal errors use 125; cannot-execute and missing-command use 126/127. Child codes may overlap these values. A cache publication error preserves the collected child outcome.
 
-## 4. Process outcomes and CLI — resolved
+The mandatory `--` and exact argv semantics remain. Target additions include approved `--profile`/`--trust-policy`, repeatable `--input`/`--output`, `validate --require-trust`, and scoped `clean` (section 34). `--force` deliberately overrides reuse and participates in failed-attempt/quarantine rules.
 
-**Decision:** Preserve the existing numeric exit convention and argument contract (sections 9–10, 34–36, and 51).
+`validate` never runs tests or signs records. `clean` preserves checked-in results by default and never discards trust keys or invalidations as disposable cache state. Explain output distinguishes a genuine input change, unavailable evidence/artifacts, untrusted producer, incompatible context, force, and coordination outages.
 
-| Situation | Result |
+## 5. Implementation sequence — portability is a release gate
+
+Follow section 52:
+
+1. Preserve the wrapper contract while developing the observer with skips disabled.
+2. Establish the reference portable execution profile/backend and rejection rules.
+3. Implement canonical schema v2, signatures, public trust policy, immutable result storage, and required output restoration.
+4. Demonstrate checked-in-result reuse across clean worktrees/workstations and both GitLab and GitHub, using verification-only consumers.
+5. Implement common result distribution and optional coordination, including failure recovery and invalidation.
+6. Pilot actual workloads and measure eligibility, warm hits, validation cost, and concurrent duplicate rate.
+
+The profile schema, transport interface, and reference backend selection remain implementation deliverables that must be frozen before enabling portable hits. Their required behavior is defined in the spec. There is no local-only caching milestone that counts as completing the product objective.
+
+## How the no-repeat objective works
+
+| Situation | Required behavior |
 | --- | --- |
-| Normal child exit | Return its exact code, including 125–127. |
-| Child terminated by signal | Return `128 + signal`; do not claim identical signal termination. |
-| Usage/internal wrapper error | 125. |
-| Command cannot execute | 126. |
-| Command not found | 127. |
-| Eligible cache hit | 0. |
-| Cache write/observation failure after a collected outcome | Preserve child outcome; no reusable receipt. |
+| Available trusted result; same effective inputs/context | Reuse locally, in another worktree/workstation, or in either CI provider. |
+| New branch/commit with only unrelated changes | Reuse; commit identity is not the cache key. |
+| Return to a previously verified input state | Reuse the retained immutable result for that state. |
+| Required report/artifact on a hit | Verify and restore declared outputs before reporting success. |
+| Simultaneous cold requests with healthy shared coordination | One owner executes; waiters re-query and reuse. |
+| Disconnected cold requests | Duplicate work remains possible because no result/ownership is shared. |
+| Coordinator outage | Available mode permits duplicates; strict mode waits/fails before launch. |
+| Crash after computation, before durable publication | May need to recompute; no exactly-once recovery claim. |
+| Changed inputs, failure, force, revoked trust, missing evidence | Execute or apply explicit strict policy; never fabricate a hit. |
 
-`--force` and `--explain` precede a mandatory `--`; following arguments pass unchanged without an implicit shell. Unknown/incomplete invocations return 125. Help returns 0. Numeric outcomes alone cannot distinguish wrapper errors from a child choosing the same code.
+The generic cache unit is a command invocation. Overlapping suites cannot deduplicate individual test cases without a future framework adapter. “Never run the same test twice” means avoiding repeated eligible successful verification for a complete fingerprint, with these availability and granularity limits explicit.
 
-The spec now labels `--root`, `--input`, `TM_FORCE=1`, `validate`, and `clean` as target additions. They are not implemented today. `validate` returns 0 for structurally valid sidecars, 1 for invalid metadata, and 125 for usage/I/O errors, without running tests. `--external-input` and `--env-input` are deferred.
+## Changes from the earlier review
 
-## 5. Implementation sequence — resolved
-
-Follow the delivery gates in section 52:
-
-1. Keep the existing wrapper and CLI checks as the baseline.
-2. Prototype observation and rejection reasons with skips disabled.
-3. Freeze the canonical schema and operator configuration interface; implement hashing, private state, validation, and atomic publication with skips disabled.
-4. Enable local reuse only after provenance, input stability, failure revocation, concurrency, and all acceptance criteria pass.
-5. Pilot eligible workloads and compare forced outcomes against proposed cache decisions before expanding coverage.
-
-Reuse maintained cryptographic/JSON components where practical. Defer shared trust, adapters, output restoration, network reuse, and broad host support. Observer overhead and the fraction of eligible commands must be measured before making performance or delivery commitments.
-
-The exact operator-profile/private-store configuration syntax is a remaining implementation deliverable, not permission to infer trust from repository files. No configured profile means no skips.
-
-## Additional specification defects fixed
-
-| Issue | Decision and implication |
+| Earlier decision | Revised decision |
 | --- | --- |
-| Post-run hashes can certify bytes the test never read; before/after comparison misses change-and-restore races. | Require a stable snapshot/read-only view or an explicit operator-enforced exclusion of writers. Ordinary advisory locks alone are insufficient (section 38). |
-| A passing command may generate reports, binaries, caches, or side effects needed later. | No output replay in 0.1. Such commands execute uncached; eligible runs only return a reusable exit outcome (section 38). |
-| Ignoring metadata actually read by the child hides dependencies. | Exclude supervisor activity only. Child access to `.tm`, including visible directory membership, disables reuse unless an enforced view hides it (section 22). |
-| Guessing a primary test path is ambiguous and adjacent sidecars collide across command variants. | Always use root `.tm/commands/<command-id>.tm.json` in 0.1 (sections 7 and 16). |
-| Symlinks, absent files, directory membership, untracked files, and PATH lookup affect behavior. | Track them explicitly or reject reuse; repository membership follows resolution, not a lexical path prefix (sections 6 and 13–17). |
-| Direct-child success does not imply complete descendant observation. | Require accounted-for completion; surviving daemons prevent publication without indefinitely delaying the direct child's status (section 12). |
-| Atomic JSON rename does not by itself authenticate a result or handle failed reruns. | Revoke receipt before execution, publish durable sidecar first and authenticated receipt last, under one lock (sections 20 and 38–39). |
-| Sidecar validation was conflated with CI trust. | Validation never certifies a test result. CI may validate metadata-only changes only when the metadata is not an application input (sections 23–26 and 43). |
+| Private per-checkout receipt/HMAC required for reuse | Portable Ed25519 evidence, public verification policy, and unkeyed public-input identities. |
+| Fresh clone always runs | Fresh clone can immediately reuse an approved checked-in record. |
+| One latest sidecar per command | Immutable `.tm/results/<command-id>/<verification-id>/<record-id>.tm.json` history. |
+| Full inherited CI environment hashed | Clean actual child environment; hash every delivered value. |
+| Writes/reports make all runs ineligible | Allow isolated empty scratch and declared captured/restored output roots. |
+| Metadata hiding/sandboxing deferred | Enforced portable execution view required for shared eligibility. |
+| Shared trust, signatures, and CI reuse deferred | First portable release requirements for both GitLab and GitHub. |
+| Local lock only | Shared worktree lock plus optional provider-neutral coordinator for cold misses. |
+| Routine exhaustive reruns recommended | Explicit optional audits; no automatic age/pipeline-based repeat of accepted results. |
 
-Sections 59 AC-13 through AC-20 add acceptance cases for these contracts. They are future implementation requirements; no cache implementation or new tests were added in this documentation review.
+Acceptance criteria AC-13 through AC-25 cover provenance, privacy, output restoration, canonical identities, worktree/workstation sharing, GitLab/GitHub interoperability, concurrent cold misses, partitions, and no implicit repeat policy. These are future implementation checks; this update adds no executable implementation or tests.
 
 ## Technical references
 
-- [Linux ptrace manual](https://man7.org/linux/man-pages/man2/ptrace.2.html): syscall and descendant event mechanisms used by the proposed observer.
-- [Linux vDSO manual](https://man7.org/linux/man-pages/man7/vdso.7.html): userspace time access illustrates why syscall tracing cannot prove determinism.
-- [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785): canonical JSON encoding used by the proposed digest contract.
+- [Linux ptrace](https://man7.org/linux/man-pages/man2/ptrace.2.html) and [vDSO](https://man7.org/linux/man-pages/man7/vdso.7.html): observation mechanisms and the limits of syscall-only determinism detection.
+- [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) and [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032): canonical JSON and Ed25519.
+- [GitLab predefined variables](https://docs.gitlab.com/ci/variables/predefined_variables/) and [GitHub variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables): CI-specific values that must remain outside the portable child environment unless explicitly required.
+- [GitLab caching](https://docs.gitlab.com/ci/caching/) and [GitHub dependency caching](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching): transport availability and scope limitations; provider caches are not globally available proof stores.

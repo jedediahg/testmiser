@@ -2,7 +2,7 @@
 
 ## Technical Specification
 
-**Status:** Revised design; cache implementation pending
+**Status:** Portable reuse design; implementation in progress
 **Target implementation:** C, Linux-first  
 **Primary purpose:** Language-agnostic memoization of successful test and verification commands  
 **Invocation model:**
@@ -36,7 +36,11 @@ The fundamental invariant is:
 
 `tm` treats a successful execution as reusable only within an explicitly enabled verification profile. Success alone does not establish determinism or complete observation. Arbitrary commands can always run; only the supported subset can skip.
 
-The current implementation is a process wrapper only. Sections below specify target behavior, not implemented features. Version 0.1 reuse requires a trusted operator to declare that the command is deterministic, has no required output artifacts or side effects, and runs with stable inputs and a controlled runtime. Without this profile, `tm` executes without authorizing reuse. The profile is supplied by local/CI operator configuration outside the checkout; no executable repository configuration is trusted. Its versioned, canonical policy digest contributes to every fingerprint. The configuration interface must be delivered before enabling skips.
+The product objective is **never execute the same successful verification twice**: once a trusted result for a complete effective-input fingerprint is available, every compatible local checkout, worktree, developer workstation, GitLab pipeline, and GitHub Actions workflow MUST reuse it. A new commit, branch, checkout path, producer, job ID, or CI provider alone MUST NOT create a new verification identity.
+
+This is a reuse guarantee for available, trusted, eligible results, not an unconditional exactly-once execution claim. Changed effective inputs, failures, explicit `--force`, missing/corrupt evidence or required artifacts, revoked trust, and unsupported/nondeterministic inputs may require execution. Disconnected machines cannot discover each other's unpublished results. Concurrent cold misses require shared coordination (section 39). These limits MUST be visible in explain output rather than hidden behind a universal guarantee.
+
+Sections below specify target behavior, not completed features. The first reusable release includes portable signed evidence, controlled execution profiles, and GitLab/GitHub/local acceptance cases. A profile establishes determinism, stable inputs, runtime coverage, and declared output behavior. Without an approved profile, commands run without authorizing reuse. Profiles may be checked in as data, but their exact digest and repository identity must be approved by operator-controlled trust configuration; an arbitrary branch cannot approve itself.
 
 ```mermaid
 flowchart LR
@@ -60,7 +64,7 @@ flowchart LR
 1. Execute arbitrary test commands.
 2. Determine success or failure from the actual child process outcome.
 3. Observe runtime filesystem dependencies of the command and its descendants.
-4. Persist dependency metadata in a command-keyed `tm.json` sidecar (section 7).
+4. Persist immutable signed verification records indexed by portable command and result identity (section 7).
 5. Hash relevant repository-controlled inputs using SHA-256.
 6. Skip tests whose complete verification fingerprint matches a previously successful execution.
 7. Return the same successful exit code to the caller when a test is skipped.
@@ -72,6 +76,10 @@ flowchart LR
 13. Default to rerunning whenever `tm` cannot establish that reuse is safe.
 14. Be implemented as a small native utility, initially targeting Linux.
 15. Require no changes to the test code itself.
+16. Reuse checked-in authenticated results across worktrees and workstations without sharing private signing keys.
+17. Use the same portable identities and evidence in GitLab, GitHub Actions, and local execution.
+18. Retain multiple successful input states so switching branches and returning to a prior state does not discard reusable work.
+19. Restore declared required artifacts on a hit and coordinate concurrent cold misses when a shared coordinator is configured.
 
 ---
 
@@ -113,7 +121,7 @@ verification fingerprint -> process outcome
 
 Only a normal successful process exit is reusable.
 
-For version 1:
+For the first reusable release:
 
 ```text
 exit_code == 0
@@ -129,27 +137,23 @@ A previous non-zero exit code MUST NOT cause the next invocation to be skipped.
 
 ```mermaid
 flowchart TD
-    A[tm invoked] --> B{Valid sidecar exists?}
-    B -- No --> R[Run command]
-    B -- Yes --> C[Recompute recorded inputs]
-    C --> D[Recompute environment identity]
-    D --> E[Recompute verification fingerprint]
-    E --> F{Fingerprint matches?}
-    F -- No --> R
-    F -- Yes --> G{Previous exit code = 0?}
-    G -- No --> R
-    G -- Yes --> H{Trusted reusable result?}
-    H -- No --> R
-    H -- Yes --> S[Skip execution]
-    S --> X[Return 0]
-    R --> O[Observe command and descendants]
-    O --> P[Capture process outcome]
-    P --> Q{Normal zero exit and eligible observation?}
-    Q -- Yes --> W[Write/update sidecar atomically]
-    Q -- No --> N[Do not create reusable PASS]
-    W --> Y[Return child exit code]
-    N --> Y
+    A[Resolve approved profile and portable command identity] --> B[Discover candidates in Git, local store, and shared stores]
+    B --> C{Signature, trust, inputs, context, outputs valid?}
+    C -- Yes --> D[Restore required outputs and return 0]
+    C -- No --> E{Shared coordination configured?}
+    E -- Yes --> F[Acquire execution slot and repeat lookup]
+    F --> G{Result now available?}
+    G -- Yes --> D
+    G -- No --> H[Run once with observation]
+    E -- No --> H
+    H --> I{Normal zero exit and eligible?}
+    I -- Yes --> J[Store outputs then sign and publish immutable record]
+    I -- No --> K[Record failure or ineligibility; no reusable success]
+    J --> L[Return child outcome]
+    K --> L
 ```
+
+Lookup MUST evaluate candidate manifests against current stable inputs; a candidate fingerprint is not accepted just because its file name matches. Publication transport and coordination are supervisor activity, not child network dependencies.
 
 ---
 
@@ -163,58 +167,65 @@ Lexical normalization MUST NOT erase symlink dependencies. Resolve accesses usin
 
 ---
 
-# 7. Sidecar Location
+# 7. Portable Result Locations
 
-Version 0.1 MUST use one location for all commands:
+The portable Git layout is:
 
 ```text
-.tm/commands/<command-id>.tm.json
+.tm/results/<command-id>/<verification-id>/<record-id>.tm.json
+.tm/profiles/<profile-name>.json
 ```
 
-`command-id` is the command fingerprint defined in section 17, without the `hmac-sha256:` prefix. This avoids guessing a primary test from arbitrary arguments and prevents commands with different flags or working directories from overwriting one another. Adjacent per-test sidecars are deferred to adapters.
+Each ID is its SHA-256 digest without the `sha256:` prefix. `command-id` indexes invocation variants; `verification-id` identifies effective inputs; `record-id` hashes the signed envelope's canonical bytes. Several producers may sign the same verification without changing its verification identity. Records are immutable: union directories when merging branches, rather than overwriting a single latest-success file. Deduplicate envelopes by record ID.
 
-A command-keyed sidecar is local-key-specific; clones may retain it as readable dependency metadata but do not locate an authorized hit using their new key. Cross-machine sidecar deduplication is deferred.
+Lookup searches checked-in records, the user's local content store shared across worktrees, then configured shared stores. Merge candidate sets; neither lookup order nor an unsigned index establishes trust. Local indexes are rebuildable hints. Bound parsing and traversal; on incomplete lookup report that a result may be unavailable and either run or wait according to policy.
 
-The sidecar location MUST NOT contribute to the verification fingerprint. State paths MUST be opened without following symlinks outside the metadata directory. A hostile or unwritable metadata path causes uncached execution.
+A stable `repository_id` approved by the operator namespaces all records and stores. It is independent of remote URL, absolute checkout path, branch, and Git worktree internals. Mirrors on GitLab and GitHub use the same ID only by explicit trust configuration. Forks cannot claim a trusted repository's identity merely by copying its profile.
+
+State destinations MUST reject traversal and symlink escapes. Portable records contain no user-specific absolute paths. Required large artifacts may live in content-addressed stores; Git records remain small. A self-contained offline hit requires the signed record plus all required artifact blobs and an acceptable trust snapshot.
 
 ---
 
-# 8. Sidecar Format
+# 8. Portable Signed Record Format
 
-The sidecar MUST use a closed, versioned JSON schema. The following is schematic; angle-bracket digest placeholders are not valid persisted values:
+Use a closed, versioned JSON schema. Schema/semantics version 2 supersedes the previous local-HMAC draft; version 1 records MUST NOT authorize portable reuse. The following is schematic; placeholders are not valid persisted digests or signatures:
 
 ```json
 {
-  "schema_version": 1,
-  "tm_semantics_version": 1,
-  "identity": {
-    "command_fingerprint": "hmac-sha256:<64 lowercase hex digits>",
-    "working_directory": "."
+  "payload": {
+    "schema_version": 2,
+    "tm_semantics_version": 2,
+    "repository_id": "example-project",
+    "trust_epoch": 1,
+    "identity": {
+      "command_fingerprint": "sha256:<64 lowercase hex digits>",
+      "working_directory": "."
+    },
+    "inputs": [
+      {"path": "tests/test_risk.py", "kind": "file", "sha256": "sha256:<64 lowercase hex digits>"}
+    ],
+    "environment": {
+      "profile_digest": "sha256:<64 lowercase hex digits>",
+      "runtime_digest": "sha256:<64 lowercase hex digits>",
+      "context_digest": "sha256:<64 lowercase hex digits>"
+    },
+    "outputs": [],
+    "verification_fingerprint": "sha256:<64 lowercase hex digits>",
+    "result": {"exit_code": 0, "signal": null}
   },
-  "inputs": [
-    {
-      "path": "tests/test_risk.py",
-      "kind": "file",
-      "sha256": "sha256:<64 lowercase hex digits>"
-    }
-  ],
-  "environment": {
-    "profile_digest": "sha256:<64 lowercase hex digits>",
-    "runtime_digest": "sha256:<64 lowercase hex digits>",
-    "context_hmac": "hmac-sha256:<64 lowercase hex digits>"
-  },
-  "verification_fingerprint": "sha256:<64 lowercase hex digits>",
-  "result": { "exit_code": 0, "signal": null }
+  "attestation": {
+    "algorithm": "ed25519",
+    "key_id": "sha256:<public-key digest>",
+    "signature": "<base64 signature>"
+  }
 }
 ```
 
-Raw argv and environment values MUST NOT be stored: they may contain credentials or user-specific paths. The command fingerprint uses the private keyed construction in section 17. Reusable sidecars contain only normal zero outcomes; other outcomes belong in local diagnostics.
+Store RFC 8785 JCS UTF-8 bytes plus one LF; hash/sign the JCS bytes without the LF. Reject duplicate/unknown keys, invalid Unicode, floats, unsupported versions, invalid paths/digests, and duplicate records. Integers are nonnegative and bounded by `2^53 - 1`. Sort dependencies by UTF-8 `(path, kind)`, outputs by UTF-8 path, and preserve argv order. Never normalize Unicode in paths or argv. See [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).
 
-Canonical encoding MUST use RFC 8785 JSON Canonicalization Scheme (JCS), UTF-8, no BOM, followed by one LF for the stored file. Hash the JCS bytes without that LF. Schema integers are bounded nonnegative integers no greater than `2^53 - 1`; floating point values are forbidden. Reject duplicate keys, unknown fields, unsupported versions, invalid Unicode, duplicate input records, invalid digest syntax, and invalid paths. Arrays of dependencies are sorted by UTF-8 bytes of `(path, kind)`; argv order remains significant. Never normalize Unicode in paths or argv. See [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).
+Input variants are `file` (`path`, `kind`, `sha256`), `exists` (`path`, `kind`, boolean `state`), `directory` (`path`, `kind`, membership `sha256`), and `symlink` (`path`, `kind`, relative `target`). Unsupported metadata observations remain ineligible unless supplied by the enforced profile view (section 13). Output entries are `path`, `kind` (`file` or `directory`), `mode` (permission bits only), and, for files, `sha256` and byte `size`. No symlinks, device nodes, hardlink semantics, or traversal are allowed in initial output manifests.
 
-Input variants have exact fields: `file` has `path`, `kind`, `sha256`; `exists` has `path`, `kind`, `state` (boolean); `directory` has `path`, `kind`, `sha256` of its canonical membership; `symlink` has `path`, `kind`, `target` (relative target text without user-specific paths). Unsupported variants cause RUN. Metadata-sensitive operations not expressible by these variants make the run non-reusable (section 13).
-
-Timestamps, hostname, username, PID, temporary paths, duration, pipeline ID, branch name, secret values, and raw secret digests MUST NOT appear in sidecars. Sensitive paths also make an invocation ineligible for a committed sidecar; validation cannot automatically identify every secret. Diagnostics MUST follow the same secret-redaction policy and MUST NOT affect fingerprints.
+Do not persist raw argv/environment, private keys, secrets or their guessable hashes, hostnames, usernames, PIDs, temporary paths, pipeline/run IDs, branch names, or timings. Public-input hashes are permitted; secret-bearing inputs are ineligible for publication (section 30). The signature covers the complete payload, including inputs, outputs, zero outcome, repository, and trust epoch. Separate redacted provenance logs may contain operational details but never determine equivalence.
 
 ---
 
@@ -351,7 +362,7 @@ All supported input kinds are mandatory for reusable runs:
 - **Directory membership:** hash a JCS array of `[name, type]` pairs sorted by UTF-8 name bytes (`type` is `file`, `directory`, or `symlink`; unknown/special types disable reuse), excluding `.` and `..`. A partial enumeration conservatively depends on the entire directory. See section 22 for metadata visibility.
 - **Symlinks:** track each traversed link, its target text, and the final target dependency. Cycles, unresolved targets, external escapes, or nonportable target text prevent reuse unless covered by the controlled runtime.
 
-`stat`, `access`, and related calls expose more than existence. If a command can observe unmodeled size, timestamps, mode, ownership, inode, permissions, xattrs, or directory ordering, the MVP MUST mark it non-reusable. A later version may add exact metadata projections with a semantics-version change. Merely hashing file contents does not validate those observations.
+`stat`, `access`, and related calls expose more than existence. If a command can observe unmodeled size, timestamps, mode, ownership, inode, permissions, xattrs, or directory ordering, the MVP MUST mark it non-reusable. A backend may instead enforce a canonical metadata view and bind its full rules in the approved profile: deterministic modes/ownership, timestamps, inode identities, directory ordering, and supported return values/errors. Reuse then requires that identical content and profile imply identical exposed metadata. Partial normalization is insufficient; native unmodeled observations still prevent reuse. Merely hashing file contents does not validate those observations.
 
 Tracked and untracked files are equally relevant. Git tracking status and `.gitignore` MUST NOT exclude observed inputs. `.git` itself is an ordinary dependency if the child reads it; unsupported or volatile Git state causes RUN.
 
@@ -371,7 +382,7 @@ Coverage includes:
 - writes, truncation, rename, unlink, links, directory creation, permission changes, and writable mappings for mutation detection;
 - socket creation/use and all process creation/exec paths.
 
-`io_uring`, unmodeled ioctls, mount/root/namespace changes, external shared memory/IPC, descriptor passing, device access, and any other unmodeled input channel make the execution non-reusable. Inherited descriptors other than controlled stdin/stdout/stderr are unsupported in 0.1. Input from a terminal, pipe, or uncontrolled stdin forces RUN; use `/dev/null` for eligible commands. Stdout/stderr writes are permitted but never replayed on a skip.
+`io_uring`, unmodeled ioctls, mount/root/namespace changes, external shared memory/IPC, descriptor passing, device access, and any other unmodeled input channel make the execution non-reusable. Inherited descriptors other than controlled stdin/stdout/stderr are unsupported in 0.1. Input from a terminal, pipe, or uncontrolled stdin forces RUN; use `/dev/null` for eligible commands. Stdout/stderr writes are permitted; replay is governed by the output contract in section 38.
 
 Observer setup failure MUST run the command once without caching. Failure after launch MUST preserve the running invocation where possible and revoke eligibility; it MUST NOT restart a command that may already have performed effects.
 
@@ -383,7 +394,7 @@ Repository inputs are fingerprinted individually. External mutable inputs are no
 
 Interpreter/compiler version strings and a container image tag are insufficient. An OCI image digest can identify image content, but not writable layers, bind mounts, host configuration, kernel state, or external services. A runtime provider must ensure the digest covers the executable, interpreter, shared libraries, loader configuration, packages, and system data actually used. Host caches, home directories, `/proc`, `/sys`, and mutable mounts are unsupported unless their input semantics are explicitly covered. `/dev/null` is the only initial device exception.
 
-The profile MUST define runtime digest, observer ABI and semantics, stable workspace policy, permitted input roots, filesystem/metadata capabilities, deterministic-command declaration, and no-required-effects declaration. It MUST be operator controlled; repository changes cannot weaken it. Missing or unverifiable coverage means RUN. Version 0.1 may provide fewer cache hits on ordinary developer hosts than in controlled CI; correctness takes priority over coverage.
+The profile MUST define runtime digest, observer ABI and semantics, stable workspace policy, permitted input roots, filesystem/metadata capabilities, deterministic-command declaration, scratch/output contract, and absence of undeclared external effects. It MUST be operator controlled; repository changes cannot weaken it. Missing or unverifiable coverage means RUN. Version 0.1 may provide fewer cache hits on ordinary developer hosts than in controlled CI; correctness takes priority over coverage.
 
 ---
 
@@ -395,71 +406,36 @@ Use target option `--input <relative-file>` for an additional known input not re
 
 ---
 
-# 17. Command Identity
+# 17. Portable Command Identity
 
-The following commands MUST be considered different:
+Commands are exact argument vectors; preserve empty arguments and launch without implicit shell interpretation. The approved profile launches in a canonical workspace such as `/workspace`, with a relative cwd and fixed runtime paths. Relative argv is preferred. Never rewrite arbitrary argument substrings just for hashing; normalization must also describe the actual executed command.
 
-```bash
-pytest tests/test_foo.py
-pytest -x tests/test_foo.py
-```
+Define `command_fingerprint = SHA256("tm-command-v2\0" || JCS({repository_id, argv, working_directory, execution_options}))`, formatted as `sha256:<lowercase hex>`. `execution_options` contains sorted/deduplicated additional input declarations and output declarations. Execution-profile identity belongs in the verification fingerprint. `--force`, `--explain`, transport endpoints, signing identity, physical root, and coordination mode are not command inputs. `\0` means one NUL byte and `||` byte concatenation.
 
-Likewise:
+There is no workstation-specific key in any reusable identity. Public argv must be declared non-secret by the profile; secret-bearing argv disables shared publication, because hashing a low-entropy secret does not hide it. Non-UTF-8 argv also disables reuse in the initial release.
 
-```bash
-cargo test foo
-cargo test foo --release
-```
-
-`tm` MUST canonicalize and fingerprint:
-
-- executable;
-- arguments;
-- working directory;
-- execution-relevant options.
-
-Commands MUST be represented as exact argument vectors rather than flattened strings and launched without an implicit shell. Preserve empty arguments and argument boundaries.
-
-In all digest formulas, `\0` denotes one NUL byte, `||` byte concatenation, and hex output uses lowercase.
-
-Define `command_fingerprint = "hmac-sha256:" + hex(HMAC-SHA256(K, "tm-command-v1\0" || JCS({argv, working_directory, execution_options})))`, where `K` is the local trust-domain key from section 26. This keyed digest prevents offline guessing of secret arguments. Unsupported non-UTF-8 argv disables reuse. `--force` and `--explain` are wrapper controls and do not alter command identity. Input declarations are execution options; root location itself is not.
-
-Executable resolution MUST be revalidated, including PATH search misses, the selected executable, interpreters, and runtime coverage. Identical argv with a different executable MUST not hit. Recompute this identity from the current invocation; never accept identity solely from sidecar JSON.
+Changing a command flag, argument boundary, relative cwd, declared input, or output contract changes identity. Revalidate PATH misses, selected executable, interpreter chain, and runtime coverage. Absolute host paths cause RUN unless the enforced execution view gives them a common actual meaning on all consumers.
 
 ---
 
 # 18. Verification Fingerprint
 
-The verification fingerprint MUST be computed from a deterministic canonical representation containing at least:
+Define:
 
 ```text
-tm semantics version
-command identity
-working directory
-test source
-observed repository inputs
-declared additional inputs
-environment identity
+verification_fingerprint = SHA256(
+    "tm-verification-v2\0" || JCS({
+        schema_version, tm_semantics_version, repository_id,
+        identity, inputs, environment
+    })
+)
 ```
 
-Conceptually:
+Output declarations participate through command identity/profile; produced output bytes are signed evidence, not pre-execution inputs. The result, signature, key ID, trust epoch, transport, physical checkout root, branch, commit ID, and CI provider are excluded from equivalence. Trust epoch still gates acceptance independently. Hash the complete signed envelope separately for `record-id`.
 
-```text
-verification_fingerprint =
-    SHA256(
-        canonical(
-            tm_semantics_version,
-            command,
-            working_directory,
-            sorted_inputs,
-            environment_identity
-        )
-    )
-```
+A Git commit is not an input identity: unrelated commits should hit, while changed observed files, missing-file probes, runtime, or delivered environment must miss. A dependency on `.git` or commit data remains a real input if visible to the command; portable profiles should hide it or pass required Git-derived values explicitly.
 
-Precisely, hash `"tm-verification-v1\0" || JCS({schema_version, tm_semantics_version, identity, inputs, environment})` with SHA-256. The result, fingerprint field itself, provenance receipt, and sidecar path are excluded from this preimage. The trusted receipt binds the complete canonical sidecar, including the zero result. Semantic changes to observation, canonicalization, or policy interpretation MUST invalidate old receipts.
-
-Individual input hashes MUST remain available in the sidecar for diagnostics even if the aggregate fingerprint is sufficient for the skip decision.
+Recompute a candidate's input manifest in a stable view and reconstruct its fingerprint; never trust a supplied hash alone. Keep individual input hashes for diagnostics. Changes to discovery/canonicalization rules bump semantics version and require compatible evidence. Fingerprints provide content identity, not authenticity.
 
 ---
 
@@ -475,25 +451,27 @@ Individual input hashes MUST remain available in the sidecar for diagnostics eve
 6. every recorded input remains equivalent;
 7. the execution environment identity remains equivalent;
 8. no policy condition requires forced execution;
-9. the sidecar matches a current private success receipt under section 26;
+9. a permitted producer signature verifies under the current repository/profile trust policy and revocation rules (sections 26–27);
 10. the current trusted profile still establishes eligibility, input stability, and runtime coverage;
-11. current inputs are read from one stable state, not a mixture of concurrent revisions.
+11. current inputs are read from one stable state, not a mixture of concurrent revisions;
+12. required output blobs are available, verified, and restored successfully;
+13. no known invalidation or in-progress forced attempt blocks this verification.
 
-Otherwise:
-
-```text
-RUN
-```
-
-MUST be the default.
+When these conditions hold and execution is not forced, `tm` MUST reuse the result. If one candidate fails validation, continue evaluating other available candidates; an invalid or missing record cannot suppress a valid alternative. Only after no accepted candidate remains does normal policy execute (strict coordination may wait or fail).
 
 ---
 
-# 20. Failed and Ineligible Executions
+# 20. Failures, Forced Runs, and Invalidation
 
-Failed results MUST NOT authorize skips. Before any actual run, including `--force`, `tm` MUST durably revoke the existing success receipt for that command under the per-command lock. This ensures a failed forced run cannot leave an older successful result eligible for reuse.
+Failures never authorize skips. Successful records are immutable historical evidence; do not destroy unrelated successful fingerprints when a command fails on changed inputs.
 
-A nonzero exit, signal, observer failure, incomplete process tree, changed input during execution, or successful but ineligible run leaves no reusable receipt. A prior committed sidecar may remain as discovery metadata; without a receipt it cannot skip. Record failure reasons only in private diagnostics. If revocation cannot be made durable, disable reuse for the affected trust store until repaired; report the storage fault.
+Before an actual run, durably mark an attempt in the local state shared across worktrees for its repository/command/context and candidate fingerprint, when known. An interrupted, failed, or ineligible attempt blocks reuse of matching older evidence locally until a new eligible success or explicit operator resolution. A failure for input state B does not invalidate proven state A. Where discovery is incomplete, conservatively block the matching command/context until the affected fingerprint can be established.
+
+A forced failure with the same effective fingerprint as a prior success indicates nondeterminism or faulty observation. Quarantine that fingerprint and report the contradiction; do not automatically resurrect the old success on the next invocation. Publish an authenticated invalidation through the trust/coordinator service when available. New success may supersede an ordinary failed attempt, but clearing a contradictory-result quarantine requires explicit operator resolution, normally a corrected profile/semantics/trust epoch.
+
+A signed invalidation binds repository ID, target fingerprint (or command/context for an incomplete attempt), monotonic revision, reason code, and optional superseding policy epoch. Only issuers authorized to invalidate may affect shared trust. Shared consumers apply the newest trusted invalidation state. Local failures always block locally even when the producer is not authorized to issue shared invalidations.
+
+Disconnected clones cannot learn a later failure or key revocation immediately. Offline reuse is relative to an operator-approved trust snapshot; policies requiring live freshness MUST wait or run without reuse when it cannot be obtained. This limitation is explicit, not an assertion of globally instantaneous revocation. Storage failures prevent publication and are reported without replacing a collected child outcome.
 
 ---
 
@@ -530,13 +508,11 @@ This allows the dependency set to evolve naturally.
 
 ---
 
-# 22. Metadata Exclusion
+# 22. Metadata Isolation
 
-Supervisor reads and writes of its metadata MUST NOT enter the child dependency set. Only reserved `.tm` directories are metadata; do not broadly ignore every file ending in `.tm.json`.
+The portable execution profile MUST hide reserved `.tm` metadata from the child, including directory listings, while the supervisor reads and writes it outside the child view. Apply the same view on first execution and every subsequent invocation. This makes checked-in results independent of the verification inputs and prevents sidecar commits from invalidating tests.
 
-Child access is different: a child that reads, probes, or enumerates `.tm` can change behavior when metadata changes. Such a command MUST become non-reusable in observer-only mode. Directory membership observations containing a `.tm` entry also make the run non-reusable, unless an enforced execution view hides metadata consistently during discovery and validation. Simply deleting entries from an observed hash is unsound.
-
-Writing a sidecar therefore does not invalidate an otherwise eligible test. Commands that actually depend on metadata receive RUN, not a false skip. Hiding metadata with a sandbox is a future optimization.
+An observer-only fallback that cannot hide metadata must record actual visibility; child access to `.tm` or enumeration exposing it makes that run ineligible. Never remove visible names merely from the hash. Only reserved directories are metadata; arbitrary files ending in `.tm.json` remain ordinary inputs. Profiles themselves affect the fingerprint via their approved digest, even though their storage directory is hidden.
 
 ---
 
@@ -551,17 +527,19 @@ This allows successful dependency knowledge to travel between:
 - CI pipelines;
 - clean environments.
 
-CI SHOULD avoid broad test execution for changes consisting exclusively of reserved `tm` metadata, provided the application does not consume it. This is repository CI policy; the wrapper cannot enforce pipeline triggering. If tests consume metadata, section 22 applies and CI must retain the relevant tests.
+CI SHOULD avoid broad test execution for changes consisting exclusively of `.tm/results/**`, provided the application does not consume it. This is repository CI policy; the wrapper cannot enforce pipeline triggering. If tests consume metadata, section 22 applies and CI must retain the relevant tests.
+
+Profile changes under `.tm/profiles/**` are execution-policy changes and MUST go through approval and affected-command fingerprint evaluation. They are not result-only metadata.
 
 Repository CI SHOULD classify:
 
 ```text
-**/.tm/**
+.tm/results/**
 ```
 
 as verification metadata.
 
-A sidecar-only change SHOULD produce:
+A result-record-only change SHOULD produce:
 
 ```text
 tm validate
@@ -571,7 +549,7 @@ rather than normal application testing.
 
 ```mermaid
 flowchart TD
-    A[Git diff] --> B{Only metadata changed and no application dependency?}
+    A[Git diff] --> B{Only result records changed and no application dependency?}
     B -- Yes --> C[Run tm validate]
     C --> D[End]
     B -- No --> E[Normal CI impact analysis]
@@ -582,9 +560,9 @@ flowchart TD
 
 # 24. `tm validate`
 
-Target version 0.1 provides `tm validate [--root <directory>]`. It scans `.tm/commands/*.tm.json` without executing tests or following symlinked state paths. It checks the closed schema, canonical byte encoding, supported semantics, digest syntax, safe paths, input ordering/uniqueness, and normal zero result. It recomputes the embedded verification fingerprint from the stored payload, without claiming current inputs still match.
+Target command: `tm validate [--root DIR] [--trust-policy FILE] [--require-trust]`. Scan `.tm/results/*/*/*.tm.json` without running tests or following symlinks. Validate closed schema, canonical encoding, safe paths, digest syntax, array ordering, zero result, filename IDs, and reconstructed fingerprint. Verify signatures with available policy and report trusted/untrusted/revoked/unknown separately; do not claim current input freshness merely from structural validity.
 
-Exit codes are `0` for structurally valid files (including an empty set), `1` for invalid sidecars, and `125` for command usage or validation I/O failure. Report trust separately as trusted/untrusted/unknown when the local store is available. Structural validity does not prove provenance, current freshness, or freedom from secrets; validation MUST NOT mint a success receipt. No represented test runs, even if metadata is invalid.
+Return 0 for valid records, 1 for invalid records (or unacceptable trust with `--require-trust`), and 125 for usage/I/O errors. An empty set is structurally valid. Without `--require-trust`, a well-formed record by an unknown key may pass structure checks but must be labeled untrusted. A cryptographically invalid signature for a known key is invalid, not merely unknown. Validation never signs, executes, or imports a trust root from candidate metadata.
 
 ---
 
@@ -616,44 +594,41 @@ MUST have authenticated provenance before reuse.
 
 ---
 
-# 26. Initial Provenance Model
+# 26. Portable Trust Model
 
-Version 0.1 supports local trust only. A trusted `tm` supervisor records an authenticated success receipt in a private state store outside the checkout, scoped to the repository instance, trust domain, command identity, semantics, and profile. The receipt is `HMAC-SHA256(K, "tm-receipt-v1\0" || canonical_sidecar_bytes)` (JCS bytes without the stored trailing LF); it covers the full input manifest and result, not just a fingerprint supplied by JSON. The store also holds the random 256-bit key `K`, generated once per repository instance from the OS random source, and receipt revocation state. A new checkout receives a fresh key even if its Git remote matches. Private store keys must not be reused across instances. Use owner-only directory/file permissions (0700/0600), reject symlinks and unexpected ownership, and never commit or print the key. Key rotation or store loss invalidates reuse.
+The first reusable release MUST authenticate portable results with public-key signatures. Consumers need only approved public keys; private signing keys never travel with Git records, worktrees, artifacts, or caches. A fresh clone with a checked-in valid record and approved trust policy can skip immediately without running locally first.
 
-A local developer's account is the trust boundary. This protects against edited or cloned repository JSON, not malicious code with the same account's access to the store. For untrusted test code, the supervisor and its store MUST be isolated from the child by the runner (separate credentials or equivalent enforced isolation). A path outside the checkout and mode 0600 alone do not establish that isolation.
+Operator-controlled trust policy maps stable repository IDs to approved profile digests, public keys/producer roles, allowed semantics, minimum trust epoch, and revocations. The same policy may approve local developer, GitLab, and GitHub producers. Consumers may be stricter: a CI policy need not accept every developer's key. Cross-machine reuse succeeds only when the producing key/profile is approved by the consumer.
 
-| Source | Version 0.1 behavior |
+Policy can be distributed as an administrator-managed file or a signed bundle verified by a root provisioned outside the checkout. A checked-in profile/key list cannot grant itself authority. Mirrors/worktrees share repository identity through this policy, not inferred remote URL equivalence. Trust-policy updates do not change input fingerprints, but may make old results unacceptable.
+
+A producer signs only results established by its trusted supervisor after complete eligible observation. The signer must not be an API that signs arbitrary JSON submitted by a test. For untrusted PR/MR code, isolate the supervisor, signing capability, policy, transport credentials, and evidence channel from the child. Putting a signing key in an environment variable of the same unrestricted job is insufficient. Verification-only jobs can consume trusted records without access to signing credentials; uncached executions in such jobs do not become trusted shared results automatically.
+
+Local users may provision a key and approve it for their own worktrees/workstations. Team-wide reuse of those results requires team approval of that public key. No private key sharing is necessary. An offline accepted record remains valid relative to the provisioned trust snapshot; live revocation requires connectivity. A consumer records the highest authenticated trust revision it has seen and rejects rollback below its configured/local minimum.
+
+| Consumer | Required behavior |
 | --- | --- |
-| Successful eligible local run | Supervisor publishes a receipt; later matching invocations in that repository instance may skip. |
-| Fresh clone or copied sidecar | No local receipt: RUN and relearn. |
-| Edited sidecar, even on protected main | Receipt mismatch: RUN. Branch ancestry grants no trust. |
-| Fresh CI job | RUN unless it has a protected private store from the same configured trust domain. |
-| Untrusted merge-request job | RUN unless the CI operator provides verified supervisor/store isolation; no promotion of its receipts to trusted jobs. |
-
-MVP cross-machine receipt import and arbitrary CI cache restoration are unsupported. Shared success reuse needs a later authenticated artifact/signature protocol, issuer policy, repository scoping, and revocation rules. Portable dependency metadata remains useful without portable authorization to skip.
+| Second local worktree | Reuse matching checked-in or user-store records under the same approved repository/profile. |
+| New developer workstation | Reuse with approved public keys and compatible runtime; no prior local execution required. |
+| Fresh GitLab/GitHub job | Reuse matching checked-in/downloaded evidence; job ID/provider does not confer trust or change identity. |
+| Untrusted PR/MR | May verify approved evidence; cannot mint trusted results unless an isolated trusted producer executes it. |
+| Edited record or copied record from another repository | Reject signature/scope mismatch and execute. |
 
 ---
 
-# 27. Optional Signed Attestations
+# 27. Required Signed Attestations
 
-A future version MAY sign the complete canonical sidecar together with repository/trust-domain identity, issuer, and policy version. Authenticating only a caller-supplied fingerprint is insufficient; the verifier must reconstruct it from the authenticated input manifest.
+Use Ed25519 as specified in [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032), via a maintained cryptographic implementation. Define:
 
-using a CI-controlled key.
-
-Example:
-
-```json
-{
-  "attestation": {
-    "verification_fingerprint": "sha256:...",
-    "exit_code": 0,
-    "issuer": "trusted-ci",
-    "signature": "..."
-  }
-}
+```text
+signature = Ed25519.Sign(private_key, "tm-result-v2\0" || JCS(payload))
+key_id = "sha256:" + hex(SHA256(raw_32_byte_public_key))
+record_id = "sha256:" + hex(SHA256(JCS({payload, attestation})))
 ```
 
-This is not required for the MVP.
+Encode the 64-byte signature using standard padded base64. Enforce exact key/signature sizes and strict verification. Authenticate every payload field, including output manifest, repository ID, trust epoch, and normal zero outcome. Attestation algorithm/key ID are checked against the fixed schema and trusted key mapping; never accept an embedded key as its own authority.
+
+Signatures are required for portable reuse in the first release. A consumer rehashes inputs and checks runtime/profile even after signature verification. Additional issuers may create another immutable envelope for the same payload; producer identity does not fragment the verification key. Key revocation, profile revocation, and minimum epochs live in signed/operator trust state. Do not use signature timestamps as execution inputs or require re-signing solely because a record is old.
 
 ---
 
@@ -673,15 +648,19 @@ Logical `--external-input name=digest` is deferred. A future provider must demon
 
 ---
 
-# 30. Environment and Execution Context
+# 30. Portable Environment and Execution Context
 
-Version 0.1 fingerprints the entire environment actually delivered to the child; a variable allowlist is insufficient because environment reads need not cross the kernel boundary. Encode the environment as a JCS array of `[name, value]` pairs sorted by UTF-8 name bytes. Duplicate names or non-UTF-8 data disable reuse. An absent variable is omitted; an empty value is present, so unset and empty are distinct. Do not strip variables that the child still receives. Remove wrapper-only `TM_FORCE` before child launch, consistently for all runs.
+Portable profiles construct a clean child environment before exec. Start empty, add profile constants and explicitly permitted non-secret caller values, and fingerprint the complete resulting environment. Remove all other inherited values from the actual child, not just from hashing. Canonicalize sorted UTF-8 `[name, value]` pairs; unset and empty differ; duplicate names or unsupported encodings disable reuse.
 
-The private `context_hmac` is HMAC-SHA256 over `"tm-context-v1\0"` plus JCS of the environment and execution context. Include kernel release, OS/architecture/ABI, CPU feature identity, effective credentials and groups, umask, resource limits, stdin policy, and stdout/stderr descriptor kinds/TTY state. Unsupported or uncontrolled context disables reuse. Values remain in memory only; persist only the keyed digest. A plain hash of a low-entropy secret is vulnerable to guessing and MUST NOT be persisted.
+A portable profile fixes actual workspace/runtime paths, HOME/TMPDIR, PATH, locale, timezone, stdin (`/dev/null`), descriptor/TTY behavior, umask, effective identity, and resource limits. Use the same profile locally and in both CI systems. Host paths are mounted into canonical execution paths; merely renaming them in metadata is insufficient. Public context is `context_digest = SHA256("tm-context-v2\0" || JCS({environment, execution_context}))`.
 
-The public environment object contains only the profile digest, immutable runtime digest, and context HMAC. Local keys intentionally prevent automatic cross-machine fingerprint matching. Host-specific environment values may reduce cache hits; do not normalize them unless the same normalization is applied to the actual child environment by the trusted runner.
+`execution_context` includes actual OS/architecture/ABI, kernel identity, CPU features, credentials/groups, limits, umask, and standard descriptor policy unless a versioned profile backend enforces a common observable value. Differences cause separate fingerprints. A container digest alone does not standardize the host kernel or CPU. For reuse across heterogeneous hosts, provide a common VM/runtime contract or prove and enforce the allowed equivalence; do not silently ignore machine variation. Initially only compatible Linux x86-64 profiles share results; other host OSes may invoke that profile through a Linux VM.
 
-`--env-input` is deferred because all delivered variables are already included. Any later filtering must specify both the execution environment and fingerprint semantics.
+GitLab job/pipeline IDs, tokens, checkout paths and GitHub run IDs, tokens, event/workspace paths remain supervisor-only. They must not reach the child unless explicitly declared as real inputs; if delivered, their values change equivalence. Both platforms document such injected variables: [GitLab variables](https://docs.gitlab.com/ci/variables/predefined_variables/) and [GitHub variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables). CI transport uses those credentials outside the observation boundary.
+
+Portable publication accepts only profile-declared public argv, environment, input paths, and file contents. A secret that affects the result makes shared publication ineligible in the initial release. Plain SHA-256 does not protect guessable secrets; a common HMAC key would give every consumer unnecessary secret material. Do not persist either. Supervisor signing/storage credentials are excluded from the child's environment and fingerprint. Secret-aware private caching is deferred.
+
+No per-workstation randomness, signing key, issuer, or cache location enters command/context fingerprints. Changing an explicitly delivered public variable MUST invalidate reuse identically on every machine.
 
 ---
 
@@ -691,7 +670,7 @@ Detected clock, entropy, uncontrolled device, or other nondeterministic input ma
 
 Syscall tracing cannot prove the absence of nondeterminism: time can be read through the vDSO, and programs can use CPU instructions or scheduling-dependent behavior. See the Linux [vDSO manual](https://man7.org/linux/man-pages/man7/vdso.7.html). A successful trace MUST NOT be described as proof of determinism.
 
-Reuse additionally requires the trusted profile's explicit assertion that the command's result is deterministic under its controlled inputs/context. Flaky tests and tests whose pass/fail depends on uncontrolled time, randomness, concurrency, or resource availability are ineligible. Without that assertion, run normally. Stronger mechanical guarantees require a future enforced execution environment.
+Reuse additionally requires the trusted profile's explicit assertion that the command's result is deterministic under its controlled inputs/context. Flaky tests and tests whose pass/fail depends on uncontrolled time, randomness, concurrency, or resource availability are ineligible. Without that assertion, run normally. The portable backend enforces its declared execution contract; stronger automatic guarantees against all nondeterminism remain future work.
 
 ---
 
@@ -767,24 +746,21 @@ flowchart TB
 
 # 34. CLI
 
-Implemented today:
+The existing wrapper contract remains `tm [--force] [--explain] -- COMMAND [ARGUMENT ...]`, with `--help`/`-h`. Unknown/incomplete invocations return 125; argv after the mandatory `--` passes without shell interpretation; repeated boolean flags are idempotent.
+
+Target commands for the first portable release (not claims of current implementation):
 
 ```text
-tm [--force] [--explain] -- COMMAND [ARGUMENT ...]
-tm --help
+tm [--root DIR] [--profile FILE] [--trust-policy FILE] [--input FILE] [--output PATH] [--force] [--explain] -- COMMAND [ARGUMENT ...]
+tm validate [--root DIR] [--trust-policy FILE] [--require-trust]
+tm clean [--root DIR] [--records]
 ```
 
-Before the mandatory `--`, recognize `--force`, `--explain`, and `--help`/`-h`. Repeated flags are idempotent. Help returns 0 immediately when encountered during parsing. Unknown options, a missing separator, or an empty command return 125. Everything after `--` belongs verbatim to the child. No shell expansion is performed by `tm`.
+`--input` and `--output` are repeatable, canonical relative declarations; repeated singleton options or missing values return 125. An approved profile may be selected by external operator configuration instead of a flag. Profiles are declarative versioned data, never executable checkout hooks.
 
-Target 0.1 additions (not yet implemented):
+Profile schema must include repository ID, runtime/backend contract, clean environment construction, path mappings, stable input policy, observation capabilities, determinism assertion, scratch roots, output declarations, and privacy classification. Operator policy separately supplies trusted keys/epochs, signing provider, read/write result stores, and coordination mode. Transport addresses and credentials do not affect equivalence. Repository-provided profiles must match an approved digest. Missing approved configuration means uncached execution; an explicit malformed/unapproved profile is a usage/configuration error (125), not permission to execute under a silently different environment.
 
-```text
-tm [--root DIR] [--input FILE ...] [--force] [--explain] -- COMMAND [ARGUMENT ...]
-tm validate [--root DIR]
-tm clean [--root DIR]
-```
-
-Missing option values or unknown subcommand options return 125. Repeatable `--input` adds files; repeated `--root` is a usage error. Trusted execution-profile and private-store configuration must be specified and implemented before the skip milestone. Omission of that configuration always means RUN.
+Remote transport APIs and profile field serialization must be frozen with golden fixtures before implementation enables portable hits. Their behavioral contracts are normative here.
 
 ---
 
@@ -798,7 +774,7 @@ tm --force -- pytest tests/test_foo.py
 
 MUST execute the command regardless of cached state.
 
-Before execution revoke the old receipt; after an eligible successful execution rebuild the sidecar and receipt normally. Failure leaves the receipt revoked.
+Before execution record an attempt under section 20; publish a new signed record only after eligible success. A contradictory forced failure quarantines matching success. Force explicitly overrides the no-repeat objective.
 
 Version 0.1 MUST also support the exact value `TM_FORCE=1` (not yet implemented); other values have no forcing effect:
 
@@ -818,7 +794,7 @@ Use cases:
 
 # 36. `tm --explain`
 
-`tm` SHOULD explain its decision.
+`tm --explain` MUST identify RUN, SKIP, WAIT, or configuration failure, the candidate verification ID/source, trust decision, and relevant invalidation or missing evidence. Do not print secret argv or values. Normal output may remain terse.
 
 Example skip:
 
@@ -850,7 +826,11 @@ Current:
 Other possible reasons include:
 
 ```text
-no sidecar
+no available signed result
+required output blob missing
+producer not trusted
+trust freshness unavailable
+coordinator unavailable; duplicate execution possible
 command changed
 test file changed
 environment changed
@@ -865,37 +845,48 @@ forced execution
 
 # 37. `tm clean`
 
-`tm clean [--root DIR]` revokes all receipts for this repository instance and removes generated files from root `.tm/commands/` without following symlinks. It MUST not delete arbitrary `.tm` content belonging to other tools. Serialize cleanup against publication using the same repository/store locking hierarchy as runners.
+`tm clean [--root DIR]` removes rebuildable local indexes and staged partial downloads for this repository. It MUST preserve checked-in results, public trust policy, private signing keys, revocations/quarantines, and completed content-addressed evidence by default. Cleanup must not silently turn a known failure into an accepted old success.
 
-Return 0 on success, 125 for usage or I/O errors; cleanup never runs tests. Deleting sidecars or private state only causes more executions. Selective cleanup and discovery of future adjacent sidecars are deferred.
-
----
-
-# 38. Input Stability and Publication
-
-A result must describe inputs actually consumed, not merely the files left on disk afterward. Post-run hashing alone can certify the wrong revision. Before/after equal hashes also do not detect a change followed by restoration.
-
-Version 0.1 reuse therefore requires the profile to establish a stable workspace/runtime view for validation and execution: an immutable snapshot/read-only view or an operator-enforced exclusion of concurrent writers. An advisory `tm` lock alone cannot exclude editors or other tools. Without this guarantee, RUN without publication. Mutable-worktree race tolerance is deferred to a stronger backend.
-
-The observer MUST invalidate eligibility on child writes, writable shared mappings, or filesystem mutations outside stdout/stderr. Commands that build binaries, populate caches, write test reports, or require artifacts/effects for downstream steps run uncached in the MVP. Prepare those artifacts before invoking the verification unit. Skipping returns 0 and a wrapper message; it does not reproduce stdout, reports, generated files, or external effects.
-
-Publication occurs only after a normal zero outcome, complete eligible observation, and stable input validation. Under the command lock: write a canonical sidecar to a same-directory temporary file, flush it, rename atomically, and fsync the directory; then publish the private receipt atomically and durably. Clear stale receipt state before launching as section 20 requires. A crash between sidecar and receipt publication leaves an untrusted sidecar, hence RUN. Do not follow symlinked destination paths.
-
-Cache write failures after the command completes MUST preserve its exit code and leave no reusable receipt. Emit a redacted diagnostic. Durability failure is a cache miss, never permission to trust partial state.
+Explicit `--records` additionally removes local `.tm/results` files, including tracked files, but never other repositories' records or shared-store content. It does not revoke signatures elsewhere. Return 0 on success, 125 on usage/I/O failure; never run tests or follow symlinked state paths. Serialize against publication. Global retention/deletion is an operator storage policy and may make unavailable evidence require future execution.
 
 ---
 
-# 39. Concurrency
+# 38. Stable Inputs, Scratch Space, Outputs, and Publication
 
-Use an exclusive per-command lock in the private store across validation, receipt revocation, execution, and publication. A waiting runner revalidates after acquiring the lock; it may reuse a newly published eligible result unless forced. The lock key is the repository instance plus command identity. Lock ordering for repository cleanup and command operations MUST be consistent.
+A result must describe bytes actually consumed. Post-run hashing and equal before/after hashes do not exclude change-and-restore races. The approved profile must provide an immutable input/runtime view or an enforced exclusion of concurrent writers. An advisory `tm` lock does not exclude editors. Snapshot untracked inputs as well as tracked files; disable publication if stability cannot be established.
 
-If locking fails, run uncached without publishing. This serializes receipt lifecycle and prevents an older concurrent success from overwriting a later failed attempt for the same command. Different commands may run concurrently only if the stable input guarantees still hold. Distributed locking is out of scope.
+Provide empty private scratch roots at canonical paths on every invocation. Child writes within those roots are allowed, and files created there are derived state, not independent inputs. They must start empty and cannot read an existing host cache. Writes to repository/runtime inputs, external state, or undeclared writable locations invalidate reuse. A write is not disposable merely because it is called a cache.
+
+Declare required output paths in the profile/`--output` contract. The backend maps them to initially empty writable roots disjoint from inputs and metadata. After success, enumerate the complete output tree, record files/directories, modes, sizes, and hashes, and store immutable blobs by SHA-256. Sign the output manifest with the result. Unsupported entries or effects prevent publication. Persistent external effects remain ineligible.
+
+On a hit, fetch and verify all required blobs before changing destinations; safely stage the complete output tree, remove stale entries only inside explicitly owned output roots, and atomically replace each owned root. Refuse symlink escapes or conflicting input paths. Do not return a successful hit until every declared root is restored. Multi-root restoration is not one filesystem transaction; on interruption, the next invocation verifies/restores all roots again before reporting success. Missing/corrupt blobs or restoration failure means no successful hit: repair from another source, or execute if safe; unrecoverable destination errors return 125 before launch. Stdout/stderr replay is optional and not a required artifact unless explicitly captured under the profile.
+
+Publication order: finish all descendants and validate eligibility; durably store output blobs; create and sign the canonical payload through the trusted supervisor; atomically publish the envelope via temporary-file/fsync/rename; update rebuildable indexes last. A partial upload or index entry is never evidence of success. Local and remote stores accept idempotent content-addressed writes. A crash before publication may lose a completed computation and require a rerun; availability cannot promise exactly-once recovery.
+
+Record publication faults preserve a collected child exit status and are reported as lost reuse opportunities. Checked-in results must be committed/distributed to reach other disconnected consumers; `tm` does not automatically commit or push. Shared-store publication can make evidence available immediately between independent pipelines.
+
+---
+
+# 39. Concurrent Reuse and Execution Coordination
+
+Local runs use a lock keyed by repository ID, portable command identity, and context/profile in a user store outside worktrees. Hold it across lookup, attempt registration, execution, and publication. After acquiring any lock, repeat lookup so a waiting runner uses the result just published by its predecessor. Different input revisions may contend; this is acceptable for the initial implementation.
+
+Across machines, checked-in files and cache uploads alone cannot prevent simultaneous cold executions. Support an optional provider-neutral coordinator shared by GitLab, GitHub, and local clients. It issues an exclusive execution slot keyed by `(repository_id, command_fingerprint, profile_digest, context_digest)`; use this conservative key because the final dynamic dependency manifest is unknown before execution. All participating runners re-query the shared result index after acquiring the slot, recompute manifests against their own inputs, and skip if any now match. Do not key by pipeline/branch/provider or whole commit.
+
+Coordinator operations are acquire/wait, renew, complete with signed record ID, and fail/quarantine. Use durable ownership and monotonically increasing fencing tokens; storage publication must reject stale tokens. Only authorized producers may publish result references or invalidations. The coordinator does not authenticate successful computation by itself; verify signatures and inputs as usual.
+
+Two explicit policies:
+
+- **Available (default):** on coordinator outage or lost lease, allow uncached/independent execution with a diagnostic that duplicates are possible. Fencing prevents stale publication but cannot prevent an isolated old process from still running.
+- **Strict coordination:** wait or return 125 before launch when ownership cannot be established. After an owner is lost, do not start a replacement until the previous execution is confirmed stopped. This trades availability for avoiding overlapping runs; a crash after success but before publication may still require recomputation.
+
+No disconnected or partition-tolerant exactly-once claim is made. With healthy coordination, stable inputs, and durable publication, concurrent equivalent requests execute once and waiters reuse. Forced runs deliberately bypass result reuse but still acquire execution ownership.
 
 ---
 
 # 40. SHA-256
 
-SHA-256 MUST be the standard content hash for version 1.
+SHA-256 MUST be the standard content hash for schema version 2.
 
 Format:
 
@@ -912,7 +903,7 @@ Hash algorithms MAY become versioned later.
 `tm` only provides value if:
 
 ```text
-cost of checking inputs << cost of rerunning tests
+cost of checking inputs + fetching/restoring required outputs << cost of rerunning tests
 ```
 
 Potential future optimizations include:
@@ -926,7 +917,7 @@ Potential future optimizations include:
 
 These optimizations MUST NOT weaken correctness.
 
-The initial implementation MAY hash all recorded repository inputs directly.
+The initial implementation MAY hash all recorded repository inputs directly. Retaining available signed evidence and required blobs maximizes reuse; pruning or evicting the only copy necessarily risks recomputation. Report missing evidence distinctly from changed inputs.
 
 ---
 
@@ -942,47 +933,11 @@ Git SHOULD be treated as an optimization source, not the trust model.
 
 ---
 
-# 43. Sidecar Changes and Test Impact Analysis
+# 43. Result Changes and Test Impact Analysis
 
-Repository-wide impact analyzers SHOULD classify reserved metadata paths as follows, subject to the child-access exception in section 22:
+Impact analyzers for GitLab, GitHub Actions, and local automation SHOULD classify `.tm/results/**` as generated verification evidence. A result-only diff can run `tm validate --require-trust` without triggering unrelated application tests. Invalid/untrusted records do not certify application behavior; normal test selection applies whenever source/input changes also exist.
 
-```text
-**/.tm/**
-```
-
-as non-application metadata.
-
-Changing a generated sidecar (future adjacent layout shown):
-
-```text
-tests/risk/.tm/test_score.py.tm.json
-```
-
-MUST NOT imply:
-
-```text
-risk code changed
-```
-
-nor:
-
-```text
-rerun every test
-```
-
-The normal reaction is:
-
-```text
-validate sidecar
-```
-
-This rule applies to:
-
-- GitLab `rules:changes`;
-- Pants target inference;
-- custom impact analyzers;
-- repository automation;
-- agent workflows.
+Do not exclude all `.tm/**`: changes to `.tm/profiles/**` can alter execution semantics and must be approved and evaluated as profile changes. Metadata consumed by the application also remains a real dependency unless the profile hides it. Trust configuration cannot be weakened by an impact-analysis shortcut.
 
 ---
 
@@ -1004,133 +959,58 @@ child process activity
 
 ---
 
-# 45. Sandbox Integration
+# 45. Portable Execution Backend
 
-The initial observer may run without a sandbox, but reuse then relies on the explicit trusted-profile preconditions in sections 15, 26, 31, and 38. Observation alone does not enforce them.
+The first portable release requires a backend that realizes the approved execution view: stable inputs/runtime, canonical paths, hidden `.tm`, clean environment, controlled descriptors, private empty scratch roots, and owned output roots. A compatible externally provisioned sandbox/VM may supply this view; `tm` need not implement a general container orchestrator.
 
-A later version SHOULD support optional sandboxing:
+A native observer-only mode may remain available for discovery and uncached execution. It cannot claim portable reuse merely by accepting profile declarations it cannot establish. Mount/user namespaces, read-only snapshots, filesystem mediation, or a controlled VM are implementation options; select and capability-test a reference backend before the portability acceptance gate.
 
-```bash
-tm --sandbox -- pytest ...
-```
-
-Possible mechanisms include:
-
-- mount namespaces;
-- user namespaces;
-- temporary filesystem overlays;
-- restricted network namespaces.
-
-Sandboxing can improve correctness by exposing hidden dependencies.
+The same image on different hosts does not automatically establish a common kernel/CPU/metadata view. Either match those actual context fields or enforce a shared observable contract. Lack of suitable backend capabilities causes explicit uncached execution, while invalid explicitly selected configuration returns 125.
 
 ---
 
-# 46. CI Integration
+# 46. GitLab, GitHub Actions, and Local Integration
 
-Example GitLab job:
+All three environments MUST use the same record format, profile semantics, trust model, and lookup algorithm. Provider integration supplies transport, credentials, and optional coordination; it must not alter verification identity.
 
-```yaml
-unit-tests:
-  script:
-    - tm -- pytest tests/unit/
+| Environment | Consume | Produce |
+| --- | --- | --- |
+| Local/worktrees | Checked-in records, user store, optional shared store; approved public keys. | Approved local signer or isolated shared producer; write records for optional Git commit. |
+| GitLab CI | Checkout records plus optional cache/artifact/shared-store downloads; public trust policy. | Trusted supervisor signs eligible execution; upload records/blobs for later pipelines. |
+| GitHub Actions | Same checked-in/downloaded records and public policy. | Same producer contract; upload records/blobs for later workflows. |
+
+Target invocation after installing `tm` and provisioning an approved profile/policy:
+
+```sh
+tm --profile .tm/profiles/portable-linux.json -- ./build/unit_tests
 ```
 
-If nothing relevant changed:
+A GitLab job's `script` and a GitHub Actions step's `run` use exactly that command, as does a developer. These are target examples, not a claim that stock hosted runners automatically meet the profile. Linux ptrace, stable filesystem views, and producer isolation must be capability-checked before enabling publication. Unavailable tracing means ordinary execution, not a partial trusted record. A hosted runner may consume evidence where it can establish the required execution context; production may require a configured self-hosted runner or isolated execution service.
 
-```text
-tm loads trusted sidecar
--> validates fingerprint
--> skips pytest
--> exits 0
-```
+Prepare dependencies/build artifacts before the verification unit or declare their produced outputs. Cache/artifact archives are untrusted transport: validate every record and blob after extraction, use safe paths, and never restore signing keys or overwrite trust policy. Provider caches may be evicted or scoped such that another branch/provider cannot read them; see [GitLab caching](https://docs.gitlab.com/ci/caching/) and [GitHub caching](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching). For immediate GitLab-to-GitHub reuse use a common result store; for offline reuse commit the records and make required blobs available.
 
-If an input changed:
+PR/MR consumers use read-only access and approved trust state outside the proposed branch. Publication from untrusted changes requires a trusted isolated supervisor, not a privileged workflow that signs uploaded JSON. A job token, pipeline success flag, protected branch name, or artifact URL alone is not a signature.
 
-```text
-tm invalidates result
--> executes pytest
--> records dependencies
--> exits with pytest exit code
-```
-
-```mermaid
-flowchart LR
-    A[GitLab job] --> B[tm]
-    B --> C{Reusable verification?}
-    C -- Yes --> D[Return 0 immediately]
-    C -- No --> E[Test framework]
-    E --> F[Process outcome]
-    F --> B
-    B --> G[Update sidecar if eligible]
-    G --> H[Return child exit code]
-```
-
-Exit-code consumption needs no special CI protocol. Enabling reuse requires the operator-controlled profile and private trust store from section 26; a committed sidecar alone always runs on a fresh worker.
+Supervisor downloads/uploads are permitted network activity; test network dependencies remain non-cacheable. If a valid checked-in record is usable, no service or private key is needed merely to verify it. Live trust freshness and strict coordination may separately require connectivity.
 
 ---
 
-# 47. Exhaustive Validation CI
+# 47. Audit and Forced Validation
 
-Repositories adopting `tm` SHOULD continue running periodic exhaustive tests.
+Normal operation MUST reuse accepted equivalent successful evidence, including on later pipelines and branches. Periodic exhaustive reruns are optional operator audits and deliberately override the no-repeat objective; they are not required merely because a new pipeline starts.
 
-Example:
-
-```yaml
-nightly-full-tests:
-  variables:
-    TM_FORCE: "1"
-  script:
-    - tm -- pytest tests/
-```
-
-This provides a backstop against:
-
-- missing dependencies;
-- observer bugs;
-- unexpected nondeterminism;
-- previously unknown environmental inputs.
-
-False skips discovered during exhaustive runs SHOULD drive improvements to `tm` dependency semantics.
+Use `--force` or target `TM_FORCE=1` for audits, debugging, or investigating false skips. Compare forced outcomes with existing evidence. A same-fingerprint failure triggers section 20 quarantine and review of the observer/profile; it must not be hidden by retaining an older accepted success.
 
 ---
 
-# 48. Recommended Validation Modes
+# 48. Recommended Execution Policies
 
-Caching below is conditional on the profile and trust/isolation requirements. Untrusted jobs without isolation and fresh workers without receipts run their tests.
-
-## Normal MR
-
-```text
-tm caching enabled
-```
-
-Goal: fast developer feedback.
-
-## Main branch
-
-```text
-tm caching enabled
-```
-
-Goal: verify affected state efficiently.
-
-## Nightly
-
-```text
-TM_FORCE=1
-```
-
-Goal: exhaustive regression.
-
-## Release qualification
-
-Policy-dependent:
-
-```text
-TM_FORCE=1
-```
-
-or stricter verification profile.
+- **Local, main, and ordinary CI:** reuse valid checked-in/shared evidence; execute only unresolved eligible fingerprints or unsupported commands.
+- **Untrusted PR/MR:** verify with approved public policy; publish only through an isolated trusted producer.
+- **Concurrent CI fleets:** use the common coordinator/result store to avoid duplicate cold runs across GitLab and GitHub.
+- **Offline development:** reuse available evidence under an approved trust snapshot; unavailable evidence may cause duplicate independent work.
+- **Strict no-overlap environments:** require coordination and accept waiting/failure during an outage.
+- **Audits/release qualification:** explicit force policy if rerunning is desired; no implicit age-based invalidation of deterministic results.
 
 ---
 
@@ -1140,7 +1020,7 @@ The central safety rule is:
 
 > When uncertain, execute.
 
-Conditions that MUST force execution:
+Conditions that MUST reject an affected candidate or execution (other valid candidates may still be reused; otherwise run, or wait/return 125 under strict coordination):
 
 ```text
 unknown sidecar version
@@ -1200,21 +1080,22 @@ A child-process exit code MUST otherwise pass through unchanged, including 125�
 
 ---
 
-# 52. MVP Scope and Delivery Gates
+# 52. First Portable Release and Delivery Gates
 
-Version 0.1 targets Linux x86-64 and C11. The wrapper can run arbitrary commands; reuse is limited to deterministic verification commands with controlled stdin, immutable inputs/runtime, supported filesystem observations, no network/IPC, and no required output effects.
+Linux x86-64 and C11 remain the initial execution target. Portable reuse across local worktrees/workstations, GitLab, and GitHub is first-release scope. A prototype that can skip only within one private checkout does not satisfy the product goal.
 
-Deliver in this order:
+Deliver in order:
 
-1. **Wrapper (implemented):** argv preservation, numeric outcomes, force/explain parsing, CLI checks.
-2. **Observer, no skips:** ptrace process tracking, explicit syscall classification, input discovery, network/mutation/unsupported-operation reasons; preserve command outcomes on observer faults.
-3. **Metadata, no skips:** frozen schema, canonical hashes, context HMAC, operator-profile/store configuration interface, strict validation, command-keyed storage, clean, and atomic writes.
-4. **Local reuse gate:** private receipt lifecycle and isolation policy, stable workspace/runtime validation, locking, failed-run revocation, and all section 59 safety cases demonstrated.
-5. **Measured pilot:** compare forced outcomes with cache decisions for representative eligible commands before expanding supported operations.
+1. **Wrapper baseline:** preserve argv and numeric process outcomes; existing wrapper behavior remains compatible.
+2. **Observer/profile backend:** complete tracking and rejection reasons, stable canonical execution view, hidden metadata, controlled environment, empty scratch roots; keep skips disabled.
+3. **Portable evidence:** schema/semantics v2, SHA-256 identities, Ed25519 signatures, approved repository/profile policy, immutable multi-result layout, strict validation, atomic output storage/restoration. Freeze profile and transport schemas with golden vectors.
+4. **Cross-environment reuse:** prove clean-clone/worktree/workstation/GitLab/GitHub hits from checked-in signed records, with no private signing keys on consumers. Prove independent input/context changes miss.
+5. **Shared publication and coordination:** common store, local worktree locking, optional distributed coordinator, fencing, invalidation, recovery, available/strict modes. Demonstrate simultaneous pipeline requests execute once under healthy coordination.
+6. **Pilot:** measure eligibility, observer/check/restore costs, warm hits, and cold duplicate rate. Expand modeled observations only with correctness evidence.
 
-Skips MUST remain disabled through gates 1–3. Reuse approved SHA-256/HMAC and JSON implementations where feasible; cryptographic primitives should not become a bespoke subsystem.
+Use maintained cryptographic/JSON libraries and existing storage/locking services where their semantics fit. Provider adapters should be thin; avoid implementing separate caches for GitLab and GitHub. A reference filesystem/content-store transport can precede remote adapters, but acceptance requires real cross-pipeline distribution.
 
-Deferred: cross-machine trust import, signatures, remote services, framework adapters, output replay, mutable external state, automatic determinism inference, broad host-runtime support, eBPF, Windows/macOS, external-input overrides, and environment filtering. No delivery-date claim is made before the observer prototype measures eligibility and overhead.
+Deferred: per-test framework adapters, external service-state caching, secret-dependent shared results, automatic determinism inference, alternative tracing backends, native Windows/macOS observation, and arbitrary compatibility across kernels/architectures. Public-key signatures, cross-machine trust, output restoration, and CI integration are no longer deferred.
 
 ---
 
@@ -1233,6 +1114,11 @@ main.c
 ├── fingerprint.c
 ├── sidecar.c
 ├── policy.c
+├── attestation.c
+├── profile.c
+├── outputs.c
+├── store.c
+├── coordinator.c
 └── explain.c
 ```
 
@@ -1250,6 +1136,11 @@ flowchart TB
     A --> K[sidecar.c]
     A --> L[policy.c]
     A --> M[explain.c]
+    A --> N[attestation.c]
+    A --> O[profile.c]
+    A --> P[outputs.c]
+    A --> Q[store.c]
+    A --> R[coordinator.c]
 ```
 
 Responsibilities MUST remain separated.
@@ -1258,60 +1149,16 @@ The observation backend SHOULD be abstracted enough that a `ptrace` implementati
 
 ---
 
-# 54. Example Lifecycle
+# 54. Portable Lifecycle Example
 
-Initial repository:
+1. A trusted local or CI producer runs `tm --profile .tm/profiles/portable-linux.json -- ./build/unit_tests` in repository `example-project`.
+2. The observer records stable effective inputs, the controlled runtime/context, and declared outputs. The command exits 0; the supervisor stores artifacts and signs a result.
+3. The record is written under `.tm/results/<command-id>/<verification-id>/<record-id>.tm.json` and can be committed to Git or uploaded to the shared store.
+4. Another worktree, a developer workstation, a GitLab pipeline, or a GitHub workflow invokes the same command under the same effective profile. It verifies the producer's public key, rehashes recorded inputs, restores required outputs, and returns 0 without executing tests.
+5. An unrelated file/commit or a different CI run ID does not invalidate the result. A relevant input, actual delivered environment value, or observable runtime difference does.
+6. A changed input state produces a second immutable result. Returning to the original state reuses the first result; branch switching does not overwrite it.
 
-```text
-src/foo.py
-tests/test_foo.py
-```
-
-Developer runs:
-
-```bash
-tm -- pytest tests/test_foo.py
-```
-
-Observed:
-
-```text
-tests/test_foo.py
-src/foo.py
-src/common.py
-```
-
-pytest exits:
-
-```text
-0
-```
-
-`tm` writes:
-
-```text
-.tm/commands/<command-id>.tm.json
-```
-
-and exits `0`.
-
-A second developer clones the repository and executes:
-
-```bash
-tm -- pytest tests/test_foo.py
-```
-
-In version 0.1 the clone has no matching private receipt and MUST execute. Later eligible runs in that same repository instance may skip when all inputs and trust state match. This lifecycle assumes the runner supplies an eligible profile; ordinary pytest invocations may write caches or perform unsupported observations and thus remain uncached.
-
-If `src/foo.py` changes:
-
-```text
-foo.py hash differs
--> previous verification invalid
--> pytest executes
--> dependencies relearned
--> new sidecar written
-```
+Consumers need accepted public policy and compatible execution conditions, not the producer's private key, local receipt, original host path, or prior local execution. If two consumers have a cold miss simultaneously, section 39 coordination determines whether one waits or duplicate computation is possible.
 
 ---
 
@@ -1345,7 +1192,7 @@ Recorded inputs: 17
 Verification:
   sha256:2c984a...
 Sidecar:
-  .tm/commands/<command-id>.tm.json
+  .tm/results/<command-id>/<verification-id>/<record-id>.tm.json
 ```
 
 Next run:
@@ -1375,7 +1222,7 @@ A test need not be repeated when all effective inputs remain unchanged.
 
 ## 56.3 State is reconstructible
 
-Deleting every sidecar only causes more testing. It must never compromise correctness.
+Deleting result records may cause more testing. Trust roots and known invalidations/quarantines are control state and MUST NOT be discarded as ordinary cache entries.
 
 ## 56.4 Metadata must not cause work
 
@@ -1387,7 +1234,7 @@ A committed JSON file alone must not be sufficient to forge a trusted successful
 
 ## 56.6 Conservative invalidation
 
-Any uncertainty results in execution.
+Uncertainty prevents reuse; normally execute, or wait/fail under explicit strict coordination.
 
 ## 56.7 Observable simplicity
 
@@ -1410,30 +1257,21 @@ Rust test functions
 
 while retaining the generic observation engine.
 
-## 57.2 Shared cache
+## 57.2 Additional storage transports
 
-Store verification results in:
+The first release includes shared signed records and content-addressed output storage. Later versions may add more artifact registries and storage providers without changing identity or trust semantics.
 
-```text
-GitLab cache
-S3
-artifact registry
-distributed CAS
-```
+## 57.3 Additional attestation providers
 
-in addition to repository sidecars.
-
-## 57.3 Signed verification attestations
-
-Allow CI-generated PASS results to be independently authenticated.
+Ed25519 attestations are required initially. Future versions may integrate other authenticated issuer systems while preserving complete payload binding and consumer policy checks.
 
 ## 57.4 eBPF observer
 
 Reduce tracing overhead and improve scalability.
 
-## 57.5 Sandbox execution
+## 57.5 Additional execution backends
 
-Restrict tests to observed/declared inputs and identify hidden dependencies.
+Add alternative sandbox/VM backends implementing the first release’s stable-view, metadata-isolation, and portable context contract.
 
 ## 57.6 CI impact planner
 
@@ -1497,7 +1335,7 @@ The intended differentiator is:
 
 # 59. Acceptance Criteria for Version 0.1
 
-All reuse cases below assume an explicitly configured eligible profile, stable input view, controlled runtime, and private trust store. These are implementation acceptance criteria, not claims about the current wrapper.
+All reuse cases below assume an approved eligible profile, stable input view, controlled runtime, and accepted public trust policy. These are implementation acceptance criteria, not claims about the current wrapper.
 
 ## AC-01 — Basic successful caching
 
@@ -1522,11 +1360,11 @@ tm exits 0
 
 ## AC-02 — Input invalidation
 
-If a previously observed repository input changes, the test executes again.
+If an observed input changes, the old fingerprint cannot hit. Reuse another accepted record for the new state if one exists; otherwise execute.
 
 ## AC-03 — Test change invalidation
 
-If the test script itself changes, the test executes again.
+If the test script changes, re-evaluate identity/inputs. Reuse an accepted record for that exact state if available; otherwise execute.
 
 ## AC-04 — Failed result
 
@@ -1547,7 +1385,7 @@ If a subprocess reads a repository file, that file becomes a dependency.
 
 ## AC-07 — Sidecar isolation
 
-Changing metadata does not change application input hashes for an eligible command. A receipt/sidecar mismatch still forces RUN. Child reads or enumeration of metadata force non-reusability in observer-only mode.
+Changing metadata does not change application input hashes for an eligible command. An invalid signature or payload mismatch still prevents reuse. Child reads or enumeration of metadata force non-reusability in observer-only mode.
 
 ## AC-08 — Portability
 
@@ -1559,7 +1397,7 @@ Sidecars do not contain user-specific absolute paths.
 tm --force -- ...
 ```
 
-always executes.
+never skips; execute once ownership and launch requirements are satisfied. Strict coordination may wait/fail before launch.
 
 ## AC-10 — Explain mode
 
@@ -1571,57 +1409,67 @@ Interrupted sidecar writes cannot create apparently valid verification state.
 
 ## AC-12 — Uncertain state
 
-Any observation or validation failure causes:
-
-```text
-RUN
-```
-
-rather than:
-
-```text
-SKIP
-```
+An uncertain candidate never authorizes SKIP. Try other valid candidates; if none remain, RUN under normal policy or WAIT/fail under explicit strict coordination. An observation failure prevents publication of that execution.
 
 ---
 
-## AC-13 — Authentic provenance
+## AC-13 — Portable authenticity
 
-A forged, edited, cloned, or structurally valid unsigned sidecar without a matching private receipt runs. Changed input manifests, results, profile, semantics, or trust key invalidate receipts. An untrusted CI job cannot write a trusted store; where isolation is unavailable, reuse is disabled.
+A fresh clone with approved public keys and a matching signed record skips without a local receipt/private key. Edited payloads/manifests, incorrect repository IDs, unknown/revoked issuers, and unapproved profiles cannot authorize reuse. Git ancestry alone grants nothing.
 
-## AC-14 — Failed forced execution and crash recovery
+## AC-14 — Failed forced execution and recovery
 
-Success followed by forced failure, signal, or observer failure leaves no usable prior receipt. The next invocation runs even with the original inputs. Kill the supervisor before/after each publication step: incomplete state never skips.
+A same-fingerprint forced failure quarantines the old success locally and publishes authorized invalidation when connected. Changed-state failures preserve unrelated successful states. Crash recovery never resurrects an unresolved attempt or assumes offline revocation freshness.
 
-## AC-15 — Context and privacy
+## AC-15 — Environment and privacy
 
-Unset versus empty environment variables, changed values, argv boundaries, executable resolution, runtime digest, cwd, and supported execution-context changes invalidate reuse. Sidecars and diagnostics contain neither raw secret values/arguments nor unkeyed digests of them. Reordered environment entries serialize identically.
+Identical clean child environments on local, GitLab, and GitHub produce identical fingerprints despite different parent CI variables and host paths. Unset/empty and changed delivered values miss. Secret-dependent inputs cannot enter public records; producer credentials are never child inputs.
 
 ## AC-16 — Filesystem observations
 
-Creating a previously missing file, adding/removing an enumerated entry, retargeting a symlink, changing an untracked dependency, and changing an executable each force RUN. Relative directory-descriptor paths and descendant reads are covered. Metadata-sensitive operations without a supported projection are ineligible.
+Changed file contents, negative probes, directory membership, symlink targets, untracked inputs, and executable resolution miss. Unsupported metadata observations remain ineligible. Hidden `.tm` changes do not affect the child-visible input view.
 
-## AC-17 — Unsupported and external inputs
+## AC-17 — Unsupported input channels
 
-DNS, failed socket attempts, loopback, Unix sockets, inherited descriptors, io_uring, unknown syscalls, trace loss, ABI transitions, and escaping descendants prevent publication. Observer failure after launch never duplicates command execution.
+Test DNS/socket activity, unsupported descriptors/syscalls/ABIs, trace loss, and escaping descendants prevent publication. Supervisor transport activity does not. Observer failure after launch never restarts the command.
 
-## AC-18 — Stable inputs and effects
+## AC-18 — Outputs and stable inputs
 
-Without an enforced stable input view or explicit operator guarantee, success does not publish reuse. Input writes, writable shared mappings, required reports/artifacts, uncontrolled stdin, and detected randomness prevent publication. Demonstrate that concurrent edit/change-restore scenarios cannot be certified by post-run hashing alone.
+Input mutations and unestablished stability prevent publication. Empty isolated scratch writes are allowed. A hit restores declared reports/artifacts byte-for-byte with declared modes and removes stale owned output entries. Missing/corrupt blobs, unsafe paths, or failed restoration never return a successful hit.
 
-## AC-19 — Validation and concurrency
+## AC-19 — Validation and publication
 
-Reject malformed/duplicate/unknown fields, unsupported versions, unsafe paths, symlinked state paths, and invalid digests. `validate` never runs tests or creates receipts. Concurrent force/run/clean operations cannot resurrect revoked success. Read-only/full storage preserves the child's collected exit status and publishes no receipt.
+Reject malformed fields, duplicate keys, path traversal, symlink escapes, invalid signatures, and unsupported versions. Partial downloads and interrupted publication never skip. `validate` never executes/signs. Cache faults preserve collected child outcomes.
 
-## AC-20 — Canonical contract
+## AC-20 — Canonical vectors
 
-Maintain golden vectors for command HMAC, environment HMAC, all input variants, verification hash, and receipt HMAC. Verify empty argv entries, Unicode, input sorting, unset/empty environment, and unknown schema handling. Raw argv and environment values never appear in committed fixtures containing real secrets.
+Golden vectors cover command/context SHA-256, all input variants, verification IDs, output manifests, Ed25519 payloads, and record IDs. Two independent producers with different keys compute the same verification ID for identical effective inputs. Private machine keys never affect lookup.
+
+## AC-21 — Cross-worktree and workstation reuse
+
+Run once in worktree A; commit the signed record. Worktree B and a clean checkout on another compatible workstation skip using only public trust material. Absolute host paths and local Git worktree layouts differ. Changed relevant content misses; returning to a previously signed state hits.
+
+## AC-22 — GitLab and GitHub interoperability
+
+A result produced in a trusted GitLab execution is consumed by a fresh GitHub job and locally without executing; repeat in the reverse direction. Different job IDs, commit IDs with unrelated changes, cache endpoints, and issuers do not change verification identity. Revoked/unapproved producer policy still denies reuse.
+
+## AC-23 — Concurrent cold misses
+
+With no record and a healthy shared coordinator, simultaneous equivalent local/GitLab/GitHub requests start exactly one command; waiters re-query and reuse its published record. Discovery uses the conservative command/context slot even before the dependency manifest is known. Stale fencing tokens cannot publish.
+
+## AC-24 — Partitions and incomplete publication
+
+Strict mode cannot start a replacement without confirmation that a lost owner stopped. Available mode reports possible duplicate execution during an outage. A crash after computation but before durable evidence may rerun; no exactly-once recovery claim is made. Offline use obeys the approved trust-snapshot policy.
+
+## AC-25 — No implicit repeat policy
+
+A valid available result does not expire just because a day elapsed, a new pipeline started, a branch changed, or the consumer moved workstation. `--force`, genuine input/context changes, trust invalidation, and missing required evidence produce distinct explain reasons. Framework-level test overlap is not deduplicated without an adapter.
 
 ---
 
 # 60. Summary
 
-`tm` is deliberately small.
+`tm` separates portable verification identity, authenticated evidence, and execution/transport policy.
 
 ```mermaid
 flowchart TD
@@ -1632,7 +1480,7 @@ flowchart TD
     E -- No --> C
     E -- Yes --> F{Previous exit code = 0 and trusted?}
     F -- No --> C
-    F -- Yes --> G[Skip]
+    F -- Yes --> G[Restore required outputs and skip]
     G --> H[Return 0]
     C --> I[Observe execution]
     I --> J[Capture exit outcome]
@@ -1647,8 +1495,8 @@ Runtime observation discovers supported file dependencies; the operator must sti
 
 The test command itself reveals its dependencies through execution.
 
-The resulting model is:
+The reuse objective is:
 
-> **A successful command result remains valid until something that contributed to that result changes.**
+> **Run an eligible verification once, then reuse its authenticated result wherever the same effective inputs and accepted execution contract apply.**
 
 That principle can apply consistently across Python, Kotlin/JVM, Go, Rust, shell scripts, compiled tests, linters, schema validators, security scanners, and other deterministic CI verification tasks.
