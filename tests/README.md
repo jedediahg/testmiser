@@ -25,7 +25,10 @@ and requires exactly one execution. Set `TM_ACCEPTANCE_SHARED_STORE` to an
 existing absolute directory to test a mounted store; the script creates and
 removes a unique private subdirectory there. By default it creates a private
 temporary store. The gate also checks that `TM_COORDINATION_MODE=strict`
-refuses to launch when the shared execution slot is unavailable.
+refuses to launch when the shared execution slot is unavailable. Its producer
+and consumer run with different GitLab-like and GitHub-like parent variables;
+the fixture fails if CI IDs, workspace paths, or tokens reach the test process,
+and the consumer must still reuse the producer's record.
 For a common CI store, configure the GitHub repository variable and GitLab CI
 variable with this name and mount the same protected directory on both runner
 pools. Provision a deterministic public profile that permits

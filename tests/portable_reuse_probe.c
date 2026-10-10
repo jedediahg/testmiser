@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -12,6 +13,10 @@ int main(int argc, char **argv)
     size_t used = 0;
     int source, destination, result = 1;
     if (argc != 4) return 2;
+    if (getenv("CI_JOB_ID") != NULL || getenv("CI_PIPELINE_ID") != NULL ||
+        getenv("CI_PROJECT_DIR") != NULL || getenv("CI_JOB_TOKEN") != NULL ||
+        getenv("GITHUB_RUN_ID") != NULL || getenv("GITHUB_WORKSPACE") != NULL ||
+        getenv("GITHUB_TOKEN") != NULL) return 3;
     source = open(argv[1], O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (source < 0) return 1;
     for (;;) {

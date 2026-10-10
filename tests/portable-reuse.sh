@@ -120,8 +120,13 @@ run_tm() {
     )
 }
 
-if ! run_tm "$work/producer" "$work/cache-producer" "$signing_key" \
-    >"$work/producer.out" 2>"$work/producer.err"; then
+if ! (
+    unset GITHUB_RUN_ID GITHUB_WORKSPACE GITHUB_TOKEN
+    export CI_JOB_ID=gitlab-producer-job CI_PIPELINE_ID=gitlab-producer-pipeline
+    export CI_PROJECT_DIR="$work/producer" CI_JOB_TOKEN=gitlab-test-token
+    export HOME="$work/gitlab-host-home"
+    run_tm "$work/producer" "$work/cache-producer" "$signing_key"
+) >"$work/producer.out" 2>"$work/producer.err"; then
     cat "$work/producer.err" >&2
     printf '%s\n' 'Producer execution failed; inspect the profile/backend eligibility diagnostics above.' >&2
     exit 1
@@ -147,8 +152,13 @@ if [[ -e "$work/consumer/build/reports/portable-reuse.txt" ]]; then
 fi
 mkdir -p "$work/consumer/build/reports"
 printf '%s\n' 'stale output' >"$work/consumer/build/reports/stale.txt"
-if ! run_tm "$work/consumer" "$work/cache-consumer" \
-    >"$work/consumer.out" 2>"$work/consumer.err"; then
+if ! (
+    unset CI_JOB_ID CI_PIPELINE_ID CI_PROJECT_DIR CI_JOB_TOKEN
+    export GITHUB_RUN_ID=github-consumer-run
+    export GITHUB_WORKSPACE="$work/consumer" GITHUB_TOKEN=github-test-token
+    export HOME="$work/github-host-home"
+    run_tm "$work/consumer" "$work/cache-consumer"
+) >"$work/consumer.out" 2>"$work/consumer.err"; then
     cat "$work/consumer.err" >&2
     exit 1
 fi
