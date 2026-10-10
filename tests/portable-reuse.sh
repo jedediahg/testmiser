@@ -26,6 +26,11 @@ if [[ ! -x "$tm_bin" || ! -d "$runtime_root" || ! -f "$profile" ||
     printf '%s\n' 'tm must be executable; profile, policy, key, and runtime must have the expected file types.' >&2
     exit 2
 fi
+probe=$repo_root/build/portable-reuse-probe
+if [[ ! -x "$probe" ]]; then
+    printf 'Build the portable acceptance probe first: make build/portable-reuse-probe\n' >&2
+    exit 2
+fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
@@ -34,7 +39,10 @@ git clone --quiet --local "$repo_root" "$work/producer"
 git -C "$work/producer" config user.name 'tm acceptance test'
 git -C "$work/producer" config user.email 'tm-acceptance@localhost'
 mkdir -p "$work/producer/build"
+cp "$probe" "$work/producer/build/portable-reuse-probe"
+chmod 0755 "$work/producer/build/portable-reuse-probe"
 printf '%s\n' 'unchanged-input' >"$work/producer/build/portable-input.txt"
+mkdir -p "$work/producer/build/reports"
 
 run_tm() {
     local checkout=$1 cache=$2
@@ -51,8 +59,8 @@ run_tm() {
             "$tm_bin" --root . --profile "$profile" \
             --trust-policy "$trust_policy" "${key_option[@]}" \
             --output build/reports --explain -- \
-            /bin/sh -c 'IFS= read -r input <build/portable-input.txt; mkdir -p build/reports; printf "%s:%s\n" "$1" "$input" >build/reports/portable-reuse.txt; printf "%s:%s\n" "$1" "$input"' \
-            tm-acceptance "$id"
+            ./build/portable-reuse-probe build/portable-input.txt \
+            build/reports/portable-reuse.txt "$id"
     )
 }
 
@@ -72,7 +80,8 @@ if grep -R -F "$work/producer" "$work/producer/.tm/results"; then
     printf '%s\n' 'Portable result metadata contains its producer checkout path.' >&2
     exit 1
 fi
-git -C "$work/producer" add -f .tm/results .tm/blobs build/portable-input.txt
+git -C "$work/producer" add -f .tm/results .tm/blobs \
+    build/portable-input.txt build/portable-reuse-probe
 git -C "$work/producer" commit --quiet -m 'Add portable reuse acceptance evidence'
 
 git clone --quiet --local "$work/producer" "$work/consumer"

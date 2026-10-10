@@ -102,6 +102,10 @@ $(BUILD_DIR)/output_probe: tests/output_probe.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
+$(BUILD_DIR)/portable-reuse-probe: tests/portable_reuse_probe.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -static -o $@ $<
+
 $(BUILD_DIR)/test_digest: tests/digest.c src/digest.c include/tm/digest.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/digest.c src/digest.c $(LDLIBS)

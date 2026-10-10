@@ -15,6 +15,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install portable acceptance dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap busybox-static jq
       - name: Verify source changes and result evidence
         env:
           TM_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -40,3 +44,5 @@ jobs:
           if [[ "$has_results" == true ]]; then
             bash scripts/tm-ci-validate-results.sh
           fi
+      - name: Verify signed cross-worktree reuse
+        run: bash tests/portable-reuse-ci.sh
