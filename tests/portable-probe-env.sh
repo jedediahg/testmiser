@@ -7,7 +7,8 @@ trap 'rm -rf -- "$work"' EXIT HUP INT TERM
 printf 'input\n' >"$work/input.txt"
 
 set +e
-env CI_JOB_ID=job GITHUB_TOKEN=token "$probe" \
+env -i CI_JOB_ID=job GITHUB_TOKEN=token GITHUB_RUN_ID=run \
+    GITHUB_WORKSPACE=/workspace "$probe" \
     "$work/input.txt" "$work/tainted-output.txt" result
 status=$?
 set -e
@@ -16,7 +17,7 @@ if [[ "$status" -ne 3 || -e "$work/tainted-output.txt" ]]; then
     exit 1
 fi
 
-"$probe" "$work/input.txt" "$work/clean-output.txt" result \
+env -i "$probe" "$work/input.txt" "$work/clean-output.txt" result \
     >"$work/stdout.txt"
 if [[ "$(cat "$work/stdout.txt")" != 'result:input' || \
       "$(cat "$work/clean-output.txt")" != 'result:input' ]]; then
