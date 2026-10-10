@@ -94,6 +94,7 @@ struct task_state {
     int pending_duplication;
     int pending_close_on_exec;
     int pending_close_range;
+    int pending_cwd_change;
     unsigned int pending_range_start;
     unsigned int pending_range_end;
     char pending_path[TM_PATH_SIZE];
@@ -552,6 +553,7 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     task->pending_duplication = 0;
     task->pending_close_on_exec = 0;
     task->pending_close_range = 0;
+    task->pending_cwd_change = 0;
 
     switch (number) {
     case 2: /* open */
@@ -641,6 +643,30 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
             candidate_path("executable", task->pending_path);
         } else {
             mark_observer_failure();
+        }
+        return;
+    case 80: /* chdir */
+        task->pending_cwd_change = 1;
+        if (read_tracee_string(task->pid, registers->rdi, raw_path,
+                               sizeof(raw_path)) == 0)
+            task_path(task->pid, AT_FDCWD, raw_path, task->pending_path,
+                      sizeof(task->pending_path));
+        else
+            mark_observer_failure();
+        return;
+    case 81: /* fchdir */
+        task->pending_cwd_change = 1;
+        task->pending_descriptor = (int)registers->rdi;
+        {
+            const char *path = tracked_descriptor(task,
+                                                   task->pending_descriptor);
+            if (path == NULL) {
+                observer.saw_external_descriptor = 1;
+            } else if (snprintf(task->pending_path,
+                                sizeof(task->pending_path), "%s", path) >=
+                       (int)sizeof(task->pending_path)) {
+                mark_observer_failure();
+            }
         }
         return;
     case 435: { /* clone3: inspect the descriptor-sharing flag */
@@ -736,6 +762,10 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         return;
     case 78: /* getdents */
     case 217: /* getdents64 */
+        observer.saw_directory = 1;
+        return;
+    case 80: /* chdir */
+    case 81: /* fchdir */
         observer.saw_directory = 1;
         return;
     case 1:  /* write */
@@ -900,6 +930,9 @@ static void syscall_stop(struct task_state *task)
             }
         }
     }
+    if (task->pending_cwd_change && result == 0 &&
+        task->pending_path[0] != '\0')
+        candidate_path("cwd change", task->pending_path);
     if (task->pending_path[0] != '\0' &&
         (task->syscall_number == 2 || task->syscall_number == 257 ||
          task->syscall_number == 437)) {

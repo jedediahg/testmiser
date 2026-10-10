@@ -8,6 +8,7 @@ open_mode_probe=${OPEN_MODE_PROBE:-./build/open_mode_probe}
 network_syscall_probe=${NETWORK_SYSCALL_PROBE:-./build/network_syscall_probe}
 descriptor_dup_probe=${DESCRIPTOR_DUP_PROBE:-./build/descriptor_dup_probe}
 clone3_probe=${CLONE3_PROBE:-./build/clone3_probe}
+cwd_probe=${CWD_PROBE:-./build/cwd_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -479,6 +480,16 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         test "$status" -eq 0
         grep -q 'unsupported syscall(s):.*435' "$tmp_dir/clone3-shared.err"
     fi
+    for cwd_mode in chdir fchdir; do
+        "$tm_bin" --explain -- "$cwd_probe" "$cwd_mode" \
+            2>"$tmp_dir/$cwd_mode.err"
+        grep -q 'observed input candidate: cwd change: docs' \
+            "$tmp_dir/$cwd_mode.err"
+        grep -q 'observed input candidate: opened file: docs/implementation-notes.md' \
+            "$tmp_dir/$cwd_mode.err"
+        grep -q 'directory membership is not modeled' \
+            "$tmp_dir/$cwd_mode.err"
+    done
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'
