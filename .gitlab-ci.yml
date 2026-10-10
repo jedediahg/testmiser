@@ -3,11 +3,20 @@ image: debian:bookworm-slim
 variables:
   GIT_DEPTH: "0"
 
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
 stages:
   - test
 
 test:
   stage: test
+  interruptible: true
   before_script:
     - apt-get update
     - apt-get install --yes --no-install-recommends build-essential libssl-dev ca-certificates git
@@ -37,6 +46,7 @@ test:
 
 portable_acceptance:
   stage: test
+  interruptible: true
   tags:
     - linux-bwrap
   needs:
