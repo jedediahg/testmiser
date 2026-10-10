@@ -148,3 +148,45 @@ int tm_local_store_open_default(int *store_root_fd)
     free(cache_root);
     return result;
 }
+
+int tm_shared_store_open_configured(int *store_root_fd)
+{
+    const char *configured = getenv("TM_SHARED_STORE");
+    char *canonical_root = NULL;
+    struct stat status;
+    int root = -1, app = -1, store = -1, saved;
+
+    if (store_root_fd == NULL) { errno = EINVAL; return -1; }
+    *store_root_fd = -1;
+    if (configured == NULL || configured[0] == '\0') return 1;
+    if (configured[0] != '/') { errno = EINVAL; return -1; }
+    canonical_root = realpath(configured, NULL);
+    if (canonical_root == NULL) return -1;
+    root = open(canonical_root,
+                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (root < 0) goto fail;
+    if (fstat(root, &status) < 0) goto fail;
+    if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
+        (status.st_mode & 022) != 0) {
+        errno = EACCES;
+        goto fail;
+    }
+    app = open_private_directory(root, "testmiser");
+    if (app < 0) goto fail;
+    store = open_private_directory(app, "store");
+    if (store < 0) goto fail;
+    *store_root_fd = store;
+    close(app);
+    close(root);
+    free(canonical_root);
+    return 0;
+
+fail:
+    saved = errno;
+    if (store >= 0) close(store);
+    if (app >= 0) close(app);
+    if (root >= 0) close(root);
+    free(canonical_root);
+    errno = saved;
+    return -1;
+}

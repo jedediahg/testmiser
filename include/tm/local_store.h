@@ -11,4 +11,8 @@ int tm_local_store_open(const char *cache_root, int *store_root_fd);
 /* Resolve XDG_CACHE_HOME or $HOME/.cache and open its TestMiser store. */
 int tm_local_store_open_default(int *store_root_fd);
 
+/* Open the optional shared filesystem store configured by TM_SHARED_STORE.
+ * Returns 0 when opened, 1 when unset, and -1 when configured but unusable. */
+int tm_shared_store_open_configured(int *store_root_fd);
+
 #endif

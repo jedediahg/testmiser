@@ -180,6 +180,8 @@ Each ID is its SHA-256 digest without the `sha256:` prefix. `command-id` indexes
 
 Lookup searches checked-in records, the user's local content store shared across worktrees, then configured shared stores. Merge candidate sets; neither lookup order nor an unsigned index establishes trust. Local indexes are rebuildable hints. Bound parsing and traversal; on incomplete lookup report that a result may be unavailable and either run or wait according to policy.
 
+Version 0.1 supports an optional filesystem transport selected by the supervisor-only `TM_SHARED_STORE` environment variable. Its value is an existing absolute directory owned by the invoking user and not group/world writable. The store uses the same immutable record and content-addressed blob layout as the per-user store; producers publish blobs before records, and consumers verify signatures, paths, and blob contents before reuse. The mount and its durability are operator responsibilities. This transport does not itself provide cross-machine execution coordination or make CI-provider caches globally available.
+
 A stable `repository_id` approved by the operator namespaces all records and stores. It is independent of remote URL, absolute checkout path, branch, and Git worktree internals. Mirrors on GitLab and GitHub use the same ID only by explicit trust configuration. Forks cannot claim a trusted repository's identity merely by copying its profile.
 
 State destinations MUST reject traversal and symlink escapes. Portable records contain no user-specific absolute paths. Required large artifacts may live in content-addressed stores; Git records remain small. A self-contained offline hit requires the signed record plus all required artifact blobs and an acceptable trust snapshot.

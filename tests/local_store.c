@@ -19,12 +19,17 @@ int main(void)
     struct stat first_status, second_status;
     const char *current_xdg = getenv("XDG_CACHE_HOME");
     const char *current_home = getenv("HOME");
+    const char *current_shared = getenv("TM_SHARED_STORE");
     char *saved_xdg = current_xdg == NULL ? NULL : strdup(current_xdg);
     char *saved_home = current_home == NULL ? NULL : strdup(current_home);
+    char *saved_shared = current_shared == NULL ? NULL : strdup(current_shared);
     int had_xdg = current_xdg != NULL, had_home = current_home != NULL;
-    int first = -1, second = -1, default_fd = -1, rejected = -1, status = 1;
+    int had_shared = current_shared != NULL;
+    int first = -1, second = -1, default_fd = -1, rejected = -1;
+    int shared_fd = -1, status = 1;
 
     if ((had_xdg && saved_xdg == NULL) || (had_home && saved_home == NULL) ||
+        (had_shared && saved_shared == NULL) ||
         mkdtemp(cache) == NULL || mkdtemp(hostile) == NULL ||
         tm_local_store_open(cache, &first) < 0 ||
         tm_local_store_open(cache, &second) < 0 ||
@@ -33,6 +38,20 @@ int main(void)
         first_status.st_dev != second_status.st_dev ||
         (first_status.st_mode & 077) != 0 || first_status.st_uid != getuid())
         goto done;
+    if (unsetenv("TM_SHARED_STORE") < 0 ||
+        tm_shared_store_open_configured(&shared_fd) != 1 || shared_fd >= 0 ||
+        setenv("TM_SHARED_STORE", cache, 1) < 0 ||
+        tm_shared_store_open_configured(&shared_fd) < 0 ||
+        fstat(shared_fd, &second_status) < 0 ||
+        first_status.st_ino != second_status.st_ino ||
+        first_status.st_dev != second_status.st_dev) goto done;
+    close(shared_fd); shared_fd = -1;
+    if (setenv("TM_SHARED_STORE", "relative-store", 1) < 0 ||
+        tm_shared_store_open_configured(&rejected) == 0 || rejected >= 0)
+        goto done;
+    if (setenv("TM_SHARED_STORE", cache, 1) < 0 || chmod(cache, 0775) < 0 ||
+        tm_shared_store_open_configured(&rejected) == 0 || rejected >= 0 ||
+        chmod(cache, 0700) < 0) goto done;
     if (setenv("XDG_CACHE_HOME", cache, 1) < 0 ||
         tm_local_store_open_default(&default_fd) < 0 ||
         fstat(default_fd, &second_status) < 0 ||
@@ -66,11 +85,14 @@ done:
     if (first >= 0) close(first);
     if (second >= 0) close(second);
     if (default_fd >= 0) close(default_fd);
+    if (shared_fd >= 0) close(shared_fd);
     if (rejected >= 0) close(rejected);
     if (saved_xdg != NULL) (void)setenv("XDG_CACHE_HOME", saved_xdg, 1);
     else if (!had_xdg) (void)unsetenv("XDG_CACHE_HOME");
     if (saved_home != NULL) (void)setenv("HOME", saved_home, 1);
     else if (!had_home) (void)unsetenv("HOME");
+    if (saved_shared != NULL) (void)setenv("TM_SHARED_STORE", saved_shared, 1);
+    else if (!had_shared) (void)unsetenv("TM_SHARED_STORE");
     if (status != 0) fprintf(stderr, "local store test failed: %s\n", strerror(errno));
     if (cache[0] != '\0') {
         snprintf(store_path, sizeof(store_path), "%s/testmiser/store", cache);
@@ -95,5 +117,6 @@ done:
     }
     free(saved_xdg);
     free(saved_home);
+    free(saved_shared);
     return status;
 }

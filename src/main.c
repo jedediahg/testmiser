@@ -469,6 +469,7 @@ static int find_profile_cache_hit(int repository_fd,
     unsigned char *record = NULL;
     size_t record_length = 0, root_count, index;
     int preflight, found = 1, shared_store_fd = -1;
+    int configured_store_fd = -1;
     if (found_in_shared_store != NULL) *found_in_shared_store = 0;
     root_count = tm_profile_input_root_count(profile);
     if (root_count > 0) {
@@ -524,6 +525,30 @@ static int find_profile_cache_hit(int repository_fd,
         if (found == 0 && found_in_shared_store != NULL)
             *found_in_shared_store = 1;
     }
+    if (found != 0 &&
+        tm_shared_store_open_configured(&configured_store_fd) == 0) {
+        free(record); record = NULL; record_length = 0;
+        if (probe_only)
+            found = tm_result_find_matching_snapshot_record(configured_store_fd,
+                command_fingerprint, tm_profile_digest(profile),
+                tm_profile_runtime_digest(profile), context_fingerprint,
+                trust_policy, root_paths, root_descriptors, root_count,
+                &record, &record_length, record_id);
+        else
+            found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
+                configured_store_fd, repository_fd, configured_store_fd,
+                command_fingerprint, tm_profile_digest(profile),
+                tm_profile_runtime_digest(profile), context_fingerprint,
+                trust_policy, root_paths, root_descriptors, root_count,
+                output_roots, output_root_count, blocked_fingerprints,
+                blocked_count, &record, &record_length, record_id);
+        if (found == 0 && found_in_shared_store != NULL)
+            *found_in_shared_store = 1;
+    } else if (found != 0 && getenv("TM_SHARED_STORE") != NULL &&
+               getenv("TM_SHARED_STORE")[0] != '\0') {
+        fprintf(stderr, "tm: configured shared result store is unavailable (%s)\n",
+                strerror(errno));
+    }
     if (found == 0 && probe_only) {
         struct tm_result_summary summary = {0};
         char inspected_id[72];
@@ -543,6 +568,7 @@ done:
             if (root_descriptors[index] >= 0) close(root_descriptors[index]);
     free(record);
     if (shared_store_fd >= 0) close(shared_store_fd);
+    if (configured_store_fd >= 0) close(configured_store_fd);
     tm_snapshot_free(snapshot);
     free(root_descriptors);
     free(root_paths);
@@ -1021,6 +1047,7 @@ int main(int argc, char **argv)
         size_t record_length = 0;
         char record_id[72];
         int shared_store_fd = -1;
+        int configured_store_fd = -1;
         struct tm_output_manifest shared_outputs = {0};
         if (tm_verification_fingerprint(&identity,
                                         verification_fingerprint) == 0 &&
@@ -1054,6 +1081,29 @@ int main(int argc, char **argv)
                     "tm: result remains in this checkout; per-user shared store is unavailable (%s)\n",
                     strerror(errno));
             }
+            if (tm_shared_store_open_configured(&configured_store_fd) == 0) {
+                int blobs_ready = options.output_count == 0 ||
+                    (tm_outputs_capture_to_store(repository_fd,
+                        configured_store_fd, options.output_paths,
+                        options.output_count, &shared_outputs) == 0 &&
+                     output_manifests_equal(&output_manifest,
+                                            &shared_outputs));
+                if (blobs_ready &&
+                    tm_result_store(configured_store_fd, record, record_length,
+                                    record_id) == 0) {
+                    if (options.explain)
+                        fprintf(stderr, "tm: signed result published to configured shared store\n");
+                } else if (options.explain) {
+                    fprintf(stderr,
+                        "tm: shared-store publication failed or outputs changed (%s)\n",
+                        strerror(errno));
+                }
+                tm_output_manifest_clear(&shared_outputs);
+            } else if (getenv("TM_SHARED_STORE") != NULL &&
+                       getenv("TM_SHARED_STORE")[0] != '\0' && options.explain) {
+                fprintf(stderr, "tm: configured shared result store is unavailable (%s)\n",
+                        strerror(errno));
+            }
         } else if (options.explain) {
             fprintf(stderr,
                 "tm: successful command was not published (%s)\n",
@@ -1061,6 +1111,7 @@ int main(int argc, char **argv)
         }
         tm_output_manifest_clear(&shared_outputs);
         if (shared_store_fd >= 0) close(shared_store_fd);
+        if (configured_store_fd >= 0) close(configured_store_fd);
         free(record);
     } else if (signing_key != NULL && options.explain && result == 0) {
         fprintf(stderr,
