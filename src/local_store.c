@@ -12,6 +12,44 @@
 
 #include "tm/local_store.h"
 
+static int open_configured_directory(const char *path)
+{
+    char *copy, *save = NULL, *component;
+    int current, saved;
+    if (path == NULL || path[0] != '/') { errno = EINVAL; return -1; }
+    copy = strdup(path);
+    if (copy == NULL) return -1;
+    current = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (current < 0) {
+        saved = errno;
+        free(copy);
+        errno = saved;
+        return -1;
+    }
+    component = strtok_r(copy, "/", &save);
+    while (component != NULL) {
+        int next;
+        if (strcmp(component, ".") == 0 || strcmp(component, "..") == 0) {
+            errno = EINVAL;
+            goto fail;
+        }
+        next = openat(current, component,
+                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (next < 0) goto fail;
+        close(current);
+        current = next;
+        component = strtok_r(NULL, "/", &save);
+    }
+    free(copy);
+    return current;
+fail:
+    saved = errno;
+    close(current);
+    free(copy);
+    errno = saved;
+    return -1;
+}
+
 static int open_private_directory(int parent, const char *name)
 {
     struct stat status;
@@ -37,7 +75,6 @@ static int open_private_directory(int parent, const char *name)
 
 int tm_local_store_open(const char *cache_root, int *store_root_fd)
 {
-    char *canonical_root = NULL;
     struct stat status;
     int root = -1, app = -1, store = -1, saved;
 
@@ -46,10 +83,7 @@ int tm_local_store_open(const char *cache_root, int *store_root_fd)
         return -1;
     }
     *store_root_fd = -1;
-    canonical_root = realpath(cache_root, NULL);
-    if (canonical_root == NULL) return -1;
-    root = open(canonical_root,
-                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    root = open_configured_directory(cache_root);
     if (root < 0) goto fail;
     if (fstat(root, &status) < 0) goto fail;
     if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
@@ -65,7 +99,6 @@ int tm_local_store_open(const char *cache_root, int *store_root_fd)
     store = -1;
     close(app);
     close(root);
-    free(canonical_root);
     return 0;
 
 fail:
@@ -73,7 +106,6 @@ fail:
     if (store >= 0) close(store);
     if (app >= 0) close(app);
     if (root >= 0) close(root);
-    free(canonical_root);
     errno = saved;
     return -1;
 }
@@ -84,7 +116,6 @@ int tm_user_cache_root(char **cache_root)
     const char *home = getenv("HOME");
     char *candidate = NULL;
     size_t length;
-    char *canonical_root;
     struct stat status;
     int descriptor = -1, saved;
 
@@ -112,11 +143,7 @@ int tm_user_cache_root(char **cache_root)
             return -1;
         }
     }
-    canonical_root = realpath(candidate, NULL);
-    free(candidate);
-    if (canonical_root == NULL) return -1;
-    descriptor = open(canonical_root,
-                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    descriptor = open_configured_directory(candidate);
     if (descriptor < 0) goto fail;
     if (fstat(descriptor, &status) < 0) goto fail;
     if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
@@ -125,13 +152,13 @@ int tm_user_cache_root(char **cache_root)
         goto fail;
     }
     close(descriptor);
-    *cache_root = canonical_root;
+    *cache_root = candidate;
     return 0;
 
 fail:
     saved = errno;
     if (descriptor >= 0) close(descriptor);
-    free(canonical_root);
+    free(candidate);
     errno = saved;
     return -1;
 }
@@ -152,7 +179,6 @@ int tm_local_store_open_default(int *store_root_fd)
 int tm_shared_store_open_configured(int *store_root_fd)
 {
     const char *configured = getenv("TM_SHARED_STORE");
-    char *canonical_root = NULL;
     struct stat status;
     int root = -1, app = -1, store = -1, saved;
 
@@ -160,10 +186,7 @@ int tm_shared_store_open_configured(int *store_root_fd)
     *store_root_fd = -1;
     if (configured == NULL || configured[0] == '\0') return 1;
     if (configured[0] != '/') { errno = EINVAL; return -1; }
-    canonical_root = realpath(configured, NULL);
-    if (canonical_root == NULL) return -1;
-    root = open(canonical_root,
-                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    root = open_configured_directory(configured);
     if (root < 0) goto fail;
     if (fstat(root, &status) < 0) goto fail;
     if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
@@ -178,7 +201,6 @@ int tm_shared_store_open_configured(int *store_root_fd)
     *store_root_fd = store;
     close(app);
     close(root);
-    free(canonical_root);
     return 0;
 
 fail:
@@ -186,7 +208,6 @@ fail:
     if (store >= 0) close(store);
     if (app >= 0) close(app);
     if (root >= 0) close(root);
-    free(canonical_root);
     errno = saved;
     return -1;
 }

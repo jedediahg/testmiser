@@ -15,7 +15,7 @@ int main(void)
     char cache[] = "/tmp/tm-local-store-XXXXXX";
     char hostile[] = "/tmp/tm-local-store-hostile-XXXXXX";
     char home[] = "/tmp/tm-local-store-home-XXXXXX";
-    char app_path[256], store_path[256];
+    char app_path[256], store_path[256], store_link_path[256];
     struct stat first_status, second_status;
     const char *current_xdg = getenv("XDG_CACHE_HOME");
     const char *current_home = getenv("HOME");
@@ -75,6 +75,18 @@ int main(void)
             tm_local_store_open(hostile, &rejected) == 0 || rejected >= 0)
             goto done;
     }
+    if (snprintf(store_link_path, sizeof(store_link_path), "%s/store-link",
+                 hostile) >= (int)sizeof(store_link_path) ||
+        symlink(cache, store_link_path) < 0 ||
+        setenv("TM_SHARED_STORE", store_link_path, 1) < 0 ||
+        tm_shared_store_open_configured(&rejected) == 0 || rejected >= 0 ||
+        tm_local_store_open(store_link_path, &rejected) == 0 ||
+        rejected >= 0 ||
+        setenv("XDG_CACHE_HOME", store_link_path, 1) < 0 ||
+        tm_local_store_open_default(&rejected) == 0 || rejected >= 0 ||
+        setenv("TM_SHARED_STORE", "/tmp/../tmp", 1) < 0 ||
+        tm_shared_store_open_configured(&rejected) == 0 || rejected >= 0)
+        goto done;
     if (mkdtemp(home) == NULL || setenv("HOME", home, 1) < 0 ||
         unsetenv("XDG_CACHE_HOME") < 0 ||
         tm_local_store_open_default(&default_fd) < 0 || default_fd < 0)
@@ -102,6 +114,8 @@ done:
         rmdir(cache);
     }
     if (hostile[0] != '\0') {
+        snprintf(store_path, sizeof(store_path), "%s/store-link", hostile);
+        unlink(store_path);
         snprintf(app_path, sizeof(app_path), "%s/testmiser", hostile);
         unlink(app_path);
         rmdir(hostile);
