@@ -225,6 +225,34 @@ status=$?
 set -e
 test "$status" -eq 143
 
+"$tm_bin" -- sh -c '(exec sleep 30) & printf "%s\n" "$!" >"$2"; printf "%s\n" "$$" >"$1"; exec sleep 30' sh \
+    "$tmp_dir/wrapper-child.pid" "$tmp_dir/wrapper-descendant.pid" \
+    >"$tmp_dir/wrapper-signal.out" 2>&1 &
+wrapper_pid=$!
+signal_attempt=0
+while { [ ! -s "$tmp_dir/wrapper-child.pid" ] ||
+       [ ! -s "$tmp_dir/wrapper-descendant.pid" ]; } &&
+      [ "$signal_attempt" -lt 200 ]; do
+    sleep 0.01
+    signal_attempt=$((signal_attempt + 1))
+done
+test -s "$tmp_dir/wrapper-child.pid"
+wrapped_pid=$(cat "$tmp_dir/wrapper-child.pid")
+wrapped_descendant_pid=$(cat "$tmp_dir/wrapper-descendant.pid")
+kill -TERM "$wrapper_pid"
+set +e
+wait "$wrapper_pid"
+status=$?
+set -e
+test "$status" -eq 143
+for terminated_pid in "$wrapped_pid" "$wrapped_descendant_pid"; do
+    if kill -0 "$terminated_pid" 2>/dev/null; then
+        printf '%s\n' 'wrapper interruption left a wrapped process alive' >&2
+        kill -KILL "$terminated_pid" 2>/dev/null || true
+        exit 1
+    fi
+done
+
 set +e
 "$tm_bin" -- /bin/sh -c '( /bin/sleep 0.1; printf done > "$1" ) & exit 17' \
     sh "$tmp_dir/descendant.out"

@@ -26,6 +26,48 @@
 
 extern char **environ;
 
+#define TM_FORWARDED_SIGNAL_COUNT 4
+static const int forwarded_signals[TM_FORWARDED_SIGNAL_COUNT] = {
+    SIGINT, SIGTERM, SIGHUP, SIGQUIT
+};
+static volatile sig_atomic_t received_wrapper_signal;
+static volatile sig_atomic_t forwarded_wrapper_signal;
+
+static void forward_wrapper_signal(int signal_number)
+{
+    if (received_wrapper_signal == 0) {
+        received_wrapper_signal = signal_number;
+    }
+}
+
+static int install_signal_forwarding(struct sigaction previous[])
+{
+    struct sigaction action;
+    size_t index;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = forward_wrapper_signal;
+    sigemptyset(&action.sa_mask);
+    received_wrapper_signal = 0;
+    forwarded_wrapper_signal = 0;
+    for (index = 0; index < TM_FORWARDED_SIGNAL_COUNT; index++) {
+        if (sigaction(forwarded_signals[index], &action, &previous[index]) < 0) {
+            while (index > 0) {
+                index--;
+                (void)sigaction(forwarded_signals[index], &previous[index], NULL);
+            }
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void restore_signal_handlers(const struct sigaction previous[])
+{
+    size_t index;
+    for (index = 0; index < TM_FORWARDED_SIGNAL_COUNT; index++)
+        (void)sigaction(forwarded_signals[index], &previous[index], NULL);
+}
+
 #if defined(__linux__) && defined(__x86_64__)
 
 #define TM_MAX_TASKS 4096
@@ -75,6 +117,79 @@ struct observer_state {
 
 static struct task_state tasks[TM_MAX_TASKS];
 static struct observer_state observer;
+
+static int process_parent(pid_t process, pid_t *parent)
+{
+    char path[64], line[4096], state;
+    char *closing_command;
+    long parent_value;
+    FILE *stream;
+    if (snprintf(path, sizeof(path), "/proc/%ld/stat", (long)process) >=
+        (int)sizeof(path)) return -1;
+    stream = fopen(path, "r");
+    if (stream == NULL) return -1;
+    if (fgets(line, sizeof(line), stream) == NULL) {
+        fclose(stream);
+        return -1;
+    }
+    fclose(stream);
+    closing_command = strrchr(line, ')');
+    if (closing_command == NULL ||
+        sscanf(closing_command + 2, "%c %ld", &state, &parent_value) != 2 ||
+        parent_value < 1) return -1;
+    *parent = (pid_t)parent_value;
+    return 0;
+}
+
+static void signal_process_tree(pid_t root, int signal_number)
+{
+    pid_t processes[16384];
+    size_t count = 1;
+    DIR *proc = opendir("/proc");
+    int added;
+    processes[0] = root;
+    if (proc == NULL) {
+        (void)kill(root, signal_number);
+        return;
+    }
+    do {
+        struct dirent *entry;
+        added = 0;
+        rewinddir(proc);
+        while ((entry = readdir(proc)) != NULL && count <
+               sizeof(processes) / sizeof(processes[0])) {
+            char *end;
+            long value;
+            pid_t parent;
+            size_t index;
+            value = strtol(entry->d_name, &end, 10);
+            if (entry->d_name[0] == '\0' || *end != '\0' || value < 1 ||
+                value > INT32_MAX) continue;
+            for (index = 0; index < count; index++)
+                if (processes[index] == (pid_t)value) break;
+            if (index != count || process_parent((pid_t)value, &parent) < 0)
+                continue;
+            for (index = 0; index < count; index++)
+                if (processes[index] == parent) break;
+            if (index != count) {
+                processes[count++] = (pid_t)value;
+                added = 1;
+            }
+        }
+    } while (added && count < sizeof(processes) / sizeof(processes[0]));
+    closedir(proc);
+    for (size_t index = count; index > 1; index--)
+        (void)kill(processes[index - 1], signal_number);
+    (void)kill(root, signal_number);
+    forwarded_wrapper_signal = signal_number;
+}
+
+static void forward_pending_signal(pid_t child)
+{
+    int signal_number = (int)received_wrapper_signal;
+    if (signal_number != 0 && forwarded_wrapper_signal == 0)
+        signal_process_tree(child, signal_number);
+}
 
 static int has_inherited_descriptors(void)
 {
@@ -726,6 +841,7 @@ static int plain_wait(pid_t child)
             perror("tm: waitpid");
             return TM_EXIT_INTERNAL_ERROR;
         }
+        forward_pending_signal(child);
     }
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
@@ -744,6 +860,7 @@ static int collect_traced_child(pid_t child)
         pid_t waited = waitpid(child, &status, __WALL);
         if (waited < 0) {
             if (errno == EINTR) {
+                forward_pending_signal(child);
                 continue;
             }
             perror("tm: waitpid after observer failure");
@@ -842,7 +959,8 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     int status;
     long options = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK |
                    PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE |
-                   PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT;
+                   PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT |
+                   PTRACE_O_EXITKILL;
     pid_t waited;
 
     memset(tasks, 0, sizeof(tasks));
@@ -856,6 +974,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     }
     do {
         waited = waitpid(child, &status, 0);
+        if (waited < 0 && errno == EINTR) forward_pending_signal(child);
     } while (waited < 0 && errno == EINTR);
     if (waited < 0) {
         observer.saw_unknown_syscall = 1;
@@ -899,6 +1018,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
 
         if (pid < 0) {
             if (errno == EINTR) {
+                forward_pending_signal(child);
                 continue;
             }
             observer.saw_unknown_syscall = 1;
@@ -907,8 +1027,14 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
             finish_task(pid, status);
             if (observer.direct_finished) {
-                detach_descendants();
-                break;
+                if (received_wrapper_signal == 0) {
+                    detach_descendants();
+                    break;
+                }
+                for (size_t index = 0; index < TM_MAX_TASKS; index++)
+                    if (tasks[index].active &&
+                        tasks[index].pid != observer.direct_pid)
+                        (void)kill(tasks[index].pid, SIGKILL);
             }
             continue;
         }
@@ -926,6 +1052,9 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
             (void)ptrace(PTRACE_CONT, pid, NULL, NULL);
             continue;
         }
+        if (observer.direct_finished && received_wrapper_signal != 0 &&
+            pid != observer.direct_pid)
+            (void)kill(pid, SIGKILL);
         event = (unsigned int)status >> 16;
         stop_signal = WSTOPSIG(status);
         if (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK ||
@@ -977,14 +1106,24 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
 int tm_observe_and_run(char **command, int explain, char *const environment[],
                        const char *repository_root)
 {
+    struct sigaction previous[TM_FORWARDED_SIGNAL_COUNT];
     int inherited_descriptors = has_inherited_descriptors();
-    pid_t child = fork();
+    pid_t child;
+    int result;
+
+    if (install_signal_forwarding(previous) < 0) {
+        perror("tm: install signal forwarding");
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    child = fork();
 
     if (child < 0) {
         perror("tm: fork");
+        restore_signal_handlers(previous);
         return TM_EXIT_INTERNAL_ERROR;
     }
     if (child == 0) {
+        restore_signal_handlers(previous);
         if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0) {
             if (explain) {
                 fprintf(stderr,
@@ -996,8 +1135,10 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
         raise(SIGSTOP);
         exec_command(command, environment);
     }
-    return trace_child(child, explain, repository_root,
-                       inherited_descriptors);
+    result = trace_child(child, explain, repository_root,
+                         inherited_descriptors);
+    restore_signal_handlers(previous);
+    return result;
 }
 
 #else

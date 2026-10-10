@@ -34,6 +34,8 @@ The portable backend provides stable input/runtime views, hides `.tm` metadata, 
 
 Normal child exit codes pass through; signal termination returns `128 + signal`; wrapper usage/internal errors use 125; cannot-execute and missing-command use 126/127. Child codes may overlap these values. A cache publication error preserves the collected child outcome.
 
+On Linux x86-64, the wrapper forwards SIGINT, SIGTERM, SIGHUP, and SIGQUIT to the wrapped process tree and reaps traced descendants after interruption. `PTRACE_O_EXITKILL` protects tracees if the wrapper exits unexpectedly. The CLI test covers a direct child and a live grandchild; this process-lifecycle support does not make observation complete or enable reuse.
+
 The mandatory `--` and exact argv semantics remain. Target additions include approved `--profile`/`--trust-policy`, repeatable `--input`/`--output`, `validate --require-trust`, and scoped `clean` (section 34). `--force` deliberately overrides reuse and participates in failed-attempt/quarantine rules.
 
 `validate` never runs tests or signs records. `clean` preserves checked-in results by default and never discards trust keys or invalidations as disposable cache state. Explain output distinguishes a genuine input change, unavailable evidence/artifacts, untrusted producer, incompatible context, force, and coordination outages.
