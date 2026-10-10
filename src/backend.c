@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "tm/backend.h"
+#include "tm/digest.h"
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/repo.h"
@@ -29,6 +30,69 @@
 #endif
 #define GUEST_WORKSPACE "/workspace"
 #define GUEST_METADATA "/workspace/.tm"
+
+int tm_backend_executable_identity(char **resolved_path, char digest[72])
+{
+    struct stat before, after;
+    char *path;
+    char hex[65];
+    int saved;
+    if (resolved_path == NULL || digest == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    *resolved_path = NULL;
+    path = realpath(BWRAP_PATH, NULL);
+    if (path == NULL) return -1;
+    if (lstat(path, &before) < 0) {
+        saved = errno;
+        free(path);
+        errno = saved;
+        return -1;
+    }
+    if (!S_ISREG(before.st_mode)) {
+        free(path);
+        errno = EINVAL;
+        return -1;
+    }
+#ifndef TM_TEST_BWRAP
+    if (geteuid() == 0 || before.st_uid != 0 || (before.st_mode & 0222) != 0 ||
+        (before.st_mode & (S_ISUID | S_ISGID)) != 0) {
+        free(path);
+        errno = EPERM;
+        return -1;
+    }
+    if (faccessat(AT_FDCWD, path, W_OK, AT_EACCESS) == 0) {
+        free(path);
+        errno = EPERM;
+        return -1;
+    }
+    if (errno != EACCES && errno != EROFS) {
+        saved = errno;
+        free(path);
+        errno = saved;
+        return -1;
+    }
+#endif
+    if (tm_sha256_file(path, hex) < 0 || lstat(path, &after) < 0 ||
+        before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
+        before.st_mode != after.st_mode || before.st_uid != after.st_uid ||
+        before.st_gid != after.st_gid || before.st_size != after.st_size ||
+        before.st_nlink != after.st_nlink ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
+        saved = errno == 0 ? EBUSY : errno;
+        free(path);
+        errno = saved;
+        return -1;
+    }
+    memcpy(digest, "sha256:", 7);
+    memcpy(digest + 7, hex, sizeof(hex));
+    *resolved_path = path;
+    return 0;
+}
 
 static int child_descriptor_is_preserved(const int *preserved,
                                          size_t preserved_count,
@@ -420,6 +484,8 @@ static int build_arguments(struct argument_vector *arguments,
                            char **command)
 {
     char *guest_cwd = NULL;
+    char *bubblewrap_path = NULL;
+    char bubblewrap_digest[72];
     const char *relative_cwd = working_directory;
     size_t index, length, command_count = 0, capacity;
     int environment_added;
@@ -454,8 +520,7 @@ static int build_arguments(struct argument_vector *arguments,
     capacity += command_count;
     if (init_arguments(arguments, capacity) < 0) return -1;
 
-    if (push_argument(arguments, BWRAP_PATH) < 0)
-        return -1;
+    if (push_argument(arguments, BWRAP_PATH) < 0) return -1;
     if (strcmp(tm_profile_backend_contract(profile),
                "bubblewrap-linux-x86_64-v2") == 0) {
         if (push_argument(arguments, "--unshare-user") < 0 ||
@@ -485,6 +550,16 @@ static int build_arguments(struct argument_vector *arguments,
             errno = ESTALE;
             return -1;
         }
+        if (tm_backend_executable_identity(&bubblewrap_path,
+                                           bubblewrap_digest) < 0) {
+            int saved = errno;
+            close(runtime_fd);
+            errno = saved;
+            return -1;
+        }
+        free(arguments->items[0]);
+        arguments->items[0] = bubblewrap_path;
+        (void)bubblewrap_digest;
         if (push_argument(arguments, "--die-with-parent") < 0 ||
             push_readonly_bind_fd(arguments, runtime_fd, "/") < 0) {
             close(runtime_fd);
@@ -689,6 +764,9 @@ int tm_backend_run(const struct tm_profile *profile,
         else if (explain && errno == EROFS)
             fprintf(stderr,
                 "tm: RUN: approved runtime is not a root-owned read-only tree; using uncached native execution\n");
+        else if (explain && errno == EPERM)
+            fprintf(stderr,
+                "tm: RUN: Bubblewrap executable is not a trusted root-owned read-only file; using uncached native execution\n");
         else if (explain)
             fprintf(stderr,
                 "tm: RUN: approved input view could not be constructed (%s); using uncached native execution\n",

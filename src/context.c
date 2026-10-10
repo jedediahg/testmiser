@@ -47,8 +47,20 @@ static int descriptor_context_valid(const struct tm_json_value *descriptor)
             TM_JSON_INTEGER;
 }
 
+static int valid_sha256_digest(const char *digest)
+{
+    size_t index;
+    if (digest == NULL || strlen(digest) != 71 ||
+        strncmp(digest, "sha256:", 7) != 0) return 0;
+    for (index = 7; index < 71; index++)
+        if (!((digest[index] >= '0' && digest[index] <= '9') ||
+              (digest[index] >= 'a' && digest[index] <= 'f'))) return 0;
+    return 1;
+}
+
 int tm_context_project_bubblewrap(const struct tm_json_value *host_context,
                                   const char *backend_contract,
+                                  const char *backend_executable_digest,
                                   struct tm_json_value **profile_context)
 {
     struct tm_json_value *projected = NULL, *descriptors = NULL;
@@ -56,6 +68,7 @@ int tm_context_project_bubblewrap(const struct tm_json_value *host_context,
     int is_v2;
     if (tm_json_typeof(host_context) != TM_JSON_OBJECT ||
         backend_contract == NULL || profile_context == NULL ||
+        !valid_sha256_digest(backend_executable_digest) ||
         (strcmp(backend_contract, "bubblewrap-linux-x86_64-v1") != 0 &&
          strcmp(backend_contract, "bubblewrap-linux-x86_64-v2") != 0)) {
         errno = EINVAL;
@@ -136,7 +149,9 @@ int tm_context_project_bubblewrap(const struct tm_json_value *host_context,
             goto fail;
         descriptors = NULL;
     }
-    if (put_string(projected, "backend_contract", backend_contract) < 0)
+    if (put_string(projected, "backend_contract", backend_contract) < 0 ||
+        put_string(projected, "backend_executable_digest",
+                   backend_executable_digest) < 0)
         goto fail;
     *profile_context = projected;
     return 0;

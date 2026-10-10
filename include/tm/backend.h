@@ -6,6 +6,9 @@
 
 struct tm_profile;
 
+/* Resolve the Bubblewrap executable and identify its stable contents. */
+int tm_backend_executable_identity(char **resolved_path, char digest[72]);
+
 /* Try the approved Bubblewrap view. Return 1 if the command ran, 0 when the
  * host cannot enforce the view (caller may run once, uncached), or -1 when
  * local backend setup failed before launch. */

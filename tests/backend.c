@@ -59,6 +59,8 @@ int main(void)
     struct tm_profile *profile = NULL;
     struct tm_observer_report observer_report = {0};
     struct tm_observed_input_manifest observed_inputs = {0};
+    char *resolved_bwrap = NULL;
+    char bwrap_digest[72];
     int command_result = -1, status = 1, base_descriptor = -1;
     int high_descriptor = -1;
     mode_t original_umask = 0;
@@ -66,6 +68,13 @@ int main(void)
     char log_contents[64] = {0}, marker_contents[64] = {0};
     FILE *stream;
 
+    if (tm_backend_executable_identity(&resolved_bwrap, bwrap_digest) < 0 ||
+        strncmp(bwrap_digest, "sha256:", 7) != 0 ||
+        strlen(bwrap_digest) != 71 || resolved_bwrap == NULL) {
+        free(resolved_bwrap);
+        return 1;
+    }
+    free(resolved_bwrap);
     if (mkdtemp(temporary) == NULL) return 1;
     if (snprintf(profile_path, sizeof(profile_path), "%s/profile.json",
                  temporary) >= (int)sizeof(profile_path) ||

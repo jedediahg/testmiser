@@ -481,20 +481,26 @@ int main(int argc, char **argv)
                 environment_json(child_environment);
             struct tm_json_value *execution_context = NULL;
             struct tm_json_value *profile_context = NULL;
+            char *bubblewrap_path = NULL;
+            char bubblewrap_digest[72];
             char context_fingerprint[72];
             if (environment == NULL ||
+                tm_backend_executable_identity(&bubblewrap_path,
+                                               bubblewrap_digest) < 0 ||
                 tm_context_capture_linux(&execution_context) < 0 ||
                 tm_context_project_bubblewrap(execution_context,
                     tm_profile_backend_contract(profile),
+                    bubblewrap_digest,
                     &profile_context) < 0 ||
                 tm_context_fingerprint(environment, profile_context,
                                       context_fingerprint) < 0) {
                 fprintf(stderr,
-                    "tm: reuse rejected: Linux execution context could not be fingerprinted\n");
+                    "tm: reuse rejected: trusted Bubblewrap executable and Linux execution context could not be fingerprinted\n");
             } else {
                 fprintf(stderr, "tm: context fingerprint: %s (diagnostic only; reuse remains disabled)\n",
                         context_fingerprint);
             }
+            free(bubblewrap_path);
             tm_json_free(profile_context);
             tm_json_free(execution_context);
             tm_json_free(environment);

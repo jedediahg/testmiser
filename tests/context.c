@@ -30,6 +30,8 @@ int main(void)
         "{\"effective_uid\":1000,\"effective_gid\":1001,\"umask\":18,\"supplementary_groups\":[4,5],\"standard_descriptors\":{\"fd0\":{\"available\":1,\"file_type\":32768,\"tty\":1},\"fd1\":{\"available\":1,\"file_type\":4096,\"tty\":1},\"fd2\":{\"available\":1,\"file_type\":4096,\"tty\":1}},\"kernel_release\":\"6.8\"}");
     struct tm_json_value *profile_context = NULL, *v1_context = NULL;
     struct tm_json_value *unknown_context = NULL;
+    const char *bubblewrap_digest =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     char first[72], second[72], changed[72];
     int status = 1;
     struct tm_json_value *captured = NULL;
@@ -48,11 +50,17 @@ int main(void)
         tm_context_fingerprint(environment, bad_context, changed) == 0 ||
         host_context == NULL ||
         tm_context_project_bubblewrap(host_context,
-            "bubblewrap-linux-x86_64-v2", &profile_context) < 0 ||
+            "bubblewrap-linux-x86_64-v2", bubblewrap_digest,
+            &profile_context) < 0 ||
         tm_context_project_bubblewrap(host_context,
-            "bubblewrap-linux-x86_64-v1", &v1_context) < 0 ||
+            "bubblewrap-linux-x86_64-v1", bubblewrap_digest,
+            &v1_context) < 0 ||
         tm_context_project_bubblewrap(host_context, "unknown",
+                                      bubblewrap_digest,
                                       &unknown_context) == 0 ||
+        tm_context_project_bubblewrap(host_context,
+            "bubblewrap-linux-x86_64-v2", "not-a-digest",
+            &unknown_context) == 0 ||
         tm_context_capture_linux(&captured) < 0 ||
         tm_json_typeof(captured) != TM_JSON_OBJECT ||
         tm_json_object_get(captured, "kernel_release") == NULL ||
@@ -75,6 +83,8 @@ int main(void)
         tm_json_object_get(v1_context, "standard_descriptors"), "fd0");
     if (tm_json_integer_value(tm_json_object_get(profile_context,
             "effective_uid")) != 0 ||
+        strcmp(tm_json_string_value(tm_json_object_get(profile_context,
+            "backend_executable_digest")), bubblewrap_digest) != 0 ||
         tm_json_integer_value(tm_json_object_get(profile_context,
             "effective_gid")) != 0 ||
         tm_json_integer_value(tm_json_object_get(profile_context,

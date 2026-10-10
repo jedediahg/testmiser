@@ -17,6 +17,7 @@ int tm_context_capture_linux(struct tm_json_value **execution_context);
  * normalizes, retaining the captured values for inherited context. */
 int tm_context_project_bubblewrap(const struct tm_json_value *host_context,
                                   const char *backend_contract,
+                                  const char *backend_executable_digest,
                                   struct tm_json_value **profile_context);
 
 #endif
