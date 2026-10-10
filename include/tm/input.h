@@ -7,6 +7,10 @@
  * Symlink traversal and unsupported paths fail closed. */
 int tm_input_capture_file(int root_fd, const char *path, char digest[72]);
 
+/* Capture a stable directory-membership digest. File contents require their
+ * own file observations; the directory digest records names and entry kinds. */
+int tm_input_capture_directory(int root_fd, const char *path, char digest[72]);
+
 /* Compare one recorded input with the current repository view rooted at an
  * already-open directory. Return 0 for a match, 1 for changed state, -1 for
  * unsafe, unsupported, or failed inspection. Symlink traversal is rejected;

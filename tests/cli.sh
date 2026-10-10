@@ -28,6 +28,12 @@ grep -q 'declared input changed or became unsafe: tests/explicit.txt' \
     sh -c 'exit 0' 2>"$tmp_dir/input-missing.err"
 grep -q 'declared input could not be captured: tests/missing.txt' \
     "$tmp_dir/input-missing.err"
+mkdir -p "$tmp_dir/repo/tests/input-dir"
+"$tm_bin" --explain --root "$tmp_dir/repo" --input tests/input-dir -- \
+    sh -c 'touch "$1"' sh "$tmp_dir/repo/tests/input-dir/item" \
+    2>"$tmp_dir/input-directory-changed.err"
+grep -q 'declared input changed or became unsafe: tests/input-dir' \
+    "$tmp_dir/input-directory-changed.err"
 "$tm_bin" --explain --root "$tmp_dir/repo" --output build/reports -- \
     /bin/true 2>"$tmp_dir/output-declaration.err"
 grep -q -- '--output requires an approved enforced profile' \

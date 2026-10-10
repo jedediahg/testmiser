@@ -268,11 +268,18 @@ int main(int argc, char **argv)
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         for (index = 0; index < options.input_count; index++) {
             const char *path = options.input_paths[index];
-            if (repository_fd >= 0 &&
+            enum tm_input_kind kind = TM_INPUT_FILE;
+            int captured = repository_fd >= 0 ?
                 tm_input_capture_file(repository_fd, path,
-                    explicit_input_digests[explicit_input_count]) == 0) {
+                    explicit_input_digests[explicit_input_count]) : -1;
+            if (captured < 0 && repository_fd >= 0) {
+                kind = TM_INPUT_DIRECTORY;
+                captured = tm_input_capture_directory(repository_fd, path,
+                    explicit_input_digests[explicit_input_count]);
+            }
+            if (captured == 0) {
                 explicit_inputs[explicit_input_count] =
-                    (struct tm_input_observation){path, TM_INPUT_FILE,
+                    (struct tm_input_observation){path, kind,
                         explicit_input_digests[explicit_input_count], NULL, 0};
                 explicit_input_count++;
             } else {

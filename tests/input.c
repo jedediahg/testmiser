@@ -49,6 +49,12 @@ int main(void)
         fprintf(stderr, "safe explicit input capture failed\n");
         goto done;
     }
+    if (tm_input_capture_directory(root, "sub", captured_digest) != 0 ||
+        strcmp(captured_digest,
+            "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945") != 0) {
+        fprintf(stderr, "directory membership capture failed\n");
+        goto done;
+    }
 
     input = (struct tm_input_observation){"alpha", TM_INPUT_FILE,
                                           file_digest, NULL, 0};

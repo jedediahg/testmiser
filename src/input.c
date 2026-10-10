@@ -296,6 +296,29 @@ done:
     return result;
 }
 
+int tm_input_capture_directory(int root_fd, const char *path, char digest[72])
+{
+    char *leaf = NULL;
+    char hex[65];
+    int parent, result = -1, saved;
+    if (root_fd < 0 || digest == NULL || !valid_relative_path(path)) {
+        errno = EINVAL;
+        return -1;
+    }
+    parent = open_parent(root_fd, path, &leaf);
+    if (parent < 0) return -1;
+    if (hash_directory_at(parent, leaf, hex) < 0) goto done;
+    memcpy(digest, "sha256:", 7);
+    memcpy(digest + 7, hex, sizeof(hex));
+    result = 0;
+done:
+    saved = errno;
+    close(parent);
+    free(leaf);
+    errno = saved;
+    return result;
+}
+
 static int check_one(int root_fd, const struct tm_input_observation *input)
 {
     char *leaf = NULL;
