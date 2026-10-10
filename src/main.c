@@ -14,6 +14,7 @@
 #include "tm/context.h"
 #include "tm/identity.h"
 #include "tm/key.h"
+#include "tm/lock.h"
 #include "tm/json.h"
 #include "tm/outputs.h"
 #include "tm/observer.h"
@@ -441,6 +442,7 @@ int main(int argc, char **argv)
     struct tm_observer_report observer_report = {0};
     struct tm_observed_input_manifest observed_inputs = {0};
     struct tm_output_manifest output_manifest = {0};
+    struct tm_lock invocation_lock = {-1};
     EVP_PKEY *signing_key = NULL;
     char **child_environment = NULL;
     const char *force_environment;
@@ -459,8 +461,10 @@ int main(int argc, char **argv)
     int repository_fd = -1;
     int backend_used = 0;
     int reusable_context = 0;
+    int lock_eligible_profile = 0;
     int explicit_inputs_unchanged = 1;
     int cache_hit = 0;
+    int invocation_lock_acquired = 0;
     int parse_result;
     int result;
 
@@ -524,6 +528,8 @@ int main(int argc, char **argv)
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
         }
+        lock_eligible_profile = tm_profile_is_deterministic(profile) &&
+            strcmp(tm_profile_privacy_class(profile), "public") == 0;
         for (index = 0; index < options.input_count; index++)
             if (!tm_profile_allows_input_path(profile,
                                                options.input_paths[index])) {
@@ -570,7 +576,7 @@ int main(int argc, char **argv)
                 fprintf(stderr, "tm: reuse rejected: profile does not declare deterministic results\n");
             if (strcmp(tm_profile_privacy_class(profile), "secret-dependent") == 0)
                 fprintf(stderr, "tm: reuse rejected: secret-dependent profiles are not portable\n");
-            fprintf(stderr, "tm: RUN: profile approved; reuse remains disabled until trusted lookup, output restoration, and complete equivalence are integrated\n");
+            fprintf(stderr, "tm: RUN: profile approved; reuse still requires a trusted matching result and complete observation\n");
         }
         child_environment = profile_environment(profile);
         if (child_environment == NULL) {
@@ -579,7 +585,8 @@ int main(int argc, char **argv)
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
         }
-        if (options.explain || signing_key != NULL || !options.force) {
+        if (options.explain || signing_key != NULL || !options.force ||
+            lock_eligible_profile) {
             struct tm_json_value *environment =
                 environment_json(child_environment);
             struct tm_json_value *execution_context = NULL;
@@ -613,7 +620,7 @@ int main(int argc, char **argv)
             } else {
                 reusable_context = 1;
                 if (options.explain)
-                    fprintf(stderr, "tm: context fingerprint: %s (lookup remains disabled)\n",
+                    fprintf(stderr, "tm: context fingerprint: %s (one reuse eligibility input)\n",
                             context_fingerprint);
             }
             free(bubblewrap_path);
@@ -631,7 +638,8 @@ int main(int argc, char **argv)
         tm_trust_policy_free(trust_policy);
         return TM_EXIT_INTERNAL_ERROR;
     }
-    if ((options.explain || signing_key != NULL || !options.force) &&
+    if ((options.explain || signing_key != NULL || !options.force ||
+         lock_eligible_profile) &&
         profile != NULL) {
         char *current_directory = getcwd(NULL, 0);
         working_directory = current_directory == NULL ? NULL :
@@ -707,6 +715,50 @@ int main(int argc, char **argv)
             } else {
                 unavailable_inputs[unavailable_input_count++] = path;
             }
+        }
+    }
+    if (profile != NULL &&
+        tm_profile_is_deterministic(profile) &&
+        strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
+        reusable_context && command_fingerprint[0] != '\0' &&
+        repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
+        if (tm_lock_acquire_default(tm_profile_repository_id(profile),
+                command_fingerprint, tm_profile_digest(profile),
+                context_fingerprint, &invocation_lock) == 0) {
+            invocation_lock_acquired = 1;
+            /* Waiting may outlast a host-context change. Do not use a lock
+             * acquired under a stale fingerprint for lookup or publication. */
+            {
+                struct tm_json_value *environment =
+                    environment_json(child_environment);
+                struct tm_json_value *execution_context = NULL;
+                struct tm_json_value *profile_context = NULL;
+                char *bubblewrap_path = NULL;
+                char bubblewrap_digest[72], current_context[72];
+                int stable = environment != NULL &&
+                    tm_backend_executable_identity(&bubblewrap_path,
+                        bubblewrap_digest) == 0 &&
+                    tm_context_capture_linux(&execution_context) == 0 &&
+                    tm_context_project_bubblewrap(execution_context,
+                        tm_profile_backend_contract(profile),
+                        bubblewrap_digest, &profile_context) == 0 &&
+                    tm_context_fingerprint(environment, profile_context,
+                        current_context) == 0 &&
+                    strcmp(current_context, context_fingerprint) == 0;
+                free(bubblewrap_path);
+                tm_json_free(profile_context);
+                tm_json_free(execution_context);
+                tm_json_free(environment);
+                if (!stable) {
+                    reusable_context = 0;
+                    tm_lock_release(&invocation_lock);
+                    invocation_lock_acquired = 0;
+                    if (options.explain)
+                        fprintf(stderr, "tm: reuse rejected: execution context changed while waiting for the local invocation lock\n");
+                }
+            }
+        } else if (options.explain) {
+            fprintf(stderr, "tm: local invocation lock unavailable; concurrent cold runs may duplicate work\n");
         }
     }
     if (options.force && options.explain)
@@ -819,6 +871,7 @@ int main(int argc, char **argv)
     }
     tm_observed_input_manifest_clear(&observed_inputs);
     tm_output_manifest_clear(&output_manifest);
+    if (invocation_lock_acquired) tm_lock_release(&invocation_lock);
     if (options.explain)
         for (index = 0; index < unavailable_input_count; index++)
             fprintf(stderr,
