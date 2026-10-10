@@ -1084,15 +1084,25 @@ int tm_backend_run(const struct tm_profile *profile,
                             output_root_count, command_result);
     if (result > 0 && *command_result == 0 && output_root_count > 0) {
         repository_fd = open_directory_without_symlinks(repository_root);
-        if (repository_fd < 0 ||
-            tm_outputs_capture_to_store(output_stage_fd, repository_fd,
-                output_roots, output_root_count, output_manifest) < 0 ||
-            tm_outputs_restore_from_store(repository_fd, repository_fd,
+        if (repository_fd < 0) {
+            int saved = errno;
+            tm_output_manifest_clear(output_manifest);
+            fprintf(stderr,
+                "tm: output warning: child succeeded, but repository could not be reopened (%s)\n",
+                strerror(saved));
+        } else if (tm_outputs_capture_to_store(output_stage_fd, repository_fd,
                 output_roots, output_root_count, output_manifest) < 0) {
             int saved = errno;
             tm_output_manifest_clear(output_manifest);
             fprintf(stderr,
-                "tm: output warning: child succeeded, but declared outputs could not be safely captured and restored (%s)\n",
+                "tm: output warning: child succeeded, but declared outputs could not be safely captured (%s)\n",
+                strerror(saved));
+        } else if (tm_outputs_restore_from_store(repository_fd, repository_fd,
+                output_roots, output_root_count, output_manifest) < 0) {
+            int saved = errno;
+            tm_output_manifest_clear(output_manifest);
+            fprintf(stderr,
+                "tm: output warning: child succeeded, but declared outputs could not be safely restored (%s)\n",
                 strerror(saved));
         }
         if (repository_fd >= 0) {
