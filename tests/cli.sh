@@ -205,6 +205,18 @@ grep -q 'Usage: tm' "$tmp_dir/help.out"
     >"$tmp_dir/argument.out"
 test "$(cat "$tmp_dir/argument.out")" = 'argument with spaces'
 
+mkdir -p "$tmp_dir/runtime-root/bin"
+printf 'test runtime\n' >"$tmp_dir/runtime-root/bin/tool"
+chmod 0755 "$tmp_dir/runtime-root/bin/tool"
+runtime_digest=$("$tm_bin" runtime digest "$tmp_dir/runtime-root")
+printf '%s\n' "$runtime_digest" | grep -q '^sha256:[0-9a-f]\{64\}$'
+set +e
+"$tm_bin" runtime digest "$tmp_dir/missing-runtime" \
+    >"$tmp_dir/runtime-error.out" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+
 set +e
 "$tm_bin" -- sh -c 'exit 23'
 status=$?
@@ -239,14 +251,27 @@ done
 test -s "$tmp_dir/wrapper-child.pid"
 wrapped_pid=$(cat "$tmp_dir/wrapper-child.pid")
 wrapped_descendant_pid=$(cat "$tmp_dir/wrapper-descendant.pid")
+# Let the traced command finish its exec stop before interrupting the wrapper.
+sleep 0.05
 kill -TERM "$wrapper_pid"
 set +e
 wait "$wrapper_pid"
 status=$?
 set -e
 test "$status" -eq 143
+process_is_running() {
+    [ -r "/proc/$1/stat" ] || return 1
+    process_state=$(sed 's/.*) //' "/proc/$1/stat" | cut -d ' ' -f 1)
+    [ "$process_state" != Z ] && [ "$process_state" != X ]
+}
 for terminated_pid in "$wrapped_pid" "$wrapped_descendant_pid"; do
-    if kill -0 "$terminated_pid" 2>/dev/null; then
+    signal_attempt=0
+    while process_is_running "$terminated_pid" &&
+          [ "$signal_attempt" -lt 200 ]; do
+        sleep 0.01
+        signal_attempt=$((signal_attempt + 1))
+    done
+    if process_is_running "$terminated_pid"; then
         printf '%s\n' 'wrapper interruption left a wrapped process alive' >&2
         kill -KILL "$terminated_pid" 2>/dev/null || true
         exit 1

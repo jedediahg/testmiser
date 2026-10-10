@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -13,6 +14,7 @@
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/repo.h"
+#include "tm/runtime.h"
 #include "tm/tm.h"
 #include "tm/trust.h"
 #include "tm/validate.h"
@@ -95,6 +97,21 @@ static int profile_command(int argc, char **argv)
              TM_EXIT_INTERNAL_ERROR : 0;
     tm_profile_free(profile);
     return result;
+}
+
+static int runtime_command(int argc, char **argv)
+{
+    char digest[72];
+    if (argc != 4 || strcmp(argv[2], "digest") != 0) {
+        fprintf(stderr, "Usage: tm runtime digest ROOTFS_DIR\n");
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    if (tm_runtime_tree_digest(argv[3], digest) < 0) {
+        fprintf(stderr, "tm: cannot digest runtime tree: %s\n",
+                strerror(errno));
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    return printf("%s\n", digest) < 0 ? TM_EXIT_INTERNAL_ERROR : 0;
 }
 
 static int parse_options(int argc, char **argv, struct options *options)
@@ -218,6 +235,8 @@ int main(int argc, char **argv)
         return tm_clean_main(argc, argv);
     if (argc > 1 && strcmp(argv[1], "profile") == 0)
         return profile_command(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "runtime") == 0)
+        return runtime_command(argc, argv);
     parse_result = parse_options(argc, argv, &options);
     if (parse_result != 0) {
         return parse_result > 0 ? 0 : TM_EXIT_INTERNAL_ERROR;
