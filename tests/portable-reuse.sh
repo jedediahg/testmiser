@@ -70,6 +70,7 @@ run_tm() {
     local run_id=${5:-$id}
     local -a key_option=()
     local -a store_option=()
+    mkdir -m 0700 -p "$cache"
     shift 2
     if [[ -n "${1:-}" ]]; then
         key_option=(--signing-key "$1")
@@ -145,6 +146,42 @@ if [[ "$(cat "$work/changed.out")" != "$id:changed-input" ||
     printf '%s\n' 'Consumer reused evidence after an input changed.' >&2
     exit 1
 fi
+printf '%s\n' 'unchanged-input' >"$work/consumer/build/portable-input.txt"
+if ! run_tm "$work/consumer" "$work/cache-consumer" \
+    >"$work/restored.out" 2>"$work/restored.err"; then
+    cat "$work/restored.err" >&2
+    exit 1
+fi
+if [[ -s "$work/restored.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/restored.err" ||
+   [[ "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != \
+      "$id:unchanged-input" ]]; then
+    cat "$work/restored.err" >&2
+    printf '%s\n' 'Returning to a previously verified input state did not reuse its result.' >&2
+    exit 1
+fi
+
+git -C "$work/producer" worktree add --quiet --detach \
+    "$work/worktree-consumer" HEAD
+git -C "$work/worktree-consumer" rm --quiet -r .tm/results .tm/blobs
+mkdir -p "$work/worktree-consumer/build/reports"
+printf '%s\n' 'stale output' \
+    >"$work/worktree-consumer/build/reports/stale.txt"
+if ! run_tm "$work/worktree-consumer" "$work/cache-producer" \
+    '' '' "$id" >"$work/worktree.out" 2>"$work/worktree.err"; then
+    cat "$work/worktree.err" >&2
+    printf '%s\n' 'Linked worktree failed to read the per-user result store.' >&2
+    exit 1
+fi
+if [[ -s "$work/worktree.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/worktree.err" ||
+   [[ "$(cat "$work/worktree-consumer/build/reports/portable-reuse.txt")" != \
+      "$id:unchanged-input" ||
+      -e "$work/worktree-consumer/build/reports/stale.txt" ]]; then
+    cat "$work/worktree.err" >&2
+    printf '%s\n' 'Linked worktree did not reuse and restore the per-user result.' >&2
+    exit 1
+fi
 
 shared_id=$id-shared
 git clone --quiet --local "$repo_root" "$work/shared-producer"
@@ -216,6 +253,24 @@ if [[ "$(cat "$work/shared-changed.out")" != \
     printf '%s\n' 'Shared store reused evidence after an input changed.' >&2
     exit 1
 fi
+rm -rf -- "$work/cache-shared-consumer"
+mkdir -m 0700 "$work/cache-shared-consumer"
+printf '%s\n' 'unchanged-input' \
+    >"$work/shared-consumer/build/portable-input.txt"
+if ! run_tm "$work/shared-consumer" "$work/cache-shared-consumer" \
+    '' "$shared_store" "$shared_id" >"$work/shared-restored.out" \
+    2>"$work/shared-restored.err"; then
+    cat "$work/shared-restored.err" >&2
+    exit 1
+fi
+if [[ -s "$work/shared-restored.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/shared-restored.err" ||
+   [[ "$(cat "$work/shared-consumer/build/reports/portable-reuse.txt")" != \
+      "$shared_id:unchanged-input" ]]; then
+    cat "$work/shared-restored.err" >&2
+    printf '%s\n' 'Shared store lost evidence for a previously verified input state.' >&2
+    exit 1
+fi
 
 concurrent_id=$id-concurrent
 git clone --quiet --local "$repo_root" "$work/concurrent"
@@ -263,4 +318,4 @@ if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
     exit 1
 fi
 
-printf '%s\n' 'Checked-in/shared-store reuse, output restoration, invalidation, and cold-miss coordination passed.'
+printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, state reversion, output restoration, invalidation, and cold-miss coordination passed.'

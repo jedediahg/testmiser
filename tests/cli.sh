@@ -17,6 +17,8 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
 test "$("$tm_bin" --version)" = 'tm 0.1'
+"$tm_bin" --help >"$tmp_dir/help.out" 2>&1
+grep -q -- '--profile FILE.*controlled reuse' "$tmp_dir/help.out"
 if "$tm_bin" attempt resolve >/dev/null 2>&1; then
     printf '%s\n' 'attempt resolve accepted missing scope arguments' >&2
     exit 1

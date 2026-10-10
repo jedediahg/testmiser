@@ -221,7 +221,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "  --force    always run the command\n");
     fprintf(stream, "  TM_FORCE=1 has the same effect as --force\n");
     fprintf(stream, "  --explain  explain why the command is running\n");
-    fprintf(stream, "  --profile FILE       select an approved profile (currently uncached)\n");
+    fprintf(stream, "  --profile FILE       select an approved profile for controlled reuse\n");
     fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
     fprintf(stream, "  --signing-key FILE   sign eligible controlled-profile successes\n");
     fprintf(stream, "  --root DIR           set repository root (default: nearest .git)\n");

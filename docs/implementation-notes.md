@@ -2,6 +2,8 @@
 
 Current implementation update: `TM_SHARED_STORE` configures an optional filesystem-backed shared result store. The CLI searches it after repository and per-user stores and publishes signed records and output blobs to it. On filesystems with coherent `flock`, a private shared lock file serializes equivalent cold misses and waiters recheck the store; lock failures fall back to per-user locking, so duplicate work remains possible. This is not a lease/fencing coordinator and does not satisfy strict partition behavior. No remote object-store adapter or cross-provider acceptance proof is implemented. `tm validate --require-trust` verifies referenced output blobs for policy-approved records, and CI classifies both `.tm/results/**` and `.tm/blobs/**` changes as evidence-only before strict validation. Durable local attempt/quarantine state and explicit resolution are implemented.
 
+The portable acceptance harness also creates a linked Git worktree, removes its checked-in evidence, and requires a trusted hit from the producer's same-user cache with output restoration. The harness is a CI release gate; it has not passed on this development host because the required Bubblewrap namespaces are unavailable.
+
 The x86-64 observer now rejects `mprotect` calls that request `PROT_WRITE`; it does not yet track mapping provenance across protection upgrades, so allowing these calls would miss a possible shared-file mutation.
 
 The CLI reports version `0.1`; newly produced signed sidecars use schema version 3 with signed `tm_version` producer metadata and retain verification semantics version 2. The x86-64 observer accepts pathname-based `execveat` calls with zero flags, records the executable path on successful exec, and treats `AT_EMPTY_PATH` or other flagged forms as unsupported.
@@ -101,7 +103,14 @@ The generic cache unit is a command invocation. Overlapping suites cannot dedupl
 | Local lock only | Shared worktree lock plus optional provider-neutral coordinator for cold misses. |
 | Routine exhaustive reruns recommended | Explicit optional audits; no automatic age/pipeline-based repeat of accepted results. |
 
-Acceptance criteria AC-13 through AC-25 cover provenance, privacy, output restoration, canonical identities, worktree/workstation sharing, GitLab/GitHub interoperability, concurrent cold misses, partitions, and no implicit repeat policy. These are future implementation checks; this update adds no executable implementation or tests.
+Acceptance criteria AC-13 through AC-25 remain release requirements for
+provenance, privacy, output restoration, canonical identities, cross-provider
+reuse, coordination, and no implicit repeat policy. The portable acceptance
+harness covers checked-in clean-clone reuse, linked-worktree per-user reuse,
+mounted-store reuse/invalidation, output restoration, and shared-store cold
+miss coordination. It still does not prove GitLab-to-GitHub interoperability,
+lease/fencing behavior, or partition safety; run the gate on the target
+isolated runner before declaring beta readiness.
 
 ## Technical references
 
