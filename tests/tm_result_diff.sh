@@ -59,3 +59,28 @@ if (cd "$repo" && bash "$script" only "$mixed" "$profile") ||
     echo "profile-only diff was classified as result metadata" >&2
     exit 1
 fi
+
+for invalid_base in '' 'not-a-commit' \
+    '0000000000000000000000000000000000000000'; do
+    if (cd "$repo" && bash "$script" only "$invalid_base" "$profile") ||
+       (cd "$repo" && bash "$script" any "$invalid_base" "$profile"); then
+        echo "invalid diff base was accepted: $invalid_base" >&2
+        exit 1
+    fi
+done
+if (cd "$repo" && bash "$script" any "$base" not-a-commit); then
+    echo "invalid diff head was accepted" >&2
+    exit 1
+fi
+
+mkdir -p "$repo/.tm/results/moved/verification"
+mv "$repo/src/main.c" \
+    "$repo/.tm/results/moved/verification/source.tm.json"
+git -C "$repo" add -A
+git -C "$repo" commit -qm "move source into result metadata"
+moved=$(git -C "$repo" rev-parse HEAD)
+if (cd "$repo" && bash "$script" only "$profile" "$moved") ||
+   ! (cd "$repo" && bash "$script" any "$profile" "$moved"); then
+    echo "source deletion plus result addition was misclassified" >&2
+    exit 1
+fi
