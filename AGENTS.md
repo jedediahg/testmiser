@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, public interfaces in `include/tm/`, and CLI/unit checks in `tests/`. `docs/implementation-notes.md` records implementation decisions. The CLI supports profile approval/environment setup, result validation, and uncached command execution. Library APIs cover signed records with optional output manifests, immutable publication, and trusted exact-fingerprint lookup; controlled profile execution and wrapper cache skips remain unimplemented.
+The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, public interfaces in `include/tm/`, and CLI/unit checks in `tests/`. `docs/implementation-notes.md` records implementation decisions. The CLI supports profile approval/environment setup, result validation, and uncached command execution. Library APIs cover signed records with optional output manifests, immutable publication, trusted exact-fingerprint lookup, and safe declared-output capture/restoration; controlled profile execution and wrapper cache skips remain unimplemented.
 
 ## Build, Test, and Development Commands
 

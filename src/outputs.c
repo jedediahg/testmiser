@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include <dirent.h>
 #include <errno.h>
@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+#include <linux/fs.h>
 
 #include "tm/outputs.h"
 
@@ -19,6 +21,233 @@
 #define OUTPUT_ROOT_LIMIT 1024U
 
 static atomic_ulong stage_sequence;
+static int valid_relative_path(const char *path);
+static int open_parent(int root_fd, const char *path, char **leaf);
+static int verify_existing_blob(int blob_fd, const char *name,
+                                const char *expected_digest, uint64_t size);
+
+static int remove_tree_at(int parent, const char *name)
+{
+    struct stat st;
+    if (fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) < 0) return -1;
+    if (!S_ISDIR(st.st_mode)) return unlinkat(parent, name, 0);
+    {
+        int fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        int duplicate, result = -1;
+        DIR *dir;
+        if (fd < 0) return -1;
+        duplicate = dup(fd);
+        if (duplicate < 0) { close(fd); return -1; }
+        dir = fdopendir(duplicate);
+        if (dir == NULL) { close(duplicate); close(fd); return -1; }
+        for (;;) {
+            struct dirent *entry;
+            errno = 0;
+            entry = readdir(dir);
+            if (entry == NULL) {
+                if (errno != 0) goto done;
+                break;
+            }
+            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+            if (remove_tree_at(fd, entry->d_name) < 0) goto done;
+        }
+        result = 0;
+done:
+        closedir(dir);
+        close(fd);
+        if (result == 0) result = unlinkat(parent, name, AT_REMOVEDIR);
+        return result;
+    }
+}
+
+static int read_blob_directory(int root)
+{
+    int tmfd = openat(root, ".tm", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    int blobs = -1, sha = -1, saved;
+    if (tmfd < 0) return -1;
+    blobs = openat(tmfd, "blobs", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (blobs >= 0) sha = openat(blobs, "sha256", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    saved = errno;
+    close(tmfd);
+    if (blobs >= 0) close(blobs);
+    errno = saved;
+    return sha;
+}
+
+static int restore_file(int blobfd, int parentfd, const char *leaf,
+                        const struct tm_output_entry *entry)
+{
+    char name[65];
+    unsigned char buffer[32768];
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    EVP_MD_CTX *digest_context = NULL;
+    unsigned int hash_length = 0;
+    size_t i;
+    uint64_t copied = 0;
+    int source = -1, destination = -1, result = -1, saved, destination_created = 0;
+    for (i = 0; i < 32; i++) name[i * 2] = entry->digest[7 + i * 2];
+    for (i = 0; i < 32; i++) name[i * 2 + 1] = entry->digest[8 + i * 2];
+    name[64] = '\0';
+    if (verify_existing_blob(blobfd, name, entry->digest, entry->size) < 0) return -1;
+    source = openat(blobfd, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (source < 0) goto done;
+    digest_context = EVP_MD_CTX_new();
+    if (digest_context == NULL ||
+        EVP_DigestInit_ex(digest_context, EVP_sha256(), NULL) != 1) {
+        errno = EIO; goto done;
+    }
+    destination = openat(parentfd, leaf,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (destination < 0) goto done;
+    destination_created = 1;
+    for (;;) {
+        ssize_t n = read(source, buffer, sizeof(buffer));
+        size_t offset = 0;
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) goto done;
+        if (n == 0) break;
+        if (EVP_DigestUpdate(digest_context, buffer, (size_t)n) != 1) {
+            errno = EIO; goto done;
+        }
+        while (offset < (size_t)n) {
+            ssize_t w = write(destination, buffer + offset, (size_t)n - offset);
+            if (w < 0 && errno == EINTR) continue;
+            if (w <= 0) { errno = EIO; goto done; }
+            offset += (size_t)w;
+        }
+        copied += (uint64_t)n;
+    }
+    if (copied != entry->size ||
+        EVP_DigestFinal_ex(digest_context, hash, &hash_length) != 1 ||
+        hash_length != 32 ||
+        fchmod(destination, entry->mode) < 0 ||
+        fsync(destination) < 0) { if (copied != entry->size) errno = EIO; goto done; }
+    {
+        static const char hex[] = "0123456789abcdef";
+        char actual[72];
+        size_t j;
+        memcpy(actual, "sha256:", 7);
+        for (j = 0; j < 32; j++) {
+            actual[7 + j * 2] = hex[hash[j] >> 4];
+            actual[8 + j * 2] = hex[hash[j] & 15];
+        }
+        actual[71] = '\0';
+        if (strcmp(actual, entry->digest) != 0) { errno = EIO; goto done; }
+    }
+    result = 0;
+done:
+    saved = errno;
+    EVP_MD_CTX_free(digest_context);
+    if (source >= 0) close(source);
+    if (destination >= 0) close(destination);
+    if (result < 0 && destination_created) unlinkat(parentfd, leaf, 0);
+    errno = saved;
+    return result;
+}
+
+static int root_contains(const char *root, const char *path)
+{
+    size_t n = strlen(root);
+    return strncmp(root, path, n) == 0 && (path[n] == '\0' || path[n] == '/');
+}
+
+static int restore_staged_root(int rootfd, int blobfd, const char *root,
+                               const struct tm_output_manifest *manifest)
+{
+    char *leaf = NULL, stage[80] = {0};
+    const struct tm_output_entry *root_entry = NULL;
+    int parent = -1, stagefd = -1, result = -1, saved, stage_created = 0;
+    size_t i;
+    unsigned long sequence = atomic_fetch_add(&stage_sequence, 1);
+    for (i = 0; i < manifest->count; i++)
+        if (strcmp(manifest->entries[i].path, root) == 0) root_entry = &manifest->entries[i];
+    if (root_entry == NULL) { errno = EINVAL; goto done; }
+    parent = open_parent(rootfd, root, &leaf);
+    if (parent < 0) goto done;
+    if (snprintf(stage, sizeof(stage), ".tm-restore-%ld-%lu", (long)getpid(), sequence) >= (int)sizeof(stage)) { errno = EOVERFLOW; goto done; }
+    if (root_entry->kind == TM_OUTPUT_DIRECTORY) {
+        if (mkdirat(parent, stage, 0700) < 0) goto done;
+        stage_created = 1;
+        stagefd = openat(parent, stage, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (stagefd < 0) goto done;
+    }
+    for (i = 0; i < manifest->count; i++) {
+        const struct tm_output_entry *entry = &manifest->entries[i];
+        const char *relative;
+        char *target = NULL;
+        int target_parent = -1;
+        if (!root_contains(root, entry->path)) continue;
+        relative = entry->path + strlen(root);
+        if (*relative == '/') relative++;
+        if (*relative == '\0') {
+            continue;
+        }
+        target_parent = open_parent(stagefd, relative, &target);
+        if (target_parent < 0) {
+            /* Parent directories must have appeared earlier in sorted order. */
+            goto done;
+        }
+        if (entry->kind == TM_OUTPUT_DIRECTORY) {
+            if (mkdirat(target_parent, target, 0700) < 0) {
+                close(target_parent); free(target); goto done;
+            }
+            if (fsync(target_parent) < 0) {
+                close(target_parent); free(target); goto done;
+            }
+        } else if (restore_file(blobfd, target_parent, target, entry) < 0) {
+            close(target_parent); free(target); goto done;
+        } else if (fsync(target_parent) < 0) {
+            close(target_parent); free(target); goto done;
+        }
+        close(target_parent);
+        free(target);
+    }
+    /* Declared directory roots are the staging directory itself. */
+    for (i = manifest->count; i > 0; i--) {
+        const struct tm_output_entry *entry = &manifest->entries[i - 1];
+        if (!root_contains(root, entry->path) || entry->kind != TM_OUTPUT_DIRECTORY ||
+            strcmp(entry->path, root) == 0) continue;
+        {
+            char *dirleaf = NULL;
+            int dirparent = open_parent(stagefd, entry->path + strlen(root) + 1, &dirleaf);
+            if (dirparent < 0 || fchmodat(dirparent, dirleaf, entry->mode, 0) < 0) {
+                if (dirparent >= 0) close(dirparent);
+                free(dirleaf); goto done;
+            }
+            if (fsync(dirparent) < 0) {
+                close(dirparent); free(dirleaf); goto done;
+            }
+            close(dirparent); free(dirleaf);
+        }
+    }
+    if (root_entry->kind == TM_OUTPUT_DIRECTORY) {
+        if (fchmod(stagefd, root_entry->mode) < 0 || fsync(stagefd) < 0) goto done;
+        close(stagefd); stagefd = -1;
+    } else {
+        if (restore_file(blobfd, parent, stage, root_entry) < 0) goto done;
+        stage_created = 1;
+        if (fsync(parent) < 0) goto done;
+    }
+    {
+        struct stat old;
+        if (fstatat(parent, leaf, &old, AT_SYMLINK_NOFOLLOW) == 0) {
+            if (syscall(SYS_renameat2, parent, stage, parent, leaf, RENAME_EXCHANGE) < 0) goto done;
+            if (remove_tree_at(parent, stage) < 0) goto done;
+        } else if (errno == ENOENT) {
+            if (renameat(parent, stage, parent, leaf) < 0) goto done;
+        } else goto done;
+    }
+    if (fsync(parent) < 0) goto done;
+    result = 0;
+done:
+    saved = errno;
+    if (stagefd >= 0) close(stagefd);
+    if (parent >= 0 && stage_created) (void)remove_tree_at(parent, stage);
+    if (parent >= 0) close(parent);
+    free(leaf);
+    errno = saved;
+    return result;
+}
 
 static int valid_utf8(const unsigned char *text)
 {
@@ -446,6 +675,91 @@ done:
     saved = errno;
     if (blob_fd >= 0) close(blob_fd);
     if (result < 0) tm_output_manifest_clear(manifest);
+    errno = saved;
+    return result;
+}
+
+int tm_outputs_restore(int repository_root_fd, const char *const *roots,
+                      size_t root_count,
+                      const struct tm_output_manifest *manifest)
+{
+    int blobfd = -1, result = -1, saved;
+    size_t i, j;
+    if (repository_root_fd < 0 || manifest == NULL ||
+        (root_count > 0 && roots == NULL) || root_count > OUTPUT_ROOT_LIMIT ||
+        (manifest->count > 0 && manifest->entries == NULL)) {
+        errno = EINVAL; return -1;
+    }
+    if (root_count == 0) {
+        if (manifest->count != 0) { errno = EINVAL; return -1; }
+        return 0;
+    }
+    for (i = 0; i < root_count; i++) {
+        if (!valid_relative_path(roots[i])) { errno = EINVAL; goto done; }
+        for (j = 0; j < i; j++)
+            if (roots_overlap(roots[i], roots[j]) || roots_overlap(roots[j], roots[i])) {
+                errno = EINVAL; goto done;
+            }
+    }
+    for (i = 0; i < manifest->count; i++) {
+        const struct tm_output_entry *entry = &manifest->entries[i];
+        size_t coverage = 0;
+        if (!valid_relative_path(entry->path) || entry->mode > 0777 ||
+            (i && strcmp(manifest->entries[i-1].path, entry->path) >= 0)) {
+            errno = EINVAL; goto done;
+        }
+        for (j = 0; j < root_count; j++)
+            if (root_contains(roots[j], entry->path)) coverage++;
+        if (coverage != 1) { errno = EINVAL; goto done; }
+        if (entry->kind == TM_OUTPUT_FILE) {
+            if (strlen(entry->digest) != 71 || strncmp(entry->digest, "sha256:", 7) != 0 ||
+                entry->size > UINT64_C(9007199254740991)) { errno = EINVAL; goto done; }
+            for (j = 0; j < 32; j++) {
+                char a = entry->digest[7 + j * 2], b = entry->digest[8 + j * 2];
+                if (!((a >= '0' && a <= '9') || (a >= 'a' && a <= 'f')) ||
+                    !((b >= '0' && b <= '9') || (b >= 'a' && b <= 'f'))) {
+                    errno = EINVAL; goto done;
+                }
+            }
+        } else if (entry->kind != TM_OUTPUT_DIRECTORY || entry->size != 0 ||
+                   entry->digest[0] != '\0') { errno = EINVAL; goto done; }
+    }
+    for (i = 0; i < root_count; i++) {
+        int found = 0;
+        for (j = 0; j < manifest->count; j++) {
+            if (strcmp(roots[i], manifest->entries[j].path) == 0) {
+                found = 1;
+                if (manifest->entries[j].kind == TM_OUTPUT_FILE)
+                    for (size_t k = j + 1; k < manifest->count; k++)
+                        if (root_contains(roots[i], manifest->entries[k].path)) {
+                            errno = EINVAL; goto done;
+                        }
+                break;
+            }
+        }
+        if (!found) { errno = EINVAL; goto done; }
+    }
+    if (root_count == 0 && manifest->count != 0) { errno = EINVAL; goto done; }
+    blobfd = read_blob_directory(repository_root_fd);
+    if (blobfd < 0) goto done;
+    /* Verify every blob before any owned destination is replaced. */
+    for (i = 0; i < manifest->count; i++) {
+        const struct tm_output_entry *entry = &manifest->entries[i];
+        char name[65];
+        if (entry->kind != TM_OUTPUT_FILE) continue;
+        for (j = 0; j < 32; j++) {
+            name[j * 2] = entry->digest[7 + j * 2];
+            name[j * 2 + 1] = entry->digest[8 + j * 2];
+        }
+        name[64] = '\0';
+        if (verify_existing_blob(blobfd, name, entry->digest, entry->size) < 0) goto done;
+    }
+    for (i = 0; i < root_count; i++)
+        if (restore_staged_root(repository_root_fd, blobfd, roots[i], manifest) < 0) goto done;
+    result = 0;
+done:
+    saved = errno;
+    if (blobfd >= 0) close(blobfd);
     errno = saved;
     return result;
 }

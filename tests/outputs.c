@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,7 @@ int main(void)
     char blob_path[512];
     const char *roots[] = {"build/reports"};
     const char *overlap[] = {"build", "build/reports"};
+    const char *single_root[] = {"artifact.txt"};
     struct tm_output_manifest manifest = {0};
     int root_fd = -1, build_fd = -1, reports_fd = -1, sub_fd = -1;
     int file_fd = -1, status = 1;
@@ -67,12 +69,74 @@ int main(void)
         memcmp(bytes, "hello", 5) != 0) goto done;
     close(file_fd); file_fd = -1;
 
+    if (write_file(reports_fd, "stale.txt", "stale") < 0) goto done;
+    close(sub_fd); sub_fd = -1;
+    close(reports_fd); reports_fd = -1;
+    {
+        char original = manifest.entries[1].digest[7];
+        manifest.entries[1].digest[7] = original == '0' ? '1' : '0';
+        if (tm_outputs_restore(root_fd, roots, 1, &manifest) == 0) goto done;
+        manifest.entries[1].digest[7] = original;
+        reports_fd = openat(build_fd, "reports", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (reports_fd < 0 ||
+            fstatat(reports_fd, "stale.txt", &(struct stat){0}, AT_SYMLINK_NOFOLLOW) < 0)
+            goto done;
+        close(reports_fd); reports_fd = -1;
+    }
+    {
+        char collision[101][80];
+        size_t i;
+        for (i = 0; i < 101; i++) {
+            snprintf(collision[i], sizeof(collision[i]), ".tm-restore-%ld-%zu",
+                     (long)getpid(), i);
+            if (mkdirat(build_fd, collision[i], 0700) < 0) goto done;
+        }
+        if (tm_outputs_restore(root_fd, roots, 1, &manifest) == 0) {
+            fprintf(stderr, "restore ignored a staging collision\n"); goto done;
+        }
+        for (i = 0; i < 101; i++) {
+            if (fstatat(build_fd, collision[i], &(struct stat){0}, AT_SYMLINK_NOFOLLOW) < 0 ||
+                unlinkat(build_fd, collision[i], AT_REMOVEDIR) < 0) {
+                perror("restore removed unowned staging collision"); goto done;
+            }
+        }
+    }
+    if (tm_outputs_restore(root_fd, roots, 1, &manifest) < 0) {
+        perror("tm_outputs_restore"); goto done;
+    }
+    reports_fd = openat(build_fd, "reports", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (reports_fd < 0) { perror("reopen reports"); goto done; }
+    if (fstatat(reports_fd, "stale.txt", &(struct stat){0}, AT_SYMLINK_NOFOLLOW) == 0) {
+        fprintf(stderr, "stale output remained after restore\n"); goto done;
+    }
+    if (errno != ENOENT) { perror("check stale output"); goto done; }
+    sub_fd = openat(reports_fd, "sub", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (sub_fd < 0) { perror("open restored subdirectory"); goto done; }
+    file_fd = openat(sub_fd, "b.txt", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    memset(bytes, 0, sizeof(bytes));
+    if (file_fd < 0) { perror("open restored file"); goto done; }
+    if (read(file_fd, bytes, 5) != 5 || memcmp(bytes, "hello", 5) != 0) goto done;
+    close(file_fd); file_fd = -1;
+    close(sub_fd); sub_fd = -1;
+
+    sub_fd = openat(reports_fd, "sub", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (sub_fd < 0) goto done;
     if (symlinkat("/etc/passwd", sub_fd, "link") < 0) goto done;
     if (tm_outputs_capture(root_fd, roots, 1, &manifest) == 0 ||
         manifest.entries != NULL || manifest.count != 0) goto done;
     if (unlinkat(sub_fd, "link", 0) < 0 ||
         tm_outputs_capture(root_fd, overlap, 2, &manifest) == 0 ||
         manifest.entries != NULL || manifest.count != 0) goto done;
+    if (write_file(root_fd, "artifact.txt", "hello") < 0 ||
+        tm_outputs_capture(root_fd, single_root, 1, &manifest) < 0 ||
+        manifest.count != 1 || manifest.entries[0].kind != TM_OUTPUT_FILE ||
+        unlinkat(root_fd, "artifact.txt", 0) < 0 ||
+        tm_outputs_restore(root_fd, single_root, 1, &manifest) < 0) goto done;
+    file_fd = openat(root_fd, "artifact.txt", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    memset(bytes, 0, sizeof(bytes));
+    if (file_fd < 0 || read(file_fd, bytes, 5) != 5 ||
+        memcmp(bytes, "hello", 5) != 0) goto done;
+    close(file_fd); file_fd = -1;
     status = 0;
 done:
     if (status != 0) perror("output capture test");
@@ -90,6 +154,7 @@ done:
         snprintf(blob_path, sizeof(blob_path), "%s/.tm/blobs/sha256", root); rmdir(blob_path);
         snprintf(blob_path, sizeof(blob_path), "%s/.tm/blobs", root); rmdir(blob_path);
         snprintf(blob_path, sizeof(blob_path), "%s/.tm", root); rmdir(blob_path);
+        snprintf(blob_path, sizeof(blob_path), "%s/artifact.txt", root); unlink(blob_path);
         snprintf(blob_path, sizeof(blob_path), "%s/build/reports/sub/b.txt", root); unlink(blob_path);
         snprintf(blob_path, sizeof(blob_path), "%s/build/reports/sub", root); rmdir(blob_path);
         snprintf(blob_path, sizeof(blob_path), "%s/build/reports/a.txt", root); unlink(blob_path);

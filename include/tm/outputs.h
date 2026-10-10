@@ -24,6 +24,11 @@ struct tm_output_manifest {
  * .tm/blobs/sha256/<hex-digest>. Published orphan blobs are harmless. */
 int tm_outputs_capture(int repository_root_fd, const char *const *roots,
                        size_t root_count, struct tm_output_manifest *manifest);
+/* Verify all referenced blobs, stage each declared root beside its target,
+ * then replace that root. Only the supplied roots may be modified. */
+int tm_outputs_restore(int repository_root_fd, const char *const *roots,
+                       size_t root_count,
+                       const struct tm_output_manifest *manifest);
 void tm_output_manifest_clear(struct tm_output_manifest *manifest);
 
 #endif
