@@ -55,12 +55,12 @@ static int trusted_executable_directories(const char *executable_path)
         }
         if (!S_ISDIR(status.st_mode) || status.st_uid != 0) {
             close(descriptor);
-            errno = EACCES;
+            errno = EPERM;
             break;
         }
         if ((status.st_mode & 0222) != 0) {
             close(descriptor);
-            errno = EACCES;
+            errno = EPERM;
             break;
         }
         close(descriptor);
@@ -100,14 +100,10 @@ int tm_backend_executable_identity(char **resolved_path, char digest[72])
     }
 #ifndef TM_TEST_BWRAP
     if (geteuid() == 0 ||
-        (before.st_mode & (S_ISUID | S_ISGID)) != 0) {
+        (before.st_mode & (S_ISUID | S_ISGID)) != 0 ||
+        before.st_uid != 0 || (before.st_mode & 0222) != 0) {
         free(path);
         errno = EPERM;
-        return -1;
-    }
-    if (before.st_uid != 0 || (before.st_mode & 0222) != 0) {
-        free(path);
-        errno = EACCES;
         return -1;
     }
     if (trusted_executable_directories(path) < 0) {

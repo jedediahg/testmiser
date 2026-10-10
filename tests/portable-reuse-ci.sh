@@ -21,6 +21,10 @@ if ! command -v bwrap >/dev/null || ! command -v busybox >/dev/null; then
     exit 2
 fi
 sudo chmod u-s "$(command -v bwrap)"
+id
+stat -L -c 'portable acceptance Bubblewrap: %A %U:%G %n' \
+    "$(command -v bwrap)"
+namei -l "$(command -v bwrap)"
 
 make -C "$repo_root" build/tm build/portable-reuse-probe
 sudo install -d -o root -g root -m 0755 "$runtime/bin"
