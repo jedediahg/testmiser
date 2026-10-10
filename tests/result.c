@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,11 +66,14 @@ int main(void)
     char *signature_text;
     struct tm_trust_policy *trust = NULL;
     char policy_path[] = "/tmp/tm-result-policy-XXXXXX";
+    char input_root[] = "/tmp/tm-result-inputs-XXXXXX";
+    char input_directory[256];
+    char input_file[256];
     char policy_json[2048];
     unsigned char public_bytes[32];
     size_t public_length = sizeof(public_bytes);
     unsigned char public_b64[EVP_ENCODE_LENGTH(32)];
-    int policy_fd = -1;
+    int policy_fd = -1, input_root_fd = -1, input_file_fd = -1;
     int policy_length;
     int public_b64_length;
 
@@ -87,6 +91,9 @@ int main(void)
                "0000000000000000000000000000000000000000000000000000000000000000") != 0 ||
         strcmp(summary.verification_id,
                "ba299d5d7bd04d93e635617e6d2e496248711a9fa93bf4360a98c706ad201622") != 0 ||
+        summary.input_count != 2 ||
+        strcmp(summary.inputs[0].path, "tests/a") != 0 ||
+        strcmp(summary.inputs[1].path, "tests/missing") != 0 ||
         strcmp(verified_id, expected_id) != 0) {
         fprintf(stderr, "signed result golden vector failed\n");
         goto fail;
@@ -133,6 +140,43 @@ int main(void)
             "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             verified_id) == 0) {
         fprintf(stderr, "trusted verifier ignored current fingerprint\n");
+        goto fail;
+    }
+
+    if (mkdtemp(input_root) == NULL) goto fail;
+    snprintf(input_directory, sizeof(input_directory), "%s/tests", input_root);
+    snprintf(input_file, sizeof(input_file), "%s/tests/a", input_root);
+    if (mkdir(input_directory, 0700) < 0) goto fail;
+    input_file_fd = open(input_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (input_file_fd < 0) goto fail;
+    {
+        int fd = input_file_fd;
+        input_file_fd = -1;
+        if (close(fd) < 0) goto fail;
+    }
+    input_root_fd = open(input_root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (input_root_fd < 0 ||
+        tm_result_verify_inputs_match(record, record_length, trust,
+                                      input_root_fd, verified_id) != 0) {
+        fprintf(stderr, "signed record input manifest did not match\n");
+        goto fail;
+    }
+    input_file_fd = open(input_file, O_WRONLY | O_TRUNC);
+    if (input_file_fd < 0 || write(input_file_fd, "changed", 7) != 7)
+        goto fail;
+    {
+        int fd = input_file_fd;
+        input_file_fd = -1;
+        if (close(fd) < 0) goto fail;
+    }
+    if (tm_result_verify_inputs_match(record, record_length, trust,
+                                      input_root_fd, verified_id) != 1) {
+        fprintf(stderr, "signed record input change was not detected\n");
+        goto fail;
+    }
+    if (tm_result_verify_inputs_match(tampered, record_length, trust,
+                                      input_root_fd, verified_id) == 0) {
+        fprintf(stderr, "tampered signed record passed trusted input check\n");
         goto fail;
     }
 
@@ -189,6 +233,10 @@ int main(void)
     tm_result_summary_clear(&summary);
     tm_trust_policy_free(trust);
     unlink(policy_path);
+    if (input_root_fd >= 0) close(input_root_fd);
+    unlink(input_file);
+    rmdir(input_directory);
+    rmdir(input_root);
     EVP_PKEY_free(private_key);
     return 0;
 
@@ -198,8 +246,13 @@ fail:
     free(record);
     tm_result_summary_clear(&summary);
     if (policy_fd >= 0) close(policy_fd);
+    if (input_file_fd >= 0) close(input_file_fd);
+    if (input_root_fd >= 0) close(input_root_fd);
     tm_trust_policy_free(trust);
     unlink(policy_path);
+    unlink(input_file);
+    rmdir(input_directory);
+    rmdir(input_root);
     EVP_PKEY_free(private_key);
     return 1;
 }

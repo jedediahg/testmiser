@@ -10,6 +10,7 @@
 #include "tm/attestation.h"
 #include "tm/digest.h"
 #include "tm/json.h"
+#include "tm/input.h"
 #include "tm/result.h"
 #include "tm/trust.h"
 
@@ -402,11 +403,18 @@ static int strict_base64_signature(const char *encoded,
 
 void tm_result_summary_clear(struct tm_result_summary *summary)
 {
+    size_t i;
     if (summary == NULL) return;
     free(summary->repository_id);
     free(summary->profile_digest);
     free(summary->key_id);
     free(summary->verification_fingerprint);
+    for (i = 0; i < summary->input_count; i++) {
+        free((char *)summary->inputs[i].path);
+        free((char *)summary->inputs[i].digest);
+        free((char *)summary->inputs[i].target);
+    }
+    free(summary->inputs);
     memset(summary, 0, sizeof(*summary));
 }
 
@@ -414,6 +422,28 @@ static char *copy_string(const char *value)
 {
     if (value == NULL) return NULL;
     return strdup(value);
+}
+
+static int copy_input_manifest(const struct tm_input_observation *source,
+                               size_t count,
+                               struct tm_result_summary *summary)
+{
+    size_t i;
+    if (count == 0) return 0;
+    summary->inputs = calloc(count, sizeof(*summary->inputs));
+    if (summary->inputs == NULL) return -1;
+    summary->input_count = count;
+    for (i = 0; i < count; i++) {
+        summary->inputs[i] = source[i];
+        summary->inputs[i].path = copy_string(source[i].path);
+        summary->inputs[i].digest = copy_string(source[i].digest);
+        summary->inputs[i].target = copy_string(source[i].target);
+        if (summary->inputs[i].path == NULL ||
+            (source[i].digest != NULL && summary->inputs[i].digest == NULL) ||
+            (source[i].target != NULL && summary->inputs[i].target == NULL))
+            return -1;
+    }
+    return 0;
 }
 
 int tm_result_inspect(const unsigned char *record, size_t record_length,
@@ -516,6 +546,10 @@ int tm_result_inspect(const unsigned char *record, size_t record_length,
         errno = ENOMEM;
         goto done;
     }
+    if (copy_input_manifest(inputs, input_count, summary) < 0) {
+        errno = ENOMEM;
+        goto done;
+    }
     memcpy(summary->command_id, command_fingerprint + 7, 64);
     summary->command_id[64] = '\0';
     memcpy(summary->verification_id, verification_fingerprint + 7, 64);
@@ -535,6 +569,36 @@ done:
     tm_json_free(envelope);
     free(inputs);
     free(canonical_envelope);
+    return status;
+}
+
+int tm_result_verify_inputs_match(
+    const unsigned char *record, size_t record_length,
+    const struct tm_trust_policy *trust_policy, int repository_root_fd,
+    char record_id[72])
+{
+    struct tm_result_summary summary = {0};
+    size_t i;
+    int status = -1;
+    if (repository_root_fd < 0 || trust_policy == NULL || record_id == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (tm_result_inspect(record, record_length, &summary, record_id) < 0)
+        return -1;
+    if (tm_result_verify_trusted(record, record_length, trust_policy,
+                                 summary.verification_fingerprint,
+                                 record_id) < 0) goto done;
+    for (i = 0; i < summary.input_count; i++) {
+        int match = tm_input_matches(repository_root_fd, &summary.inputs[i]);
+        if (match != 0) {
+            status = match;
+            goto done;
+        }
+    }
+    status = 0;
+done:
+    tm_result_summary_clear(&summary);
     return status;
 }
 
