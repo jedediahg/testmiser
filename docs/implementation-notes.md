@@ -1,6 +1,6 @@
 # Specification Review: Implementation Decisions
 
-The [technical specification](spec/tm-test-memoization-technical-specification.md) now targets portable reuse across local worktrees and developer workstations, GitLab pipelines, and GitHub Actions workflows. This supersedes the earlier local-receipt-only design. The implementation now includes a Linux x86-64 observer prototype, OpenSSL SHA-256 and Ed25519 primitives, plus command and verification fingerprint foundations. Signed record serialization/validation, operator trust policy, controlled execution profiles, and cache reuse remain unimplemented; every command still executes. This document describes target decisions, not completed functionality.
+The [technical specification](spec/tm-test-memoization-technical-specification.md) now targets portable reuse across local worktrees and developer workstations, GitLab pipelines, and GitHub Actions workflows. This supersedes the earlier local-receipt-only design. The implementation now includes a Linux x86-64 observer prototype, OpenSSL SHA-256 and Ed25519 primitives, command and verification fingerprints, and a bounded JSON/JCS parser/serializer foundation. Signed record schema validation, operator trust policy, controlled execution profiles, and cache reuse remain unimplemented; every command still executes. This document describes target decisions, not completed functionality.
 
 ## 1. Trust and provenance — portable signed evidence
 
