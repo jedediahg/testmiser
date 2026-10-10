@@ -108,6 +108,8 @@ struct task_state {
 struct observer_state {
     int explain;
     const char *repository_root;
+    const char *start_after_exec;
+    int observation_started;
     pid_t direct_pid;
     int direct_status;
     int direct_finished;
@@ -963,12 +965,19 @@ static void syscall_stop(struct task_state *task)
     }
     if (!task->syscall_entry) {
         task->syscall_entry = 1;
+        if (!observer.observation_started) {
+            long number = (long)registers.orig_rax;
+            if (number == 59 || number == 322)
+                note_syscall(number, &registers, task);
+            return;
+        }
         note_syscall((long)registers.orig_rax, &registers, task);
         classify_syscall((long)registers.orig_rax, &registers, 1, task);
         return;
     }
 
     task->syscall_entry = 0;
+    if (!observer.observation_started) return;
     long result = (long)registers.rax;
     if (task->syscall_number == 3) {
         if (result < 0) mark_unmodeled_error();
@@ -1286,8 +1295,19 @@ static void mark_report_observer_failure(struct tm_observer_report *report)
         TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW;
 }
 
+static int target_executable_matches(const char *target, const char *observed)
+{
+    const char *base;
+    if (target == NULL || observed == NULL) return 0;
+    if (strcmp(target, observed) == 0) return 1;
+    if (strchr(target, '/') != NULL) return 0;
+    base = strrchr(observed, '/');
+    return strcmp(base == NULL ? observed : base + 1, target) == 0;
+}
+
 static int trace_child(pid_t child, int explain, const char *repository_root,
                        int inherited_descriptors,
+                       const char *start_after_exec,
                        struct tm_observer_report *report)
 {
     int status;
@@ -1301,6 +1321,8 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     memset(&observer, 0, sizeof(observer));
     observer.explain = explain;
     observer.repository_root = repository_root;
+    observer.start_after_exec = start_after_exec;
+    observer.observation_started = start_after_exec == NULL;
     observer.saw_external_descriptor = inherited_descriptors;
     observer.direct_pid = child;
     if (add_task(child) == NULL) {
@@ -1416,10 +1438,19 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                 }
             }
         } else if (event == PTRACE_EVENT_EXEC) {
-            if ((task->syscall_number == 59 ||
-                 task->syscall_number == 322) &&
-                task->pending_path[0] != '\0')
+            if (!observer.observation_started) {
+                if ((task->syscall_number == 59 ||
+                     task->syscall_number == 322) &&
+                    target_executable_matches(observer.start_after_exec,
+                                              task->pending_path)) {
+                    observer.observation_started = 1;
+                    candidate_path("executable", task->pending_path);
+                }
+            } else if ((task->syscall_number == 59 ||
+                        task->syscall_number == 322) &&
+                       task->pending_path[0] != '\0') {
                 candidate_path("executable", task->pending_path);
+            }
             forget_cloexec_descriptors(task);
         }
         if (stop_signal == (SIGTRAP | 0x80)) {
@@ -1439,6 +1470,15 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
         return collect_traced_child(child);
     }
     copy_candidate_report(report);
+    if (!observer.observation_started) {
+        observer.saw_observer_failure = 1;
+        observer.saw_unknown_syscall = 1;
+        if (report != NULL) {
+            report->ineligibility_reasons |=
+                TM_OBSERVER_INELIGIBLE_OBSERVER_FAILURE |
+                TM_OBSERVER_INELIGIBLE_UNSUPPORTED;
+        }
+    }
     if (explain) {
         report_reasons();
     }
@@ -1486,6 +1526,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 const int *preserved_fds,
                                 size_t preserved_fd_count,
                                 int null_stdin, int set_umask_022,
+                                const char *start_after_exec,
                                 struct tm_observer_report *report)
 {
     struct sigaction previous[TM_FORWARDED_SIGNAL_COUNT];
@@ -1532,7 +1573,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                      preserved_fd_count);
     }
     result = trace_child(child, explain, repository_root,
-                         inherited_descriptors, report);
+                         inherited_descriptors, start_after_exec, report);
     restore_signal_handlers(previous);
     return result;
 }
@@ -1542,7 +1583,8 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
                        struct tm_observer_report *report)
 {
     return tm_observe_and_run_with_fds(command, explain, environment,
-                                       repository_root, NULL, 0, 0, 0, report);
+                                       repository_root, NULL, 0, 0, 0, NULL,
+                                       report);
 }
 
 #else
@@ -1553,6 +1595,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 const int *preserved_fds,
                                 size_t preserved_fd_count,
                                 int null_stdin, int set_umask_022,
+                                const char *start_after_exec,
                                 struct tm_observer_report *report)
 {
     pid_t child = fork();
@@ -1562,6 +1605,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
     (void)preserved_fd_count;
     (void)null_stdin;
     (void)set_umask_022;
+    (void)start_after_exec;
     if (report != NULL) memset(report, 0, sizeof(*report));
     if (environment != NULL) environ = (char **)environment;
 
@@ -1595,7 +1639,8 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
                        struct tm_observer_report *report)
 {
     return tm_observe_and_run_with_fds(command, explain, environment,
-                                       repository_root, NULL, 0, 0, 0, report);
+                                       repository_root, NULL, 0, 0, 0, NULL,
+                                       report);
 }
 
 #endif

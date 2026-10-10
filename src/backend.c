@@ -604,12 +604,28 @@ unavailable:
 
 static int run_bubblewrap(const struct argument_vector *arguments,
                           int explain, struct tm_observer_report *report,
+                          char **command, const char *working_directory,
                           int *command_result)
 {
+    const char *target = command[0];
+    char *relative_target = NULL;
+    if (target[0] != '/' && strchr(target, '/') != NULL) {
+        const char *cwd = strcmp(working_directory, ".") == 0 ? "" :
+                          working_directory;
+        size_t length = strlen(GUEST_WORKSPACE) + strlen(cwd) +
+                        strlen(target) + 3;
+        relative_target = malloc(length);
+        if (relative_target != NULL) {
+            (void)snprintf(relative_target, length, "%s/%s%s%s",
+                GUEST_WORKSPACE, cwd, *cwd == '\0' ? "" : "/", target);
+            target = relative_target;
+        }
+    }
     *command_result = tm_observe_and_run_with_fds(
         arguments->items, explain, NULL, GUEST_WORKSPACE,
         arguments->preserved_fds, arguments->preserved_fd_count, 1, 1,
-        report);
+        target, report);
+    free(relative_target);
     return 1;
 }
 
@@ -684,8 +700,8 @@ int tm_backend_run(const struct tm_profile *profile,
     if (explain)
         fprintf(stderr,
             "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; cache reuse remains disabled\n");
-    (void)report;
-    result = run_bubblewrap(&arguments, explain, report, command_result);
+    result = run_bubblewrap(&arguments, explain, report, command,
+                            working_directory, command_result);
 done:
     if (repository_fd >= 0) close(repository_fd);
     free_arguments(&arguments);

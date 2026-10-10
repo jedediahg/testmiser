@@ -52,6 +52,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 const int *preserved_fds,
                                 size_t preserved_fd_count,
                                 int null_stdin, int set_umask_022,
+                                const char *start_after_exec,
                                 struct tm_observer_report *report);
 
 #endif
