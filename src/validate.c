@@ -19,6 +19,8 @@
 #include "tm/validate.h"
 
 #define RECORD_LIMIT (16U * 1024U * 1024U)
+#define VALIDATION_BYTE_LIMIT (64U * 1024U * 1024U)
+#define VALIDATION_ENTRY_LIMIT 4096U
 
 static const char *status_name(enum tm_trust_status status)
 {
@@ -36,7 +38,8 @@ static const char *status_name(enum tm_trust_status status)
 }
 
 static int read_record(int directory, const char *name,
-                       unsigned char **bytes, size_t *length)
+                       unsigned char **bytes, size_t *length,
+                       size_t *remaining_bytes)
 {
     struct stat before, after;
     unsigned char *data;
@@ -47,6 +50,9 @@ static int read_record(int directory, const char *name,
     if (fstat(fd, &before) < 0 || !S_ISREG(before.st_mode) ||
         before.st_size < 2 || (uint64_t)before.st_size > RECORD_LIMIT) {
         close(fd); errno = EINVAL; return -1;
+    }
+    if ((uint64_t)before.st_size > *remaining_bytes) {
+        close(fd); errno = E2BIG; return -1;
     }
     data = malloc((size_t)before.st_size);
     if (data == NULL) { close(fd); return -1; }
@@ -62,7 +68,23 @@ static int read_record(int directory, const char *name,
         before.st_mtim.tv_nsec != after.st_mtim.tv_nsec) {
         free(data); close(fd); errno = EBUSY; return -1;
     }
-    close(fd); *bytes = data; *length = used; return 0;
+    close(fd);
+    *remaining_bytes -= used;
+    *bytes = data;
+    *length = used;
+    return 0;
+}
+
+static int next_entry(DIR *directory, struct dirent **entry, size_t *visited)
+{
+    errno = 0;
+    *entry = readdir(directory);
+    if (*entry == NULL) return errno == 0 ? 0 : -1;
+    if (++*visited > VALIDATION_ENTRY_LIMIT) {
+        errno = E2BIG;
+        return -1;
+    }
+    return 1;
 }
 
 static int id_directory(const char *name)
@@ -78,8 +100,11 @@ static int id_directory(const char *name)
 static int directory_at(int parent, const char *name)
 {
     struct stat st;
-    return fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
-           S_ISDIR(st.st_mode);
+    if (fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) < 0) {
+        if (errno == ENOENT || errno == ENOTDIR) return 0;
+        return -1;
+    }
+    return S_ISDIR(st.st_mode) ? 1 : 0;
 }
 
 static int check_filename(const char *name, const char *record_id)
@@ -92,7 +117,7 @@ static int check_filename(const char *name, const char *record_id)
 static int validate_one(int dirfd, const char *name, const char *command_id,
                         const char *verification_id,
                         const struct tm_trust_policy *policy, int require_trust,
-                        unsigned long counts[7])
+                        unsigned long counts[7], size_t *remaining_bytes)
 {
     unsigned char *bytes = NULL;
     size_t length = 0;
@@ -103,7 +128,7 @@ static int validate_one(int dirfd, const char *name, const char *command_id,
     struct tm_result_policy verify_policy;
     int valid = 0;
 
-    if (read_record(dirfd, name, &bytes, &length) < 0) {
+    if (read_record(dirfd, name, &bytes, &length, remaining_bytes) < 0) {
         if (errno == ELOOP || errno == EINVAL || errno == EFBIG) goto done;
         valid = -1;
         goto done;
@@ -150,6 +175,8 @@ int tm_validate_main(int argc, char **argv)
     struct tm_trust_policy *policy = NULL;
     int require_trust = 0, rootfd = -1, tmfd = -1, resultsfd = -1, rc = 0;
     int i, saw_invalid = 0;
+    size_t visited_entries = 0;
+    size_t remaining_bytes = VALIDATION_BYTE_LIMIT;
     unsigned long counts[8] = {0};
     DIR *commands = NULL;
     struct dirent *command_entry;
@@ -174,10 +201,14 @@ int tm_validate_main(int argc, char **argv)
     }
     rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (rootfd < 0) { perror("tm validate: root"); rc = 125; goto done; }
-    if (!directory_at(rootfd, ".tm")) goto done;
+    i = directory_at(rootfd, ".tm");
+    if (i < 0) { perror("tm validate: .tm"); rc = 125; goto done; }
+    if (i == 0) goto done;
     tmfd = openat(rootfd, ".tm", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (tmfd < 0) { perror("tm validate: .tm"); rc = 125; goto done; }
-    if (!directory_at(tmfd, "results")) goto done;
+    i = directory_at(tmfd, "results");
+    if (i < 0) { perror("tm validate: results"); rc = 125; goto done; }
+    if (i == 0) goto done;
     resultsfd = openat(tmfd, "results", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (resultsfd < 0) {
         perror("tm validate: results"); rc = 125;
@@ -185,35 +216,58 @@ int tm_validate_main(int argc, char **argv)
     }
     commands = fdopendir(dup(resultsfd));
     if (commands == NULL) { perror("tm validate: results"); rc = 125; goto done; }
-    while ((command_entry = readdir(commands)) != NULL) {
+    for (;;) {
         int commandfd;
+        int state;
         DIR *verifications;
         struct dirent *verification_entry;
+        int scan = next_entry(commands, &command_entry, &visited_entries);
+        if (scan <= 0) {
+            if (scan < 0) rc = 125;
+            break;
+        }
         if (!id_directory(command_entry->d_name)) continue;
-        if (!directory_at(resultsfd, command_entry->d_name)) continue;
+        state = directory_at(resultsfd, command_entry->d_name);
+        if (state < 0) { rc = 125; continue; }
+        if (state == 0) continue;
         commandfd = openat(resultsfd, command_entry->d_name,
                            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         if (commandfd < 0) { rc = 125; continue; }
         verifications = fdopendir(dup(commandfd));
         if (verifications == NULL) { close(commandfd); rc = 125; continue; }
-        while ((verification_entry = readdir(verifications)) != NULL) {
+        for (;;) {
             int verifyfd;
+            int state;
             DIR *records;
             struct dirent *record_entry;
-            if (!id_directory(verification_entry->d_name) ||
-                !directory_at(commandfd, verification_entry->d_name)) continue;
+            scan = next_entry(verifications, &verification_entry,
+                              &visited_entries);
+            if (scan <= 0) {
+                if (scan < 0) rc = 125;
+                break;
+            }
+            if (!id_directory(verification_entry->d_name)) continue;
+            state = directory_at(commandfd, verification_entry->d_name);
+            if (state < 0) { rc = 125; continue; }
+            if (state == 0) continue;
             verifyfd = openat(commandfd, verification_entry->d_name,
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
             if (verifyfd < 0) { rc = 125; continue; }
             records = fdopendir(dup(verifyfd));
             if (records == NULL) { close(verifyfd); rc = 125; continue; }
-            while ((record_entry = readdir(records)) != NULL) {
+            for (;;) {
                 int result;
-                size_t n = strlen(record_entry->d_name);
+                size_t n;
+                scan = next_entry(records, &record_entry, &visited_entries);
+                if (scan <= 0) {
+                    if (scan < 0) rc = 125;
+                    break;
+                }
+                n = strlen(record_entry->d_name);
                 if (n < 8 || strcmp(record_entry->d_name + n - 8, ".tm.json") != 0) continue;
                 result = validate_one(verifyfd, record_entry->d_name,
                     command_entry->d_name, verification_entry->d_name,
-                    policy, require_trust, counts);
+                    policy, require_trust, counts, &remaining_bytes);
                 if (result == 0) saw_invalid = 1;
                 if (result == 2) saw_invalid = 1;
                 if (result == -1) rc = 125;

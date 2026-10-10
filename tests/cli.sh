@@ -109,6 +109,19 @@ status=$?
 set -e
 test "$status" -eq 125
 
+mkdir -p "$tmp_dir/validation-limit/.tm/results"
+i=0
+while [ "$i" -lt 4095 ]; do
+    : >"$tmp_dir/validation-limit/.tm/results/entry-$i"
+    i=$((i + 1))
+done
+set +e
+"$tm_bin" validate --root "$tmp_dir/validation-limit" \
+    >"$tmp_dir/validate-limit.out" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+
 printf '{\n' >"$tmp_dir/bad-profile.json"
 set +e
 "$tm_bin" --profile "$tmp_dir/bad-profile.json" --trust-policy "$tmp_dir/missing-policy.json" \
