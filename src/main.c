@@ -8,6 +8,7 @@
 
 #include "tm/input.h"
 #include "tm/clean.h"
+#include "tm/identity.h"
 #include "tm/outputs.h"
 #include "tm/observer.h"
 #include "tm/profile.h"
@@ -266,6 +267,32 @@ int main(int argc, char **argv)
         tm_profile_free(profile);
         tm_trust_policy_free(trust_policy);
         return TM_EXIT_INTERNAL_ERROR;
+    }
+    if (options.explain && profile != NULL) {
+        char *current_directory = getcwd(NULL, 0);
+        char *working_directory = current_directory == NULL ? NULL :
+            tm_repo_relative_path(repository_root, current_directory);
+        if (working_directory == NULL) {
+            fprintf(stderr,
+                    "tm: reuse rejected: working directory is outside the repository or unavailable\n");
+        } else {
+            struct tm_command_identity identity = {
+                tm_profile_repository_id(profile),
+                (const char *const *)&argv[options.command_index],
+                (size_t)(argc - options.command_index), working_directory,
+                options.input_paths, options.input_count,
+                options.output_paths, options.output_count
+            };
+            char command_fingerprint[72];
+            if (tm_command_fingerprint(&identity, command_fingerprint) == 0)
+                fprintf(stderr, "tm: command fingerprint: %s\n",
+                        command_fingerprint);
+            else
+                fprintf(stderr,
+                        "tm: reuse rejected: command identity is not portable\n");
+        }
+        free(working_directory);
+        free(current_directory);
     }
     if (options.input_count > 0) {
         repository_fd = open(repository_root,

@@ -148,6 +148,12 @@ status=$?
 set -e
 test "$status" -eq 17
 grep -q 'portable backend is not enforced' "$tmp_dir/profile-approved.err"
+grep -q '^tm: command fingerprint: sha256:[0-9a-f]\{64\}$' \
+    "$tmp_dir/profile-approved.err"
+if grep -Fq "$PWD/" "$tmp_dir/profile-approved.err"; then
+    printf '%s\n' 'command identity leaked an absolute checkout path' >&2
+    exit 1
+fi
 sed 's/"deterministic":true/"deterministic":false/' \
     "$tmp_dir/profile.json" >"$tmp_dir/nondeterministic-profile.json"
 nondeterministic_digest=$("$tm_bin" profile digest \
