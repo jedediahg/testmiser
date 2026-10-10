@@ -14,6 +14,95 @@
 #include "tm/identity.h"
 #include "tm/snapshot.h"
 #include "tm/trust.h"
+#include "tm/validate.h"
+
+static int test_validate_output_record(
+    const struct tm_verification_identity *identity, EVP_PKEY *private_key,
+    const char *policy_path)
+{
+    char root[] = "/tmp/tm-result-validate-XXXXXX";
+    char path[768], blob_path[768] = {0};
+    const char *outputs[] = {"dist"};
+    struct tm_output_manifest manifest = {0};
+    struct tm_result_summary summary = {0};
+    struct tm_verification_identity output_identity = *identity;
+    unsigned char *record = NULL;
+    size_t record_length = 0;
+    char record_id[72] = {0};
+    char *args[] = {"tm", "validate", "--root", root,
+                    "--trust-policy", (char *)policy_path,
+                    "--require-trust", NULL};
+    int rootfd = -1, distfd = -1, filefd = -1, result = -1;
+
+    if (mkdtemp(root) == NULL) goto done;
+    rootfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (rootfd < 0 || mkdirat(rootfd, "dist", 0700) < 0) goto done;
+    distfd = openat(rootfd, "dist", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (distfd < 0) goto done;
+    filefd = openat(distfd, "report.txt",
+                    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (filefd < 0 || write(filefd, "artifact", 8) != 8 ||
+        close(filefd) < 0) { filefd = -1; goto done; }
+    filefd = -1;
+    if (tm_outputs_capture(rootfd, outputs, 1, &manifest) < 0 ||
+        tm_result_create_with_outputs(&output_identity, 3, private_key,
+            &manifest, &record, &record_length, record_id) < 0 ||
+        tm_result_inspect(record, record_length, &summary, record_id) < 0 ||
+        summary.output_count != 2 ||
+        tm_result_store(rootfd, record, record_length, record_id) < 0)
+        goto done;
+
+    if (tm_validate_main(7, args) != 0) goto done;
+    if (snprintf(blob_path, sizeof(blob_path),
+            "%s/.tm/blobs/sha256/%s", root,
+            summary.outputs[1].digest + 7) >= (int)sizeof(blob_path) ||
+        chmod(blob_path, 0644) < 0) goto done;
+    filefd = open(blob_path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (filefd < 0 || pwrite(filefd, "Xrtifact", 8, 0) != 8 ||
+        close(filefd) < 0) { filefd = -1; goto done; }
+    filefd = -1;
+    if (chmod(blob_path, 0444) < 0 || tm_validate_main(7, args) != 1 ||
+        unlink(blob_path) < 0 || tm_validate_main(7, args) != 1) goto done;
+    result = 0;
+done:
+    if (filefd >= 0) close(filefd);
+    if (distfd >= 0) close(distfd);
+    if (rootfd >= 0) close(rootfd);
+    if (root[0] != '\0') {
+        char record_path[1024], result_path[896], command_path[768];
+        if (summary.command_id[0] != '\0' &&
+            summary.verification_id[0] != '\0' && record_id[0] != '\0') {
+            (void)snprintf(record_path, sizeof(record_path),
+                "%s/.tm/results/%s/%s/%s.tm.json", root,
+                summary.command_id, summary.verification_id, record_id + 7);
+            (void)unlink(record_path);
+            (void)snprintf(result_path, sizeof(result_path),
+                "%s/.tm/results/%s/%s", root,
+                summary.command_id, summary.verification_id);
+            (void)rmdir(result_path);
+            (void)snprintf(command_path, sizeof(command_path),
+                "%s/.tm/results/%s", root, summary.command_id);
+            (void)rmdir(command_path);
+        }
+        (void)snprintf(path, sizeof(path), "%s/.tm/results", root); (void)rmdir(path);
+        if (blob_path[0] != '\0') {
+            (void)unlink(blob_path);
+        } else if (manifest.count > 1) {
+            (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256/%s",
+                root, manifest.entries[1].digest + 7); (void)unlink(path);
+        }
+        (void)snprintf(path, sizeof(path), "%s/.tm/blobs/sha256", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm/blobs", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/.tm", root); (void)rmdir(path);
+        (void)snprintf(path, sizeof(path), "%s/dist/report.txt", root); (void)unlink(path);
+        (void)snprintf(path, sizeof(path), "%s/dist", root); (void)rmdir(path);
+        (void)rmdir(root);
+    }
+    tm_result_summary_clear(&summary);
+    tm_output_manifest_clear(&manifest);
+    free(record);
+    return result;
+}
 
 static int test_store(const unsigned char *record, size_t length,
                       const char *expected_id,
@@ -720,6 +809,10 @@ int main(void)
     }
     if (test_output_lookup(&identity, private_key, trust) != 0) {
         fprintf(stderr, "trusted output result restore lookup failed\n");
+        goto fail;
+    }
+    if (test_validate_output_record(&identity, private_key, policy_path) != 0) {
+        fprintf(stderr, "trusted output artifact validation failed\n");
         goto fail;
     }
 
