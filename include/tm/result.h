@@ -22,6 +22,8 @@ struct tm_result_summary {
     char *tm_version;
     char *repository_id;
     char *profile_digest;
+    char *runtime_digest;
+    char *context_digest;
     char *key_id;
     char *verification_fingerprint;
     char command_id[65];
@@ -69,6 +71,16 @@ int tm_result_find_in_store(int store_root_fd, int repository_root_fd,
                             const struct tm_trust_policy *trust_policy,
                             unsigned char **record, size_t *record_length,
                             char record_id[72]);
+
+/* Search every immutable verification slot for the same command and public
+ * execution context, then return a trusted output-free record whose recorded
+ * inputs still match this checkout. */
+int tm_result_find_matching_inputs(
+    int store_root_fd, int repository_root_fd,
+    const char *command_fingerprint,
+    const char *profile_digest, const char *runtime_digest,
+    const char *context_digest, const struct tm_trust_policy *trust_policy,
+    unsigned char **record, size_t *record_length, char record_id[72]);
 
 /* Find and authenticate a result, check its declared inputs, restore the
  * caller's declared output roots, and return a hit only after restoration.

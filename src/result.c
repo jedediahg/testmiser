@@ -757,6 +757,8 @@ void tm_result_summary_clear(struct tm_result_summary *summary)
     free(summary->repository_id);
     free(summary->tm_version);
     free(summary->profile_digest);
+    free(summary->runtime_digest);
+    free(summary->context_digest);
     free(summary->key_id);
     free(summary->verification_fingerprint);
     for (i = 0; i < summary->input_count; i++) {
@@ -895,10 +897,13 @@ int tm_result_inspect(const unsigned char *record, size_t record_length,
     summary->repository_id = copy_string(repository_id);
     summary->tm_version = copy_string(get_string(payload, "tm_version"));
     summary->profile_digest = copy_string(profile_digest);
+    summary->runtime_digest = copy_string(runtime_digest);
+    summary->context_digest = copy_string(context_digest);
     summary->key_id = copy_string(key_id);
     summary->verification_fingerprint = copy_string(verification_fingerprint);
     if (summary->tm_version == NULL || summary->repository_id == NULL ||
-        summary->profile_digest == NULL ||
+        summary->profile_digest == NULL || summary->runtime_digest == NULL ||
+        summary->context_digest == NULL ||
         summary->key_id == NULL || summary->verification_fingerprint == NULL) {
         errno = ENOMEM;
         goto done;
@@ -1002,6 +1007,16 @@ static int candidate_filename(const char *name)
 {
     size_t i;
     if (strlen(name) != 72 || strcmp(name + 64, ".tm.json") != 0) return 0;
+    for (i = 0; i < 64; i++)
+        if (!((name[i] >= '0' && name[i] <= '9') ||
+              (name[i] >= 'a' && name[i] <= 'f'))) return 0;
+    return 1;
+}
+
+static int candidate_directory(const char *name)
+{
+    size_t i;
+    if (strlen(name) != 64) return 0;
     for (i = 0; i < 64; i++)
         if (!((name[i] >= '0' && name[i] <= '9') ||
               (name[i] >= 'a' && name[i] <= 'f'))) return 0;
@@ -1155,6 +1170,150 @@ int tm_result_find_in_store(int store_root_fd, int repository_root_fd,
         command_fingerprint,
         verification_fingerprint, trust_policy, NULL, 0, 0,
         record, record_length, record_id);
+}
+
+int tm_result_find_matching_inputs(
+    int store_root_fd, int repository_root_fd, const char *command_fingerprint,
+    const char *profile_digest, const char *runtime_digest,
+    const char *context_digest, const struct tm_trust_policy *trust_policy,
+    unsigned char **record, size_t *record_length, char record_id[72])
+{
+    int tmfd = -1, resultsfd = -1, commandfd = -1, duplicate = -1;
+    int result = 1, saved;
+    DIR *verifications = NULL;
+    struct dirent *verification_entry;
+    size_t visited = 0, visited_directories = 0;
+
+    if (store_root_fd < 0 || repository_root_fd < 0 ||
+        !valid_sha256(command_fingerprint) ||
+        !valid_sha256(profile_digest) || !valid_sha256(runtime_digest) ||
+        !valid_sha256(context_digest) || trust_policy == NULL ||
+        record == NULL || record_length == NULL || record_id == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    *record = NULL;
+    *record_length = 0;
+    record_id[0] = '\0';
+    tmfd = open_existing_directory(store_root_fd, ".tm");
+    if (tmfd < 0) goto absent_or_error;
+    resultsfd = open_existing_directory(tmfd, "results");
+    if (resultsfd < 0) goto absent_or_error;
+    commandfd = open_existing_directory(resultsfd, command_fingerprint + 7);
+    if (commandfd < 0) goto absent_or_error;
+    duplicate = dup(commandfd);
+    if (duplicate < 0) { result = -1; goto done; }
+    verifications = fdopendir(duplicate);
+    if (verifications == NULL) {
+        close(duplicate);
+        duplicate = -1;
+        result = -1;
+        goto done;
+    }
+    duplicate = -1;
+    for (;;) {
+        int verificationfd = -1, records_duplicate = -1;
+        DIR *records = NULL;
+        struct dirent *entry;
+        errno = 0;
+        verification_entry = readdir(verifications);
+        if (verification_entry == NULL) {
+            if (errno != 0) result = -1;
+            break;
+        }
+        if (!candidate_directory(verification_entry->d_name)) continue;
+        if (++visited_directories > TM_RESULT_CANDIDATE_LIMIT) {
+            errno = E2BIG;
+            result = -1;
+            break;
+        }
+        verificationfd = open_existing_directory(commandfd,
+                                                  verification_entry->d_name);
+        if (verificationfd < 0) {
+            if (errno == ENOENT || errno == ENOTDIR || errno == ELOOP)
+                continue;
+            result = -1;
+            break;
+        }
+        records_duplicate = dup(verificationfd);
+        if (records_duplicate < 0) {
+            close(verificationfd);
+            result = -1;
+            break;
+        }
+        records = fdopendir(records_duplicate);
+        if (records == NULL) {
+            close(records_duplicate);
+            close(verificationfd);
+            result = -1;
+            break;
+        }
+        for (;;) {
+            struct tm_result_summary summary = {0};
+            unsigned char *candidate = NULL;
+            size_t candidate_length = 0;
+            char candidate_id[72], expected_name[80];
+            int matches = 0;
+            errno = 0;
+            entry = readdir(records);
+            if (entry == NULL) {
+                if (errno != 0) result = -1;
+                break;
+            }
+            if (!candidate_filename(entry->d_name)) continue;
+            if (++visited > TM_RESULT_CANDIDATE_LIMIT) {
+                errno = E2BIG;
+                result = -1;
+                break;
+            }
+            if (read_candidate(verificationfd, entry->d_name, &candidate,
+                               &candidate_length) < 0) continue;
+            int name_length = -1;
+            if (tm_result_inspect(candidate, candidate_length, &summary,
+                                  candidate_id) == 0 &&
+                strcmp(summary.command_id, command_fingerprint + 7) == 0 &&
+                strcmp(summary.verification_id,
+                       verification_entry->d_name) == 0 &&
+                strcmp(summary.profile_digest, profile_digest) == 0 &&
+                strcmp(summary.runtime_digest, runtime_digest) == 0 &&
+                strcmp(summary.context_digest, context_digest) == 0 &&
+                summary.output_count == 0 &&
+                (name_length = snprintf(expected_name, sizeof(expected_name),
+                                         "%s.tm.json", candidate_id + 7)) >= 0 &&
+                (size_t)name_length < sizeof(expected_name) &&
+                strcmp(entry->d_name, expected_name) == 0 &&
+                tm_result_verify_inputs_match(candidate, candidate_length,
+                    trust_policy, repository_root_fd, candidate_id) == 0)
+                matches = 1;
+            tm_result_summary_clear(&summary);
+            if (matches) {
+                *record = candidate;
+                *record_length = candidate_length;
+                memcpy(record_id, candidate_id, sizeof(candidate_id));
+                candidate = NULL;
+                result = 0;
+                free(candidate);
+                break;
+            }
+            free(candidate);
+        }
+        closedir(records);
+        close(verificationfd);
+        if (result != 1) break;
+    }
+    goto done;
+absent_or_error:
+    if (errno == ENOENT || errno == ENOTDIR || errno == ELOOP) result = 1;
+    else result = -1;
+done:
+    saved = errno;
+    if (verifications != NULL) closedir(verifications);
+    if (duplicate >= 0) close(duplicate);
+    if (commandfd >= 0) close(commandfd);
+    if (resultsfd >= 0) close(resultsfd);
+    if (tmfd >= 0) close(tmfd);
+    errno = saved;
+    return result;
 }
 
 int tm_result_find_and_restore(

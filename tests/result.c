@@ -56,6 +56,22 @@ static int test_store(const unsigned char *record, size_t length,
         memcmp(found, record, length) != 0 || strcmp(record_id, expected_id) != 0)
         goto done;
     free(found); found = NULL;
+    if (tm_result_find_matching_inputs(rootfd, rootfd,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            summary.profile_digest,
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            trust, &found, &found_length, record_id) != 0 ||
+        found_length != length || strcmp(record_id, expected_id) != 0)
+        goto done;
+    free(found); found = NULL;
+    if (tm_result_find_matching_inputs(rootfd, rootfd,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            summary.profile_digest,
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            trust, &found, &found_length, record_id) != 1 || found != NULL)
+        goto done;
     /* The same portable evidence is discoverable from another checkout root. */
     clonefd = open(clone, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (clonefd < 0 || mkdirat(clonefd, "tests", 0700) < 0) goto done;
@@ -72,9 +88,25 @@ static int test_store(const unsigned char *record, size_t length,
         memcmp(found, record, length) != 0 || strcmp(record_id, expected_id) != 0)
         goto done;
     free(found); found = NULL;
+    if (tm_result_find_matching_inputs(sharedfd, clonefd,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            summary.profile_digest,
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            trust, &found, &found_length, record_id) != 0 ||
+        found_length != length || strcmp(record_id, expected_id) != 0)
+        goto done;
+    free(found); found = NULL;
     fd = openat(clonefd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
     if (fd < 0 || write(fd, "changed", 7) != 7) goto done;
     { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+    if (tm_result_find_matching_inputs(sharedfd, clonefd,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            summary.profile_digest,
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            trust, &found, &found_length, record_id) != 1 || found != NULL)
+        goto done;
     if (tm_result_find_in_store(sharedfd, clonefd,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.verification_fingerprint, trust, &found, &found_length,
@@ -415,6 +447,12 @@ int main(void)
         tm_result_inspect(record, record_length, &summary, verified_id) != 0 ||
         strcmp(summary.tm_version, "0.1") != 0 ||
         strcmp(summary.repository_id, "sample") != 0 ||
+        strcmp(summary.profile_digest,
+               "sha256:1111111111111111111111111111111111111111111111111111111111111111") != 0 ||
+        strcmp(summary.runtime_digest,
+               "sha256:2222222222222222222222222222222222222222222222222222222222222222") != 0 ||
+        strcmp(summary.context_digest,
+               "sha256:3333333333333333333333333333333333333333333333333333333333333333") != 0 ||
         strcmp(summary.command_id,
                "0000000000000000000000000000000000000000000000000000000000000000") != 0 ||
         strcmp(summary.verification_id,
