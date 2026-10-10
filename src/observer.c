@@ -1044,9 +1044,11 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
         (void)ptrace(PTRACE_CONT, child, NULL, (void *)(long)SIGCONT);
         return collect_traced_child(child);
     }
+    forward_pending_signal(child);
     resume_task(child, 0);
 
     while (observer.live_tasks > 0) {
+        forward_pending_signal(child);
         pid_t pid = waitpid(-1, &status, __WALL);
         struct task_state *task;
         unsigned int event;
