@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, public interfaces in `include/tm/`, and CLI/unit checks in `tests/`. `docs/implementation-notes.md` records implementation decisions. Observer, digest, Ed25519, fingerprints, bounded JSON/JCS, signed output-free records, and trust-policy loading exist as library foundations; CLI policy integration, controlled execution, and cache skips are not implemented.
+The design lives in `docs/spec/tm-test-memoization-technical-specification.md`. C sources are in `src/`, public interfaces in `include/tm/`, and CLI/unit checks in `tests/`. `docs/implementation-notes.md` records implementation decisions. The CLI supports profile approval/environment setup, result validation, and uncached command execution. Library APIs cover signed output-free records, immutable publication, and trusted exact-fingerprint lookup; controlled profile execution and wrapper cache skips remain unimplemented.
 
 ## Build, Test, and Development Commands
 
@@ -10,15 +10,15 @@ Run `make` to build `build/tm`, `make test` to run CLI integration checks, and `
 
 ## Coding Style & Naming Conventions
 
-The target implementation is C and Linux-first, using OpenSSL EVP for SHA-256 and Ed25519. Build with C11, OpenSSL development headers/libraries, and the Makefile’s `-Wall -Wextra -Wpedantic -Werror` warnings. Use four spaces for indentation. Keep JSON sidecars deterministic. Store repository-controlled paths relative to the repository root, and do not persist user-specific absolute paths.
+The implementation is C and Linux-first, using OpenSSL EVP for SHA-256 and Ed25519. Build with C11, OpenSSL development headers/libraries, and the Makefile’s `-Wall -Wextra -Wpedantic -Werror` warnings. Use four spaces for indentation. Keep JSON sidecars deterministic. Store repository-controlled paths relative to the repository root, and do not persist user-specific absolute paths.
 
 ## Testing Guidelines
 
-`tests/cli.sh` exercises help, argument preservation, child exit and signal status, missing commands, explain mode, option parsing, and descendant completion. With ptrace permission it also checks network and mutation rejection. It uses POSIX shell and system utilities. There is no coverage target. Add tests for successful reuse, input invalidation, and rerunning after a failed command when the cache is implemented.
+`tests/cli.sh` exercises help, argument preservation, child exit and signal status, missing commands, explain mode, option parsing, profile environment handling, and descendant completion. With ptrace permission it also checks network and mutation rejection. C tests cover fingerprints, signatures, trust policy, immutable record storage, exact-slot lookup, and changed-input misses. Run them all with `make test`; there is no coverage target. Add regression cases alongside the relevant unit or CLI test.
 
 ## Commit & Pull Request Guidelines
 
-The available Git history contains only `Initial spec commit`, so no commit subject convention can be inferred. Use concise, action-oriented commit subjects. Pull requests should describe the behavior changed, link relevant issues or discussion, and report the checks run and their results. Include screenshots only when they clarify a user-visible change.
+Recent commits use concise, imperative subjects such as `Capture and recheck declared input files` and `Publish portable signed result records`. Keep commits focused on one behavior. Pull requests should describe the behavior changed, link relevant issues or discussion, and report the checks run and their results. Include screenshots only when they clarify a user-visible change.
 
 ## Specification & Configuration
 

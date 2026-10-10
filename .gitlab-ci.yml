@@ -1,0 +1,15 @@
+image: debian:bookworm-slim
+
+stages:
+  - test
+
+test:
+  stage: test
+  before_script:
+    - apt-get update
+    - apt-get install --yes --no-install-recommends build-essential libssl-dev ca-certificates
+  script:
+    - make clean test
+    - >-
+      make clean test
+      CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
