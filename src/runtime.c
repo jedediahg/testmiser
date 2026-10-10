@@ -300,22 +300,16 @@ done:
     return result;
 }
 
-int tm_runtime_tree_digest(const char *root, char output[72])
+static int digest_open_directory(int directory, char output[72])
 {
     static const unsigned char domain[] = "tm-runtime-tree-v1\0";
-    char *canonical = NULL;
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digest_length = 0;
     struct runtime_tree tree = {0};
     struct stat status;
-    int directory = -1, result = -1, saved;
+    int result = -1;
 
-    if (root == NULL || output == NULL) { errno = EINVAL; return -1; }
-    canonical = realpath(root, NULL);
-    if (canonical == NULL) return -1;
-    directory = open(canonical,
-        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-    if (directory < 0 || fstat(directory, &status) < 0) goto done;
+    if (fstat(directory, &status) < 0) return -1;
     tree.digest = EVP_MD_CTX_new();
     if (tree.digest == NULL ||
         EVP_DigestInit_ex(tree.digest, EVP_sha256(), NULL) != 1 ||
@@ -339,10 +333,43 @@ int tm_runtime_tree_digest(const char *root, char output[72])
     }
     result = 0;
 done:
-    saved = errno;
     EVP_MD_CTX_free(tree.digest);
-    if (directory >= 0) close(directory);
+    return result;
+}
+
+int tm_runtime_tree_digest_fd(int root_descriptor, char output[72])
+{
+    int directory, result, saved;
+    struct stat status;
+    if (root_descriptor < 0 || output == NULL) { errno = EINVAL; return -1; }
+    if (fstat(root_descriptor, &status) < 0) return -1;
+    if (!S_ISDIR(status.st_mode)) { errno = ENOTDIR; return -1; }
+    directory = openat(root_descriptor, ".",
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (directory < 0) return -1;
+    result = digest_open_directory(directory, output);
+    saved = errno;
+    close(directory);
+    errno = saved;
+    return result;
+}
+
+int tm_runtime_tree_digest(const char *root, char output[72])
+{
+    char *canonical;
+    int directory, result, saved;
+    if (root == NULL || output == NULL) { errno = EINVAL; return -1; }
+    canonical = realpath(root, NULL);
+    if (canonical == NULL) return -1;
+    directory = open(canonical,
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    saved = errno;
     free(canonical);
+    errno = saved;
+    if (directory < 0) return -1;
+    result = digest_open_directory(directory, output);
+    saved = errno;
+    close(directory);
     errno = saved;
     return result;
 }

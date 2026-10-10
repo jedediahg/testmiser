@@ -57,6 +57,22 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
             ;;
         --overlay-src|--tmp-overlay) workspace_overlay=yes ;;
         --clearenv) clean_environment=yes ;;
+        --ro-bind-fd)
+            if [ "$#" -lt 3 ]; then exit 90; fi
+            test -d "/proc/$$/fd/$2" ||
+                fail "read-only bind descriptor $2 is not inherited"
+            if [ "$3" = / ]; then readonly_runtime=yes; fi
+            case "$3" in
+                /workspace) whole_workspace_bind=yes ;;
+                /workspace/*)
+                    input_mount=yes
+                    if [ "$3" = /workspace/src ]; then
+                        expected_input_mount=yes
+                    fi
+                    ;;
+            esac
+            shift 2
+            ;;
         --ro-bind)
             if [ "$#" -lt 3 ]; then exit 90; fi
             if [ "$3" = / ]; then readonly_runtime=yes; fi
@@ -103,7 +119,7 @@ test "$input_mount" = yes || fail 'approved input roots are not mounted'
 test "$expected_input_mount" = yes || fail 'profile input root was not mounted at its canonical path'
 test "$whole_workspace_bind" = no || fail 'entire checkout is exposed'
 test "$workspace_overlay" = no || fail 'writable workspace overlay is present'
-test "$readonly_runtime" = yes || fail 'read-only runtime bind'
+test "$readonly_runtime" = yes || fail 'read-only runtime fd bind'
 test "$hidden_metadata" = yes || fail 'hidden metadata tmpfs'
 test "$clean_environment" = yes || fail '--clearenv'
 test "$(umask)" = 0022 || fail 'profile umask is not 022'

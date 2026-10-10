@@ -56,7 +56,7 @@ int main(void)
     char second[] = "/tmp/tm-runtime-second-XXXXXX";
     char digest_a[72], digest_b[72];
     char alpha[512], alias[512], fifo[512], added[512];
-    int status = 1;
+    int status = 1, root_descriptor = -1;
     if (mkdtemp(first) == NULL || mkdtemp(second) == NULL ||
         make_tree(first, 0) < 0 || make_tree(second, 1) < 0 ||
         tm_runtime_tree_digest(first, digest_a) < 0 ||
@@ -65,6 +65,13 @@ int main(void)
         strcmp(digest_a, digest_b) != 0) {
         fprintf(stderr, "runtime tree digest was not creation-order stable: %s\n",
                 strerror(errno));
+        goto done;
+    }
+    root_descriptor = open(second, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (root_descriptor < 0 ||
+        tm_runtime_tree_digest_fd(root_descriptor, digest_b) < 0 ||
+        strcmp(digest_a, digest_b) != 0) {
+        fprintf(stderr, "runtime descriptor digest differed from path digest\n");
         goto done;
     }
     printf("%s\n", digest_a);
@@ -89,6 +96,7 @@ int main(void)
         goto done;
     status = 0;
 done:
+    if (root_descriptor >= 0) close(root_descriptor);
     snprintf(alpha, sizeof(alpha), "%s/bin/alpha", first); unlink(alpha);
     snprintf(alpha, sizeof(alpha), "%s/lib/alias", first); unlink(alpha);
     snprintf(alpha, sizeof(alpha), "%s/lib/z-runtime", first); unlink(alpha);

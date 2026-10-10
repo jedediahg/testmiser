@@ -12,6 +12,7 @@
 
 #include "tm/backend.h"
 #include "tm/profile.h"
+#include "tm/runtime.h"
 
 static int write_file(const char *path, const char *content)
 {
@@ -25,24 +26,26 @@ static int write_file(const char *path, const char *content)
 
 int main(void)
 {
-    static const char profile_json[] =
+    static const char profile_template[] =
         "{\"schema_version\":1,\"repository_id\":\"backend-test\","
         "\"backend_contract\":\"bubblewrap-linux-x86_64-v2\","
-        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"runtime_digest\":\"%s\","
         "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
         "\"privacy_class\":\"public\",\"environment\":{},"
         "\"input_roots\":[\"src\"],\"output_roots\":[],"
         "\"scratch_roots\":[\"/tmp\"]}";
-    static const char symlink_profile_json[] =
+    static const char symlink_profile_template[] =
         "{\"schema_version\":1,\"repository_id\":\"backend-test\","
         "\"backend_contract\":\"bubblewrap-linux-x86_64-v2\","
-        "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"runtime_digest\":\"%s\","
         "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
         "\"privacy_class\":\"public\",\"environment\":{},"
         "\"input_roots\":[\"build/.tm-backend-root-link\"],"
         "\"output_roots\":[],\"scratch_roots\":[\"/tmp\"]}";
     char temporary[] = "/tmp/tm-backend-test-XXXXXX";
     char profile_path[512] = {0}, log_path[512] = {0};
+    char runtime_path[512] = {0}, runtime_digest[72] = {0};
+    char profile_json[1024], symlink_profile_json[1024];
     char marker_path[512] = {0};
     char input_link_path[512] = {0};
     char *repository_root = NULL;
@@ -62,7 +65,15 @@ int main(void)
         snprintf(log_path, sizeof(log_path), "%s/calls.log", temporary) >=
                  (int)sizeof(log_path) ||
         snprintf(marker_path, sizeof(marker_path), "%s/command.out",
-                 temporary) >= (int)sizeof(marker_path))
+                 temporary) >= (int)sizeof(marker_path) ||
+        snprintf(runtime_path, sizeof(runtime_path), "%s/runtime", temporary) >=
+                 (int)sizeof(runtime_path) || mkdir(runtime_path, 0755) < 0 ||
+        tm_runtime_tree_digest(runtime_path, runtime_digest) < 0 ||
+        snprintf(profile_json, sizeof(profile_json), profile_template,
+                 runtime_digest) >= (int)sizeof(profile_json) ||
+        snprintf(symlink_profile_json, sizeof(symlink_profile_json),
+                 symlink_profile_template, runtime_digest) >=
+                 (int)sizeof(symlink_profile_json))
         goto done;
     repository_root = realpath(".", NULL);
     if (repository_root == NULL ||
@@ -93,7 +104,7 @@ int main(void)
     original_umask = umask(077);
     restore_umask = 1;
 
-    if (tm_backend_run(profile, temporary, repository_root, NULL, 0, command,
+    if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
                        0, NULL, &command_result) != 1 || command_result != 0) {
         stream = fopen(log_path, "r");
         if (stream != NULL) {
@@ -130,7 +141,7 @@ int main(void)
     profile = NULL;
     if (tm_profile_load(profile_path, &profile) < 0) goto done;
     command_result = -1;
-    if (tm_backend_run(profile, temporary, repository_root, NULL, 0, command,
+    if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
                        0, NULL, &command_result) != 0 || command_result != -1) {
         fprintf(stderr, "backend accepted a symlinked profile input root\n");
         goto done;
@@ -156,6 +167,7 @@ done:
     if (log_path[0] != '\0') unlink(log_path);
     if (marker_path[0] != '\0') unlink(marker_path);
     if (input_link_path[0] != '\0') unlink(input_link_path);
+    if (runtime_path[0] != '\0') rmdir(runtime_path);
     rmdir(temporary);
     if (status != 0) fprintf(stderr, "backend test failed: %s\n",
                              strerror(errno));

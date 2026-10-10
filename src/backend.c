@@ -11,7 +11,6 @@
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -20,6 +19,7 @@
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/repo.h"
+#include "tm/runtime.h"
 
 #ifndef TM_TEST_BWRAP
 #define BWRAP_PATH "/usr/bin/bwrap"
@@ -29,11 +29,26 @@
 #define GUEST_WORKSPACE "/workspace"
 #define GUEST_METADATA "/workspace/.tm"
 
-static int close_child_descriptors(void)
+static int child_descriptor_is_preserved(const int *preserved,
+                                         size_t preserved_count,
+                                         int descriptor)
 {
-#ifdef SYS_close_range
-    if (syscall(SYS_close_range, 3U, UINT_MAX, 0U) == 0) return 0;
-#endif
+    size_t index;
+    for (index = 0; index < preserved_count; index++)
+        if (preserved[index] == descriptor) return 1;
+    return 0;
+}
+
+static int close_child_descriptors(const int *preserved,
+                                   size_t preserved_count)
+{
+    size_t preserved_index;
+    for (preserved_index = 0; preserved_index < preserved_count;
+         preserved_index++) {
+        int flags = fcntl(preserved[preserved_index], F_GETFD);
+        if (flags < 0 || fcntl(preserved[preserved_index], F_SETFD,
+                               flags & ~FD_CLOEXEC) < 0) return -1;
+    }
     {
         DIR *directory = opendir("/proc/self/fd");
         if (directory != NULL) {
@@ -50,14 +65,17 @@ static int close_child_descriptors(void)
                 }
                 descriptor = strtol(entry->d_name, &end, 10);
                 if (*entry->d_name == '\0' || *end != '\0' ||
-                    descriptor <= STDERR_FILENO || descriptor == scan_descriptor)
+                    descriptor <= STDERR_FILENO || descriptor == scan_descriptor ||
+                    descriptor > INT_MAX || child_descriptor_is_preserved(
+                        preserved, preserved_count, (int)descriptor))
                     continue;
-                if (descriptor <= INT_MAX) (void)close((int)descriptor);
+                (void)close((int)descriptor);
             }
             if (closedir(directory) < 0) failed = 1;
             if (!failed) return 0;
         }
     }
+    if (preserved_count != 0) { errno = ENOTSUP; return -1; }
     {
         struct rlimit limit;
         rlim_t upper;
@@ -80,7 +98,12 @@ struct argument_vector {
     char **items;
     size_t count;
     size_t capacity;
+    int *preserved_fds;
+    size_t preserved_fd_count;
 };
+
+static int push_argument(struct argument_vector *arguments,
+                         const char *value);
 
 static int init_arguments(struct argument_vector *arguments, size_t capacity)
 {
@@ -90,6 +113,13 @@ static int init_arguments(struct argument_vector *arguments, size_t capacity)
     }
     arguments->items = calloc(capacity, sizeof(*arguments->items));
     if (arguments->items == NULL) return -1;
+    arguments->preserved_fds = calloc(capacity,
+                                      sizeof(*arguments->preserved_fds));
+    if (arguments->preserved_fds == NULL) {
+        free(arguments->items);
+        arguments->items = NULL;
+        return -1;
+    }
     arguments->capacity = capacity;
     return 0;
 }
@@ -99,8 +129,96 @@ static void free_arguments(struct argument_vector *arguments)
     size_t index;
     for (index = 0; index < arguments->count; index++)
         free(arguments->items[index]);
+    for (index = 0; index < arguments->preserved_fd_count; index++)
+        close(arguments->preserved_fds[index]);
     free(arguments->items);
+    free(arguments->preserved_fds);
     memset(arguments, 0, sizeof(*arguments));
+}
+
+static int push_readonly_bind_fd(struct argument_vector *arguments,
+                                 int descriptor, const char *guest_path)
+{
+    char descriptor_text[32];
+    int length;
+    if (arguments->preserved_fd_count >= arguments->capacity) {
+        errno = E2BIG;
+        return -1;
+    }
+    length = snprintf(descriptor_text, sizeof(descriptor_text), "%d",
+                      descriptor);
+    if (length < 0 || (size_t)length >= sizeof(descriptor_text)) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    if (push_argument(arguments, "--ro-bind-fd") < 0 ||
+        push_argument(arguments, descriptor_text) < 0 ||
+        push_argument(arguments, guest_path) < 0) return -1;
+    arguments->preserved_fds[arguments->preserved_fd_count++] = descriptor;
+    return 0;
+}
+
+static int descriptor_above_stdio(int descriptor)
+{
+    int copy;
+    if (descriptor >= STDERR_FILENO + 1) return descriptor;
+    copy = fcntl(descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+    if (copy < 0) {
+        int saved = errno;
+        close(descriptor);
+        errno = saved;
+        return -1;
+    }
+    close(descriptor);
+    return copy;
+}
+
+static int open_directory_without_symlinks(const char *path)
+{
+    int current;
+    const char *part;
+    if (path == NULL || path[0] != '/') { errno = EINVAL; return -1; }
+    current = open("/", O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (current < 0) return -1;
+    part = path;
+    while (*part == '/') part++;
+    while (*part != '\0') {
+        const char *slash = strchr(part, '/');
+        size_t length = slash == NULL ? strlen(part) :
+                                       (size_t)(slash - part);
+        char *component = strndup(part, length);
+        struct stat status;
+        int next;
+        if (component == NULL) goto fail;
+        next = openat(current, component,
+            O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        free(component);
+        if (next < 0) goto fail;
+        if (fstat(next, &status) < 0) {
+            int saved = errno;
+            close(next);
+            errno = saved;
+            goto fail;
+        }
+        if (!S_ISDIR(status.st_mode)) {
+            close(next);
+            errno = ENOTDIR;
+            goto fail;
+        }
+        close(current);
+        current = next;
+        if (slash == NULL) break;
+        part = slash + 1;
+        while (*part == '/') part++;
+    }
+    return descriptor_above_stdio(current);
+fail:
+    {
+        int saved = errno;
+        close(current);
+        errno = saved;
+    }
+    return -1;
 }
 
 static int push_argument(struct argument_vector *arguments, const char *value)
@@ -142,66 +260,79 @@ static int push_output_mount(struct argument_vector *arguments,
     return result;
 }
 
-static int push_input_mount(struct argument_vector *arguments,
-                            const char *repository_root, const char *path)
+static int open_profile_input(int repository_fd, const char *path)
 {
-    char *source = NULL, *resolved = NULL, *inside = NULL, *guest = NULL;
-    size_t source_length, guest_length;
-    char *prefix = NULL;
-    int result = -1;
-
-    source_length = strlen(repository_root) + strlen(path) + 2;
-    guest_length = strlen(GUEST_WORKSPACE) + strlen(path) + 2;
-    source = malloc(source_length);
-    guest = malloc(guest_length);
-    if (source == NULL || guest == NULL) goto done;
-    if (snprintf(source, source_length, "%s/%s", repository_root, path) < 0 ||
-        snprintf(guest, guest_length, "%s/%s", GUEST_WORKSPACE, path) < 0) {
-        errno = EIO;
-        goto done;
+    int current = fcntl(repository_fd, F_DUPFD_CLOEXEC, 3);
+    char *copy = strdup(path), *part;
+    if (current < 0 || copy == NULL) {
+        int saved = errno;
+        if (current >= 0) close(current);
+        free(copy);
+        errno = saved;
+        return -1;
     }
-    prefix = malloc(source_length);
-    if (prefix == NULL) goto done;
-    memcpy(prefix, repository_root, strlen(repository_root));
-    {
-        const char *part = path, *slash;
-        size_t prefix_length = strlen(repository_root);
-        while (*part != '\0') {
-            struct stat status;
-            size_t component_length;
-            slash = strchr(part, '/');
-            component_length = slash == NULL ? strlen(part) :
-                                               (size_t)(slash - part);
-            prefix[prefix_length++] = '/';
-            memcpy(prefix + prefix_length, part, component_length);
-            prefix_length += component_length;
-            prefix[prefix_length] = '\0';
-            if (lstat(prefix, &status) < 0) goto done;
-            if (S_ISLNK(status.st_mode)) { errno = ELOOP; goto done; }
-            if (slash != NULL && !S_ISDIR(status.st_mode)) {
-                errno = ENOTDIR;
-                goto done;
-            }
-            if (slash == NULL) break;
-            part = slash + 1;
+    part = copy;
+    while (part != NULL) {
+        struct stat status;
+        char *slash = strchr(part, '/');
+        int flags = O_PATH | O_CLOEXEC | O_NOFOLLOW;
+        int next;
+        if (slash != NULL) {
+            *slash = '\0';
+            flags |= O_DIRECTORY;
         }
+        next = openat(current, part, flags);
+        if (next < 0) goto fail;
+        if (fstat(next, &status) < 0) {
+            int saved = errno;
+            close(next);
+            errno = saved;
+            goto fail;
+        }
+        if (S_ISLNK(status.st_mode)) {
+            close(next);
+            errno = ELOOP;
+            goto fail;
+        }
+        if ((!S_ISDIR(status.st_mode) && !S_ISREG(status.st_mode)) ||
+            (slash != NULL && !S_ISDIR(status.st_mode))) {
+            close(next);
+            errno = EOPNOTSUPP;
+            goto fail;
+        }
+        close(current);
+        current = next;
+        part = slash == NULL ? NULL : slash + 1;
     }
-    resolved = realpath(source, NULL);
-    if (resolved == NULL) goto done;
-    inside = tm_repo_relative_path(repository_root, resolved);
-    if (inside == NULL || inside[0] == '\0') {
-        errno = EXDEV;
-        goto done;
+    free(copy);
+    return current;
+fail:
+    {
+        int saved = errno;
+        close(current);
+        free(copy);
+        errno = saved;
     }
-    result = push_argument(arguments, "--ro-bind") < 0 ||
-             push_argument(arguments, resolved) < 0 ||
-             push_argument(arguments, guest) < 0 ? -1 : 0;
-done:
-    free(prefix);
-    free(inside);
-    free(resolved);
+    return -1;
+}
+
+static int push_input_mount(struct argument_vector *arguments,
+                            int repository_fd, const char *path)
+{
+    size_t guest_length = strlen(GUEST_WORKSPACE) + strlen(path) + 2;
+    char *guest = malloc(guest_length);
+    int descriptor, result;
+    if (guest == NULL) return -1;
+    if (snprintf(guest, guest_length, "%s/%s", GUEST_WORKSPACE, path) < 0) {
+        free(guest);
+        errno = EIO;
+        return -1;
+    }
+    descriptor = open_profile_input(repository_fd, path);
+    if (descriptor < 0) { free(guest); return -1; }
+    result = push_readonly_bind_fd(arguments, descriptor, guest);
+    if (result < 0) close(descriptor);
     free(guest);
-    free(source);
     return result;
 }
 
@@ -269,7 +400,7 @@ static int add_environment(struct argument_vector *arguments,
 static int build_arguments(struct argument_vector *arguments,
                            const struct tm_profile *profile,
                            const char *runtime_root,
-                           const char *repository_root,
+                           int repository_fd,
                            const char *working_directory,
                            const char *const *output_roots,
                            size_t output_root_count,
@@ -320,9 +451,28 @@ static int build_arguments(struct argument_vector *arguments,
     } else if (push_argument(arguments, "--unshare-all") < 0) {
         return -1;
     }
-    if (push_argument(arguments, "--die-with-parent") < 0 ||
-        push_pair(arguments, "--ro-bind", runtime_root) < 0 ||
-        push_argument(arguments, "/") < 0 ||
+    {
+        int runtime_fd = open_directory_without_symlinks(runtime_root);
+        char runtime_digest[72];
+        if (runtime_fd < 0) return -1;
+        if (tm_runtime_tree_digest_fd(runtime_fd, runtime_digest) < 0) {
+            int saved = errno;
+            close(runtime_fd);
+            errno = saved;
+            return -1;
+        }
+        if (strcmp(runtime_digest, tm_profile_runtime_digest(profile)) != 0) {
+            close(runtime_fd);
+            errno = ESTALE;
+            return -1;
+        }
+        if (push_argument(arguments, "--die-with-parent") < 0 ||
+            push_readonly_bind_fd(arguments, runtime_fd, "/") < 0) {
+            close(runtime_fd);
+            return -1;
+        }
+    }
+    if (
         push_pair(arguments, "--tmpfs", GUEST_WORKSPACE) < 0 ||
         push_pair(arguments, "--tmpfs", GUEST_METADATA) < 0 ||
         push_argument(arguments, "--dev-bind") < 0 ||
@@ -330,7 +480,7 @@ static int build_arguments(struct argument_vector *arguments,
         push_argument(arguments, "/dev/null") < 0)
         return -1;
     for (index = 0; index < tm_profile_input_root_count(profile); index++)
-        if (push_input_mount(arguments, repository_root,
+        if (push_input_mount(arguments, repository_fd,
                              tm_profile_input_root(profile, index)) < 0)
             return -1;
     for (index = 0; index < tm_profile_scratch_root_count(profile); index++)
@@ -411,7 +561,9 @@ static int run_probe(const struct argument_vector *arguments,
     if (child < 0) goto unavailable;
     if (child == 0) {
         int null_fd;
-        if (close_child_descriptors() < 0) _exit(125);
+        if (close_child_descriptors(arguments->preserved_fds,
+                                    arguments->preserved_fd_count) < 0)
+            _exit(125);
         (void)umask(022);
         null_fd = open("/dev/null", O_RDWR);
         if (null_fd < 0 || dup2(null_fd, STDERR_FILENO) < 0) _exit(125);
@@ -438,7 +590,9 @@ static int run_bubblewrap(const struct argument_vector *arguments,
     if (child < 0) return 0;
     if (child == 0) {
         int null_fd;
-        if (close_child_descriptors() < 0) _exit(125);
+        if (close_child_descriptors(arguments->preserved_fds,
+                                    arguments->preserved_fd_count) < 0)
+            _exit(125);
         (void)umask(022);
         null_fd = open("/dev/null", O_RDONLY);
         if (null_fd < 0 || dup2(null_fd, STDIN_FILENO) < 0) _exit(125);
@@ -469,7 +623,7 @@ int tm_backend_run(const struct tm_profile *profile,
 {
     struct argument_vector arguments = {0};
     char *runtime = NULL, *current = NULL, *working_directory = NULL;
-    int built, result = 0;
+    int repository_fd = -1, built, result = 0;
 
     if (profile == NULL || runtime_root == NULL || repository_root == NULL ||
         command == NULL || command[0] == NULL || command_result == NULL)
@@ -485,9 +639,13 @@ int tm_backend_run(const struct tm_profile *profile,
     if (runtime == NULL || current == NULL) goto done;
     working_directory = tm_repo_relative_path(repository_root, current);
     if (working_directory == NULL) goto done;
-    built = build_arguments(&arguments, profile, runtime, repository_root,
+    repository_fd = open_directory_without_symlinks(repository_root);
+    if (repository_fd < 0) goto done;
+    built = build_arguments(&arguments, profile, runtime, repository_fd,
                             working_directory, output_roots,
                             output_root_count, command);
+    close(repository_fd);
+    repository_fd = -1;
     if (built <= 0) {
         if (explain && built == 0)
             fprintf(stderr,
@@ -510,6 +668,7 @@ int tm_backend_run(const struct tm_profile *profile,
     (void)report;
     result = run_bubblewrap(&arguments, command_result);
 done:
+    if (repository_fd >= 0) close(repository_fd);
     free_arguments(&arguments);
     free(working_directory);
     free(current);
