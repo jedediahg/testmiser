@@ -299,7 +299,7 @@ static int open_directory_without_symlinks(const char *path)
     int current;
     const char *part;
     if (path == NULL || path[0] != '/') { errno = EINVAL; return -1; }
-    current = open("/", O_PATH | O_DIRECTORY | O_CLOEXEC);
+    current = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (current < 0) return -1;
     part = path;
     while (*part == '/') part++;
@@ -312,7 +312,7 @@ static int open_directory_without_symlinks(const char *path)
         int next;
         if (component == NULL) goto fail;
         next = openat(current, component,
-            O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         free(component);
         if (next < 0) goto fail;
         if (fstat(next, &status) < 0) {
