@@ -109,7 +109,10 @@ static int capture_one(struct tm_observed_input_manifest *manifest,
         return -1;
     }
     if (kind == TM_INPUT_FILE) {
-        if (tm_input_capture_file(root_fd, source_path, digest) < 0)
+        int captured = strcmp(source_path, ".") == 0 ?
+            tm_input_capture_file_root(root_fd, digest) :
+            tm_input_capture_file(root_fd, source_path, digest);
+        if (captured < 0)
             return -1;
     } else if (kind == TM_INPUT_DIRECTORY) {
         int captured = strcmp(source_path, ".") == 0 ?

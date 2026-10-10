@@ -11,6 +11,9 @@ struct tm_snapshot;
 int tm_snapshot_create(int repository_fd, const char *const *paths,
                        size_t path_count, struct tm_snapshot **snapshot);
 int tm_snapshot_open_root(const struct tm_snapshot *snapshot, size_t index);
+/* Open a snapshot root for content capture (unlike the O_PATH bind handle). */
+int tm_snapshot_open_root_readable(const struct tm_snapshot *snapshot,
+                                   size_t index);
 void tm_snapshot_free(struct tm_snapshot *snapshot);
 
 #endif

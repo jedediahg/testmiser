@@ -33,6 +33,7 @@ int main(void)
     struct tm_observed_input_manifest manifest = {0};
     struct tm_snapshot *snapshot = NULL;
     const char *snapshot_paths[] = {"subdir"};
+    const char *file_snapshot_paths[] = {"alpha"};
     int snapshot_root = -1, snapshot_roots[1];
     char snapshot_digest[72];
     int root = -1, status = 1;
@@ -132,6 +133,43 @@ int main(void)
         strcmp(snapshot_digest, manifest.items[1].digest) != 0 ||
         tm_input_matches(root, &manifest.items[1]) == 0) {
         fprintf(stderr, "snapshot input manifest did not retain consumed bytes\n");
+        goto done;
+    }
+    tm_observed_input_manifest_clear(&manifest);
+    close(snapshot_root);
+    snapshot_root = -1;
+    tm_snapshot_free(snapshot);
+    snapshot = NULL;
+
+    if (tm_snapshot_create(root, file_snapshot_paths, 1, &snapshot) < 0) {
+        perror("file snapshot create failed");
+        goto done;
+    }
+    snapshot_root = tm_snapshot_open_root_readable(snapshot, 0);
+    if (snapshot_root < 0) {
+        perror("file snapshot open failed");
+        goto done;
+    }
+    if (write_file(file, "changed after file snapshot\n") < 0) {
+        perror("file snapshot mutate failed");
+        goto done;
+    }
+    snapshot_roots[0] = snapshot_root;
+    report.candidate_count = 1;
+    snprintf(report.candidates[0].kind,
+             sizeof(report.candidates[0].kind), "opened file");
+    snprintf(report.candidates[0].path,
+             sizeof(report.candidates[0].path), "alpha");
+    if (tm_observer_capture_snapshot_inputs(&report, file_snapshot_paths,
+            snapshot_roots, 1, &manifest) < 0 || manifest.count != 1 ||
+        tm_input_capture_file_root(snapshot_root, snapshot_digest) < 0 ||
+        strcmp(snapshot_digest, manifest.items[0].digest) != 0 ||
+        lseek(snapshot_root, 0, SEEK_CUR) != 0 ||
+        tm_input_matches(root, &manifest.items[0]) == 0) {
+        fprintf(stderr, "file-root snapshot manifest lost consumed bytes (count=%zu, digest=%s, snapshot=%s, match=%d)\n",
+            manifest.count, manifest.count == 0 ? "-" : manifest.items[0].digest,
+            snapshot_digest, manifest.count == 0 ? -2 :
+                tm_input_matches(root, &manifest.items[0]));
         goto done;
     }
     tm_observed_input_manifest_clear(&manifest);

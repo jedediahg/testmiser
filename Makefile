@@ -154,7 +154,7 @@ $(BUILD_DIR)/test_observer_start: tests/observer_start.c src/observer.c src/obse
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/observer_start.c src/observer.c src/observer_report.c src/repo.c
 
-$(BUILD_DIR)/test_observed_inputs: tests/observed_inputs.c src/observed_inputs.c src/observer_report.c src/snapshot.c src/input.c src/json.c src/digest.c include/tm/observed_inputs.h include/tm/snapshot.h
+$(BUILD_DIR)/test_observed_inputs: tests/observed_inputs.c src/observed_inputs.c src/observer_report.c src/snapshot.c src/input.c src/json.c src/digest.c include/tm/input.h include/tm/observed_inputs.h include/tm/snapshot.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/observed_inputs.c src/observed_inputs.c src/observer_report.c src/snapshot.c src/input.c src/json.c src/digest.c $(LDLIBS)
 

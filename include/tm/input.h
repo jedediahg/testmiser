@@ -6,6 +6,8 @@
 /* Capture a stable regular file below root_fd as a sha256-prefixed digest.
  * Symlink traversal and unsupported paths fail closed. */
 int tm_input_capture_file(int root_fd, const char *path, char digest[72]);
+/* Capture bytes from an already-open regular file root. */
+int tm_input_capture_file_root(int file_fd, char digest[72]);
 
 /* Capture a stable directory-membership digest. File contents require their
  * own file observations; the directory digest records names and entry kinds. */

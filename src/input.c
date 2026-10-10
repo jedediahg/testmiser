@@ -139,16 +139,14 @@ static int open_parent(int root_fd, const char *path, char **leaf)
     return current;
 }
 
-static int hash_file_at(int parent, const char *leaf, char hex[65])
+static int hash_file_descriptor(int fd, char hex[65])
 {
     unsigned char data[32768], digest[EVP_MAX_MD_SIZE];
     EVP_MD_CTX *ctx = NULL;
     struct stat before, after;
     unsigned int digest_length = 0;
-    int fd = openat(parent, leaf,
-                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    off_t offset = 0;
     int result = -1, saved;
-    if (fd < 0) return -1;
     if (fstat(fd, &before) < 0) goto done;
     if (!S_ISREG(before.st_mode)) { errno = EINVAL; goto done; }
     ctx = EVP_MD_CTX_new();
@@ -156,10 +154,15 @@ static int hash_file_at(int parent, const char *leaf, char hex[65])
         errno = EIO; goto done;
     }
     for (;;) {
-        ssize_t count = read(fd, data, sizeof(data));
+        ssize_t count = pread(fd, data, sizeof(data), offset);
         if (count < 0 && errno == EINTR) continue;
         if (count < 0) goto done;
         if (count == 0) break;
+        if (offset > (off_t)(INT64_MAX - (uint64_t)count)) {
+            errno = EOVERFLOW;
+            goto done;
+        }
+        offset += (off_t)count;
         if (EVP_DigestUpdate(ctx, data, (size_t)count) != 1) {
             errno = EIO; goto done;
         }
@@ -181,9 +184,38 @@ static int hash_file_at(int parent, const char *leaf, char hex[65])
 done:
     saved = errno;
     EVP_MD_CTX_free(ctx);
+    errno = saved;
+    return result;
+}
+
+static int hash_file_at(int parent, const char *leaf, char hex[65])
+{
+    int fd = openat(parent, leaf,
+                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    int result, saved;
+    if (fd < 0) return -1;
+    result = hash_file_descriptor(fd, hex);
+    saved = errno;
     close(fd);
     errno = saved;
     return result;
+}
+
+int tm_input_capture_file_root(int file_fd, char digest[72])
+{
+    char hex[65];
+    int descriptor, result, saved;
+    if (file_fd < 0 || digest == NULL) { errno = EINVAL; return -1; }
+    descriptor = fcntl(file_fd, F_DUPFD_CLOEXEC, 3);
+    if (descriptor < 0) return -1;
+    result = hash_file_descriptor(descriptor, hex);
+    saved = errno;
+    close(descriptor);
+    errno = saved;
+    if (result < 0) return -1;
+    memcpy(digest, "sha256:", 7);
+    memcpy(digest + 7, hex, sizeof(hex));
+    return 0;
 }
 
 int tm_input_capture_file(int root_fd, const char *path, char digest[72])

@@ -130,6 +130,7 @@ static int hash_open_file(int descriptor, const struct stat *expected,
         (expected != NULL && !same_version(expected, &before))) {
         errno = EBUSY; goto done;
     }
+    if (lseek(descriptor, 0, SEEK_SET) < 0) goto done;
     if (EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1) {
         errno = EIO; goto done;
     }
@@ -567,6 +568,12 @@ static int copy_root(int source_fd, int destination_directory,
         destination = openat(destination_directory, name,
             O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
         if (destination < 0) return -1;
+        if (lseek(source_fd, 0, SEEK_SET) < 0) {
+            int saved = errno;
+            close(destination);
+            errno = saved;
+            return -1;
+        }
         result = copy_file(source_fd, destination, &status, budget);
         if (result == 0) {
             struct stat after;
@@ -698,6 +705,25 @@ int tm_snapshot_open_root(const struct tm_snapshot *snapshot, size_t index)
         O_PATH | O_CLOEXEC | O_NOFOLLOW);
     if (descriptor < 0) return -1;
     return descriptor;
+}
+
+int tm_snapshot_open_root_readable(const struct tm_snapshot *snapshot,
+                                   size_t index)
+{
+    char name[32];
+    struct stat status;
+    int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
+    if (snapshot == NULL || snapshot->directory_fd < 0 ||
+        index >= snapshot->root_count ||
+        snprintf(name, sizeof(name), "root-%zu", index) < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (fstatat(snapshot->directory_fd, name, &status,
+                AT_SYMLINK_NOFOLLOW) < 0) return -1;
+    if (S_ISDIR(status.st_mode)) flags |= O_DIRECTORY;
+    else if (!S_ISREG(status.st_mode)) { errno = EOPNOTSUPP; return -1; }
+    return openat(snapshot->directory_fd, name, flags);
 }
 
 void tm_snapshot_free(struct tm_snapshot *snapshot)
