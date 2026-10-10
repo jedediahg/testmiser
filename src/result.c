@@ -19,6 +19,9 @@
 #include "tm/result.h"
 #include "tm/trust.h"
 
+#define TM_RESULT_RECORD_LIMIT (4U * 1024U * 1024U)
+#define TM_RESULT_CANDIDATE_LIMIT 256U
+
 static const unsigned char result_signature_domain[] = "tm-result-v2";
 static unsigned long result_store_sequence;
 static int valid_sha256(const char *digest);
@@ -936,7 +939,7 @@ static int read_candidate(int directory, const char *name,
                     O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) return -1;
     if (fstat(fd, &before) < 0 || !S_ISREG(before.st_mode) ||
-        before.st_size < 2 || before.st_size > 16 * 1024 * 1024) {
+        before.st_size < 2 || before.st_size > TM_RESULT_RECORD_LIMIT) {
         close(fd);
         errno = EINVAL;
         return -1;
@@ -993,6 +996,7 @@ static int result_find(int repository_root_fd, const char *command_fingerprint,
     int duplicate = -1, result = 1, saved;
     DIR *directory = NULL;
     struct dirent *entry;
+    size_t visited = 0;
     if (repository_root_fd < 0 || !valid_sha256(command_fingerprint) ||
         !valid_sha256(verification_fingerprint) || trust_policy == NULL ||
         record == NULL || record_length == NULL || record_id == NULL) {
@@ -1032,6 +1036,11 @@ static int result_find(int repository_root_fd, const char *command_fingerprint,
         entry = readdir(directory);
         if (entry == NULL) {
             if (errno != 0) result = -1;
+            break;
+        }
+        if (++visited > TM_RESULT_CANDIDATE_LIMIT) {
+            errno = E2BIG;
+            result = -1;
             break;
         }
         if (!candidate_filename(entry->d_name)) continue;

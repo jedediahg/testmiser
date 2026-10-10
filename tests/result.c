@@ -89,6 +89,26 @@ static int test_store(const unsigned char *record, size_t length,
     verifyfd = openat(commandfd, summary.verification_id,
                       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (verifyfd < 0) goto done;
+    {
+        size_t index;
+        char filler[32];
+        for (index = 0; index < 257; index++) {
+            int filler_fd;
+            if (snprintf(filler, sizeof(filler), "unrelated-%03zu", index) >=
+                (int)sizeof(filler)) goto done;
+            filler_fd = openat(verifyfd, filler,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+            if (filler_fd < 0 || close(filler_fd) < 0) goto done;
+        }
+        if (tm_result_find(rootfd,
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                summary.verification_fingerprint, trust, &found,
+                &found_length, record_id) != -1 || found != NULL) goto done;
+        for (index = 0; index < 257; index++) {
+            (void)snprintf(filler, sizeof(filler), "unrelated-%03zu", index);
+            if (unlinkat(verifyfd, filler, 0) < 0) goto done;
+        }
+    }
     fd = openat(verifyfd, filename, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0 || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
         (st.st_mode & 0777) != 0644 || st.st_size != (off_t)length) goto done;
