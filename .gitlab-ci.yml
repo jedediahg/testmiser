@@ -1,5 +1,8 @@
 image: debian:bookworm-slim
 
+variables:
+  GIT_DEPTH: "0"
+
 stages:
   - test
 
@@ -7,9 +10,27 @@ test:
   stage: test
   before_script:
     - apt-get update
-    - apt-get install --yes --no-install-recommends build-essential libssl-dev ca-certificates
+    - apt-get install --yes --no-install-recommends build-essential libssl-dev ca-certificates git
   script:
-    - make clean test
-    - >-
-      make clean test
-      CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
+    - |
+      set -eu
+      base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-${CI_COMMIT_BEFORE_SHA:-}}"
+      has_results=false
+      results_only=false
+      if bash scripts/tm-result-diff.sh any "$base" "$CI_COMMIT_SHA"; then
+        has_results=true
+        if bash scripts/tm-result-diff.sh only "$base" "$CI_COMMIT_SHA"; then
+          results_only=true
+        fi
+      fi
+      if [ "$results_only" = true ]; then
+        echo "Result-only change; skipping unrelated application tests."
+      else
+        make clean test
+        make clean test CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
+      fi
+      if [ "$has_results" = true ]; then
+        bash scripts/tm-ci-validate-results.sh
+      else
+        echo "No result sidecars changed."
+      fi

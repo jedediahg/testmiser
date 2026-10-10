@@ -13,9 +13,30 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Build and test
-        run: make clean test
-      - name: Analyze and test
-        run: >-
-          make clean test
-          CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
+        with:
+          fetch-depth: 0
+      - name: Verify source changes and result evidence
+        env:
+          TM_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TM_DIFF_HEAD: ${{ github.sha }}
+          TM_TRUST_POLICY_JSON: ${{ vars.TM_TRUST_POLICY_JSON }}
+        run: |
+          results_only=false
+          has_results=false
+          if bash scripts/tm-result-diff.sh any "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
+            has_results=true
+            if bash scripts/tm-result-diff.sh only "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
+              results_only=true
+            fi
+          fi
+
+          if [[ "$results_only" == true ]]; then
+            echo "Result-only change: validating trusted evidence without running unrelated tests."
+          else
+            make clean test
+            make clean test CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O0 -fanalyzer'
+          fi
+
+          if [[ "$has_results" == true ]]; then
+            bash scripts/tm-ci-validate-results.sh
+          fi
