@@ -12,7 +12,7 @@
 
 #include "tm/local_store.h"
 
-static int open_configured_directory(const char *path)
+int tm_open_directory_without_symlinks(const char *path)
 {
     char *copy, *save = NULL, *component;
     int current, saved;
@@ -45,6 +45,51 @@ static int open_configured_directory(const char *path)
 fail:
     saved = errno;
     close(current);
+    free(copy);
+    errno = saved;
+    return -1;
+}
+
+static int open_or_create_final_directory(const char *path)
+{
+    char *copy = NULL, *leaf = NULL, *slash;
+    size_t length;
+    int parent = -1, directory = -1, saved;
+
+    copy = strdup(path);
+    if (copy == NULL) return -1;
+    length = strlen(copy);
+    while (length > 1 && copy[length - 1] == '/')
+        copy[--length] = '\0';
+    slash = strrchr(copy, '/');
+    if (slash == NULL || slash[1] == '\0') {
+        errno = EINVAL;
+        goto fail;
+    }
+    leaf = strdup(slash + 1);
+    if (leaf == NULL) goto fail;
+    if (strcmp(leaf, ".") == 0 || strcmp(leaf, "..") == 0) {
+        errno = EINVAL;
+        goto fail;
+    }
+    if (slash == copy) copy[1] = '\0';
+    else *slash = '\0';
+    parent = tm_open_directory_without_symlinks(copy);
+    if (parent < 0) goto fail;
+    if (mkdirat(parent, leaf, 0700) < 0 && errno != EEXIST) goto fail;
+    directory = openat(parent, leaf,
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (directory < 0) goto fail;
+    close(parent);
+    free(leaf);
+    free(copy);
+    return directory;
+
+fail:
+    saved = errno;
+    if (directory >= 0) close(directory);
+    if (parent >= 0) close(parent);
+    free(leaf);
     free(copy);
     errno = saved;
     return -1;
@@ -83,7 +128,7 @@ int tm_local_store_open(const char *cache_root, int *store_root_fd)
         return -1;
     }
     *store_root_fd = -1;
-    root = open_configured_directory(cache_root);
+    root = tm_open_directory_without_symlinks(cache_root);
     if (root < 0) goto fail;
     if (fstat(root, &status) < 0) goto fail;
     if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
@@ -143,7 +188,10 @@ int tm_user_cache_root(char **cache_root)
             return -1;
         }
     }
-    descriptor = open_configured_directory(candidate);
+    descriptor = tm_open_directory_without_symlinks(candidate);
+    if (descriptor < 0 && xdg_cache != NULL && xdg_cache[0] != '\0' &&
+        errno == ENOENT)
+        descriptor = open_or_create_final_directory(candidate);
     if (descriptor < 0) goto fail;
     if (fstat(descriptor, &status) < 0) goto fail;
     if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||
@@ -186,7 +234,7 @@ int tm_shared_store_open_configured(int *store_root_fd)
     *store_root_fd = -1;
     if (configured == NULL || configured[0] == '\0') return 1;
     if (configured[0] != '/') { errno = EINVAL; return -1; }
-    root = open_configured_directory(configured);
+    root = tm_open_directory_without_symlinks(configured);
     if (root < 0) goto fail;
     if (fstat(root, &status) < 0) goto fail;
     if (!S_ISDIR(status.st_mode) || status.st_uid != getuid() ||

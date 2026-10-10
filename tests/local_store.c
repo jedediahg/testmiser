@@ -15,7 +15,8 @@ int main(void)
     char cache[] = "/tmp/tm-local-store-XXXXXX";
     char hostile[] = "/tmp/tm-local-store-hostile-XXXXXX";
     char home[] = "/tmp/tm-local-store-home-XXXXXX";
-    char app_path[256], store_path[256], store_link_path[256];
+    char app_path[256], store_path[512], store_link_path[256];
+    char new_xdg[256] = {0};
     struct stat first_status, second_status;
     const char *current_xdg = getenv("XDG_CACHE_HOME");
     const char *current_home = getenv("HOME");
@@ -57,6 +58,14 @@ int main(void)
         fstat(default_fd, &second_status) < 0 ||
         first_status.st_ino != second_status.st_ino ||
         first_status.st_dev != second_status.st_dev) goto done;
+    close(default_fd); default_fd = -1;
+    if (snprintf(new_xdg, sizeof(new_xdg), "%s/new-xdg", cache) >=
+            (int)sizeof(new_xdg) ||
+        setenv("XDG_CACHE_HOME", new_xdg, 1) < 0 ||
+        tm_local_store_open_default(&default_fd) < 0 || default_fd < 0 ||
+        stat(new_xdg, &second_status) < 0 ||
+        !S_ISDIR(second_status.st_mode) || second_status.st_uid != getuid() ||
+        (second_status.st_mode & 077) != 0) goto done;
     close(default_fd); default_fd = -1;
     if (setenv("XDG_CACHE_HOME", "relative-cache", 1) < 0 ||
         tm_local_store_open_default(&rejected) == 0 || rejected >= 0)
@@ -107,6 +116,14 @@ done:
     else if (!had_shared) (void)unsetenv("TM_SHARED_STORE");
     if (status != 0) fprintf(stderr, "local store test failed: %s\n", strerror(errno));
     if (cache[0] != '\0') {
+        if (new_xdg[0] != '\0') {
+            snprintf(store_path, sizeof(store_path),
+                     "%s/testmiser/store", new_xdg);
+            rmdir(store_path);
+            snprintf(store_path, sizeof(store_path), "%s/testmiser", new_xdg);
+            rmdir(store_path);
+            rmdir(new_xdg);
+        }
         snprintf(store_path, sizeof(store_path), "%s/testmiser/store", cache);
         rmdir(store_path);
         snprintf(store_path, sizeof(store_path), "%s/testmiser", cache);

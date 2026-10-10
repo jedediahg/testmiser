@@ -1,6 +1,9 @@
 #ifndef TM_LOCAL_STORE_H
 #define TM_LOCAL_STORE_H
 
+/* Open an absolute directory path without following symlinks or dot segments. */
+int tm_open_directory_without_symlinks(const char *path);
+
 /* Return an allocated, validated XDG_CACHE_HOME or $HOME/.cache path. */
 int tm_user_cache_root(char **cache_root);
 

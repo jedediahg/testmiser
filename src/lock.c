@@ -115,7 +115,7 @@ int tm_lock_acquire(const char *cache_root, const char *repository_id,
         errno = EOVERFLOW;
         return -1;
     }
-    root = open(cache_root, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    root = tm_open_directory_without_symlinks(cache_root);
     if (root < 0) goto fail;
     if (fstat(root, &status) < 0) goto fail;
     if (status.st_uid != getuid() || (status.st_mode & 022) != 0) {

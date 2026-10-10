@@ -40,7 +40,7 @@ int main(void)
 {
     char cache[] = "/tmp/tm-lock-test-XXXXXX";
     char link[] = "/tmp/tm-lock-link-XXXXXX";
-    char lock_directory[256] = {0};
+    char lock_directory[256] = {0}, unsafe_root[512];
     struct tm_lock held = {-1}, independent = {-1}, rejected = {-1};
     struct tm_lock shared_held = {-1};
     int ready[2] = {-1, -1}, acquired[2] = {-1, -1};
@@ -134,6 +134,18 @@ int main(void)
     if (rmdir(link) < 0 || symlink(cache, link) < 0 ||
         tm_lock_acquire(link, "sample", command_digest, profile_digest,
                         context_digest, &rejected) == 0 || rejected.fd >= 0)
+        goto done;
+    if (unlink(link) < 0 || symlink("/tmp", link) < 0 ||
+        snprintf(unsafe_root, sizeof(unsafe_root), "%s/%s", link,
+                 cache + strlen("/tmp/")) >= (int)sizeof(unsafe_root) ||
+        tm_lock_acquire(unsafe_root, "sample", command_digest,
+                        profile_digest, context_digest, &rejected) == 0 ||
+        rejected.fd >= 0 ||
+        snprintf(unsafe_root, sizeof(unsafe_root), "%s/../%s", cache,
+                 cache + strlen("/tmp/")) >= (int)sizeof(unsafe_root) ||
+        tm_lock_acquire(unsafe_root, "sample", command_digest,
+                        profile_digest, context_digest, &rejected) == 0 ||
+        rejected.fd >= 0)
         goto done;
     if (tm_lock_acquire(cache, "Bad Repo", command_digest, profile_digest,
                         context_digest, &rejected) == 0) goto done;
