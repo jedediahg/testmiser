@@ -64,6 +64,36 @@ static void free_environment(char **environment)
     free(environment);
 }
 
+static int verify_selected_runtime(const struct tm_profile *profile,
+                                  int explain)
+{
+    const char *root = getenv("TM_RUNTIME_ROOT");
+    char actual[72];
+    if (root == NULL) {
+        if (explain)
+            fprintf(stderr,
+                "tm: reuse rejected: TM_RUNTIME_ROOT is unset and the portable backend is not enforced\n");
+        return 0;
+    }
+    if (root[0] == '\0') {
+        fprintf(stderr, "tm: TM_RUNTIME_ROOT must not be empty\n");
+        return -1;
+    }
+    if (tm_runtime_tree_digest(root, actual) < 0) {
+        fprintf(stderr, "tm: invalid TM_RUNTIME_ROOT: %s\n", strerror(errno));
+        return -1;
+    }
+    if (strcmp(actual, tm_profile_runtime_digest(profile)) != 0) {
+        fprintf(stderr,
+                "tm: TM_RUNTIME_ROOT does not match the approved profile\n");
+        return -1;
+    }
+    if (explain)
+        fprintf(stderr,
+            "tm: runtime identity matches the approved profile; portable backend is not enforced, so reuse is disabled\n");
+    return 0;
+}
+
 static void print_usage(FILE *stream)
 {
     fprintf(stream, "Usage: tm [--root DIR] [--input PATH ...] [--output PATH ...] [--profile FILE --trust-policy FILE] [--force] [--explain] -- COMMAND [ARGUMENT ...]\n");
@@ -291,6 +321,11 @@ int main(int argc, char **argv)
             tm_trust_policy_approves_profile(trust_policy,
                 tm_profile_repository_id(profile), tm_profile_digest(profile)) < 0) {
             fprintf(stderr, "tm: profile is not approved by trust policy\n");
+            tm_profile_free(profile);
+            tm_trust_policy_free(trust_policy);
+            return TM_EXIT_INTERNAL_ERROR;
+        }
+        if (verify_selected_runtime(profile, options.explain) < 0) {
             tm_profile_free(profile);
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;

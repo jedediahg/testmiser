@@ -791,6 +791,8 @@ For `bubblewrap-linux-x86_64-v1`, `runtime_digest` identifies the normalized run
 
 `tm runtime verify PROFILE TRUST_POLICY ROOTFS_DIR` verifies that the profile is approved for its repository and that the supplied tree matches its `runtime_digest`. It is a provisioning check only; it does not establish that the backend mounted the tree read-only or enforced the remaining profile contract.
 
+When `TM_RUNTIME_ROOT` is set for a profile invocation, `tm` MUST verify its tree digest against the approved profile before launching the command. A mismatch or unreadable tree is a configuration error (125). An unset mapping or a matching digest without an enforced backend permits only an explicit uncached run; digest agreement alone MUST NOT authorize reuse.
+
 Remote transport APIs and profile field serialization must be frozen with golden fixtures before implementation enables portable hits. Their behavioral contracts are normative here.
 
 ---

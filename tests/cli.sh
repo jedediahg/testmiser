@@ -220,7 +220,23 @@ chmod 600 "$tmp_dir/runtime-policy.json"
 "$tm_bin" runtime verify "$tmp_dir/runtime-profile.json" \
     "$tmp_dir/runtime-policy.json" "$tmp_dir/runtime-root" \
     | grep -q "runtime identity verified: $runtime_digest"
+TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$tm_bin" \
+    --profile "$tmp_dir/runtime-profile.json" \
+    --trust-policy "$tmp_dir/runtime-policy.json" --explain -- /bin/true \
+    2>"$tmp_dir/runtime-selected.err"
+grep -q 'runtime identity matches the approved profile' \
+    "$tmp_dir/runtime-selected.err"
 printf 'different runtime\n' >"$tmp_dir/runtime-root/bin/tool"
+set +e
+TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$tm_bin" \
+    --profile "$tmp_dir/runtime-profile.json" \
+    --trust-policy "$tmp_dir/runtime-policy.json" -- \
+    sh -c 'touch "$1"' sh "$tmp_dir/runtime-mismatch-child-ran" \
+    >"$tmp_dir/runtime-selected-mismatch.out" 2>&1
+status=$?
+set -e
+test "$status" -eq 125
+test ! -e "$tmp_dir/runtime-mismatch-child-ran"
 set +e
 "$tm_bin" runtime verify "$tmp_dir/runtime-profile.json" \
     "$tmp_dir/runtime-policy.json" "$tmp_dir/runtime-root" \
