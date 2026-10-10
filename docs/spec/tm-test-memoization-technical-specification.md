@@ -159,7 +159,7 @@ Lookup MUST evaluate candidate manifests against current stable inputs; a candid
 
 # 6. Repository Root
 
-`tm` MUST determine the root using explicit `--root`, otherwise the closest ancestor with a `.git` file or directory, otherwise the working directory. `--root` is a target 0.1 option, not yet implemented.
+`tm` MUST determine the root using explicit `--root`, otherwise the closest ancestor with a `.git` file or directory, otherwise the working directory. The CLI implements `--root DIR`; it must resolve to a directory, and all reusable repository paths remain relative to that selected root.
 
 The working directory MUST be within the root for reuse. Persist repository paths relative to the root, using `/`, with `.` only for the root itself. Reject absolute paths, NUL, empty components, `..`, and ambiguous encodings. Version 0.1 supports UTF-8 paths; unsupported names cause RUN without reusable state.
 
@@ -820,7 +820,7 @@ MUST execute the command regardless of cached state.
 
 Before execution record an attempt under section 20; publish a new signed record only after eligible success. A contradictory forced failure quarantines matching success. Force explicitly overrides the no-repeat objective.
 
-Version 0.1 MUST also support the exact value `TM_FORCE=1` (not yet implemented); other values have no forcing effect:
+Version 0.1 supports the exact value `TM_FORCE=1`; other values have no forcing effect:
 
 ```bash
 TM_FORCE=1
