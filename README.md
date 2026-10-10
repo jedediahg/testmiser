@@ -28,7 +28,9 @@ The current executable is a transparent command wrapper with a Linux x86-64 `ptr
 
 ## Intended usage
 
-`tm clean --root DIR --records` removes regular `.tm.json` records under that repository's `.tm/results` tree, including tracked records. It preserves trust policy, signing material, content-addressed blobs, and symlinked entries. `tm clean` without `--records` is currently a no-op because rebuildable indexes and staged downloads are not yet implemented.
+`tm clean --root DIR --records` removes regular `.tm.json` records under that repository's `.tm/results` tree, including tracked records. It preserves trust policy, signing material, content-addressed blobs, and local attempt/quarantine state. `tm clean` without `--records` is currently a no-op because rebuildable indexes and staged downloads are not yet implemented.
+
+Local failed-attempt state is shared across worktrees in the user's TestMiser cache directory. An operator can explicitly resolve a quarantined fingerprint or all blocks for one command/context with `tm attempt resolve --repository-id ID --command-fingerprint SHA256 --profile-digest SHA256 --context-digest SHA256 (--fingerprint SHA256 | --all)`. `--all` clears every local attempt marker only within that exact scope.
 
 The wrapper accepts a command after `--` and preserves its argument boundaries:
 
@@ -39,7 +41,7 @@ tm --force -- ./build/unit_tests
 TM_FORCE=1 tm -- ./build/unit_tests
 ```
 
-Every invocation currently runs the command. `--force` and the exact value `TM_FORCE=1` express an explicit rerun request; other `TM_FORCE` values do not enable force mode. The target behavior is to record a result only after a normal successful exit and skip later only when command identity, complete repository inputs, controlled execution context, and trusted provenance still match. Uncertain or invalid state must cause the command to run.
+Native observer runs always execute the command. An approved deterministic public profile can reuse a trusted matching sidecar when its pinned inputs, controlled context, and required output artifacts still verify. `--force` and the exact value `TM_FORCE=1` express an explicit rerun request; other `TM_FORCE` values do not enable force mode. Successful eligible runs can publish signed results. Local failures block the matching fingerprint; a forced failure contradicting an existing trusted result quarantines it until explicit operator resolution. Uncertain or invalid state causes the command to run.
 
 ## Repository layout
 

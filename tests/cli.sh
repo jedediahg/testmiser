@@ -18,6 +18,18 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
 test "$("$tm_bin" --version)" = 'tm 0.1'
+if "$tm_bin" attempt resolve >/dev/null 2>&1; then
+    printf '%s\n' 'attempt resolve accepted missing scope arguments' >&2
+    exit 1
+fi
+mkdir "$tmp_dir/attempt-cache"
+XDG_CACHE_HOME="$tmp_dir/attempt-cache" "$tm_bin" attempt resolve \
+    --repository-id cli-test \
+    --command-fingerprint sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+    --profile-digest sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+    --context-digest sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+    --all >"$tmp_dir/attempt-resolve.out"
+grep -q 'all fingerprints in this command/context' "$tmp_dir/attempt-resolve.out"
 
 "$tm_bin" key generate "$tmp_dir/producer-key.pem" >"$tmp_dir/key.json"
 test "$(stat -c '%a' "$tmp_dir/producer-key.pem")" = 600

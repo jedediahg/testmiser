@@ -197,6 +197,9 @@ static void print_usage(FILE *stream)
     fprintf(stream, "       tm --version\n");
     fprintf(stream, "       tm key generate PRIVATE_KEY_FILE\n");
     fprintf(stream, "                         create a local Ed25519 producer key\n");
+    fprintf(stream, "       tm attempt resolve --repository-id ID --command-fingerprint SHA256\n");
+    fprintf(stream, "                         --profile-digest SHA256 --context-digest SHA256\n");
+    fprintf(stream, "                         (--fingerprint SHA256 | --all)\n");
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
@@ -228,6 +231,58 @@ static int profile_command(int argc, char **argv)
              TM_EXIT_INTERNAL_ERROR : 0;
     tm_profile_free(profile);
     return result;
+}
+
+static int attempt_command(int argc, char **argv)
+{
+    const char *repository_id = NULL, *command = NULL, *profile = NULL;
+    const char *context = NULL, *fingerprint = NULL;
+    int resolve_all = 0, index;
+    struct tm_attempt_state state = {.directory_fd = -1};
+    if (argc < 3 || strcmp(argv[2], "resolve") != 0) goto usage;
+    for (index = 3; index < argc;) {
+        const char *option = argv[index];
+        const char **destination = NULL;
+        if (strcmp(option, "--all") == 0) {
+            if (resolve_all || fingerprint != NULL) goto usage;
+            resolve_all = 1;
+            index++;
+            continue;
+        }
+        if (strcmp(option, "--repository-id") == 0) destination = &repository_id;
+        else if (strcmp(option, "--command-fingerprint") == 0) destination = &command;
+        else if (strcmp(option, "--profile-digest") == 0) destination = &profile;
+        else if (strcmp(option, "--context-digest") == 0) destination = &context;
+        else if (strcmp(option, "--fingerprint") == 0) destination = &fingerprint;
+        else goto usage;
+        if (index + 1 >= argc || *destination != NULL || resolve_all ||
+            argv[index + 1][0] == '\0') goto usage;
+        *destination = argv[index + 1];
+        index += 2;
+    }
+    if (repository_id == NULL || command == NULL || profile == NULL ||
+        context == NULL || (fingerprint == NULL && !resolve_all)) goto usage;
+    if (tm_attempt_state_open_default(repository_id, command, profile,
+                                      context, &state) < 0) {
+        fprintf(stderr, "tm: cannot open local attempt state: %s\n",
+                strerror(errno));
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    if (tm_attempt_state_resolve(&state, resolve_all ? NULL : fingerprint) < 0) {
+        fprintf(stderr, "tm: cannot resolve local attempt state: %s\n",
+                strerror(errno));
+        tm_attempt_state_clear(&state);
+        return TM_EXIT_INTERNAL_ERROR;
+    }
+    printf("tm: local attempt state resolved for %s\n",
+           resolve_all ? "all fingerprints in this command/context" :
+                         fingerprint);
+    tm_attempt_state_clear(&state);
+    return 0;
+usage:
+    fprintf(stderr,
+        "Usage: tm attempt resolve --repository-id ID --command-fingerprint SHA256 --profile-digest SHA256 --context-digest SHA256 (--fingerprint SHA256 | --all)\n");
+    return TM_EXIT_INTERNAL_ERROR;
 }
 
 static int runtime_command(int argc, char **argv)
@@ -518,6 +573,8 @@ int main(int argc, char **argv)
         }
         return 0;
     }
+    if (argc > 1 && strcmp(argv[1], "attempt") == 0)
+        return attempt_command(argc, argv);
     parse_result = parse_options(argc, argv, &options);
     if (parse_result != 0) {
         return parse_result > 0 ? 0 : TM_EXIT_INTERNAL_ERROR;

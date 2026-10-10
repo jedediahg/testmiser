@@ -40,6 +40,11 @@ int main(void)
         fprintf(stderr, "quarantine was not retained across reopen\n");
         goto done;
     }
+    if (tm_attempt_state_resolve(&state, a) < 0 ||
+        tm_attempt_state_blocks(&state, a)) {
+        fprintf(stderr, "explicit fingerprint resolution failed\n");
+        goto done;
+    }
     tm_attempt_state_clear(&state);
     {
         const char *other_command =
@@ -53,6 +58,20 @@ int main(void)
             !state.stale_running || !state.blocked_all ||
             !tm_attempt_state_blocks(&state, a)) {
             fprintf(stderr, "interrupted attempt did not block all fingerprints\n");
+            goto done;
+        }
+        if (tm_attempt_state_resolve(&state, NULL) < 0 ||
+            state.blocked_all || tm_attempt_state_blocks(&state, a)) {
+            fprintf(stderr, "explicit scope resolution failed\n");
+            goto done;
+        }
+        tm_attempt_state_clear(&state);
+        if (tm_attempt_state_open_default("attempt-test", other_command,
+                profile, context, &state) < 0 || state.blocked_all ||
+            state.stale_running || tm_attempt_state_blocks(&state, a)) {
+            fprintf(stderr, "scope resolution did not persist: all=%d stale=%d blocks=%d count=%zu\n",
+                    state.blocked_all, state.stale_running,
+                    tm_attempt_state_blocks(&state, a), state.blocked_count);
             goto done;
         }
     }
