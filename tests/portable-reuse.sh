@@ -217,4 +217,50 @@ if [[ "$(cat "$work/shared-changed.out")" != \
     exit 1
 fi
 
-printf '%s\n' 'Checked-in and shared-store reuse, output restoration, and input invalidation passed.'
+concurrent_id=$id-concurrent
+git clone --quiet --local "$repo_root" "$work/concurrent"
+git -C "$work/concurrent" config user.name 'tm acceptance test'
+git -C "$work/concurrent" config user.email 'tm-acceptance@localhost'
+mkdir -p "$work/concurrent/build/reports"
+cp "$probe" "$work/concurrent/build/portable-reuse-probe"
+chmod 0755 "$work/concurrent/build/portable-reuse-probe"
+printf '%s\n' 'unchanged-input' >"$work/concurrent/build/portable-input.txt"
+run_tm "$work/concurrent" "$work/cache-concurrent-a" \
+    "$signing_key" "$shared_store" "$concurrent_id" \
+    >"$work/concurrent-a.out" 2>"$work/concurrent-a.err" &
+concurrent_a=$!
+run_tm "$work/concurrent" "$work/cache-concurrent-b" \
+    "$signing_key" "$shared_store" "$concurrent_id" \
+    >"$work/concurrent-b.out" 2>"$work/concurrent-b.err" &
+concurrent_b=$!
+status_a=0
+status_b=0
+wait "$concurrent_a" || status_a=$?
+wait "$concurrent_b" || status_b=$?
+if [[ "$status_a" -ne 0 || "$status_b" -ne 0 ]]; then
+    cat "$work/concurrent-a.err" "$work/concurrent-b.err" >&2
+    printf 'Concurrent shared-store runs failed (exit %s, %s).\n' \
+        "$status_a" "$status_b" >&2
+    exit 1
+fi
+run_count=0
+for output in "$work/concurrent-a.out" "$work/concurrent-b.out"; do
+    if [[ -s "$output" ]]; then
+        run_count=$((run_count + 1))
+        if [[ "$(cat "$output")" != "$concurrent_id:unchanged-input" ]]; then
+            printf '%s\n' 'Concurrent run produced unexpected output.' >&2
+            exit 1
+        fi
+    fi
+done
+skip_count=$( (grep -h '^tm: SKIP: trusted result ' \
+    "$work/concurrent-a.err" "$work/concurrent-b.err" || true) | wc -l)
+if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
+      "$(cat "$work/concurrent/build/reports/portable-reuse.txt")" != \
+      "$concurrent_id:unchanged-input" ]]; then
+    cat "$work/concurrent-a.err" "$work/concurrent-b.err" >&2
+    printf '%s\n' 'Shared-store cold-miss coordination did not execute exactly once.' >&2
+    exit 1
+fi
+
+printf '%s\n' 'Checked-in/shared-store reuse, output restoration, invalidation, and cold-miss coordination passed.'
