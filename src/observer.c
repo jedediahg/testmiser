@@ -121,6 +121,7 @@ struct observer_state {
     int saw_outliving_descendant;
     int saw_external_path;
     int saw_unmodeled_error;
+    int saw_context;
     size_t candidate_count;
     size_t unsupported_count;
     long unsupported_syscalls[TM_MAX_UNSUPPORTED];
@@ -897,13 +898,16 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 25:  /* mremap */
     case 26:  /* msync */
     case 28:  /* madvise */
-    case 39:  /* getpid */
     case 79:  /* getcwd is covered by working-directory and cwd-change inputs */
     case 2:   /* open: path and flags captured by note_syscall */
     case 257: /* openat: path and flags captured by note_syscall */
     case 10:  /* mprotect */
     case 11:  /* munmap */
     case 218: /* set_tid_address */
+        return;
+    case 39:  /* getpid is a volatile execution-context observation */
+    case 302: /* prlimit64 can observe or change resource limits */
+        observer.saw_context = 1;
         return;
     case 56:  /* clone: descendants are traced */
         task->shares_descriptors =
@@ -923,7 +927,6 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 60:  /* exit */
     case 231: /* exit_group */
     case 273: /* set_robust_list */
-    case 302: /* prlimit64 */
     case 318: /* getrandom */
         if (number == 318) {
             reject_unsupported_syscall(number);
@@ -1077,6 +1080,10 @@ static void report_reasons(void)
     if (observer.saw_unmodeled_error) {
         fprintf(stderr,
             "tm: reuse rejected: filesystem or descriptor error result is not modeled\n");
+    }
+    if (observer.saw_context) {
+        fprintf(stderr,
+            "tm: reuse rejected: process identity or resource limits are not part of the verified context\n");
     }
     if (observer.saw_unknown_syscall) {
         size_t unsupported_index;
@@ -1386,6 +1393,8 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
         if (observer.saw_unmodeled_error)
             report->ineligibility_reasons |=
                 TM_OBSERVER_INELIGIBLE_UNMODELED_ERROR;
+        if (observer.saw_context)
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_CONTEXT;
         if (!report->stable_input_view)
             report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_UNSTABLE_VIEW;
         report->observation_complete = !observer.saw_observer_failure &&

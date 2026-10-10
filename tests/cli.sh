@@ -13,6 +13,7 @@ path_error_probe=${PATH_ERROR_PROBE:-./build/path_error_probe}
 execveat_probe=${EXECVEAT_PROBE:-./build/execveat_probe}
 getcwd_probe=${GETCWD_PROBE:-./build/getcwd_probe}
 readlink_probe=${READLINK_PROBE:-./build/readlink_probe}
+context_probe=${CONTEXT_PROBE:-./build/context_probe}
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -545,6 +546,14 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         2>"$tmp_dir/readlink-error.err"
     grep -q 'filesystem or descriptor error result is not modeled' \
         "$tmp_dir/readlink-error.err"
+    "$tm_bin" --explain -- "$context_probe" getpid \
+        2>"$tmp_dir/context-getpid.err"
+    grep -q 'process identity or resource limits are not part of the verified context' \
+        "$tmp_dir/context-getpid.err"
+    "$tm_bin" --explain -- "$context_probe" prlimit \
+        2>"$tmp_dir/context-prlimit.err"
+    grep -q 'process identity or resource limits are not part of the verified context' \
+        "$tmp_dir/context-prlimit.err"
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'
