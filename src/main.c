@@ -10,6 +10,7 @@
 #include "tm/input.h"
 #include "tm/backend.h"
 #include "tm/attestation.h"
+#include "tm/attempt.h"
 #include "tm/clean.h"
 #include "tm/context.h"
 #include "tm/identity.h"
@@ -384,6 +385,8 @@ static int find_profile_cache_hit(int repository_fd,
                                   const struct tm_trust_policy *trust_policy,
                                   const char *const *output_roots,
                                   size_t output_root_count,
+                                  const char *const *blocked_fingerprints,
+                                  size_t blocked_count,
                                   char record_id[72])
 {
     struct tm_snapshot *snapshot = NULL;
@@ -414,12 +417,12 @@ static int find_profile_cache_hit(int repository_fd,
     preflight = tm_backend_preflight(profile, runtime_root, repository_root,
                                      snapshot);
     if (preflight != 1) goto done;
-    found = tm_result_find_matching_snapshot_inputs_and_restore(repository_fd,
+    found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(repository_fd,
         repository_fd, repository_fd,
         command_fingerprint, tm_profile_digest(profile),
         tm_profile_runtime_digest(profile), context_fingerprint,
         trust_policy, root_paths, root_descriptors, root_count,
-        output_roots, output_root_count,
+        output_roots, output_root_count, blocked_fingerprints, blocked_count,
         &record, &record_length, record_id);
     if (found == 0) found = 0;
     else found = 1;
@@ -443,6 +446,7 @@ int main(int argc, char **argv)
     struct tm_observed_input_manifest observed_inputs = {0};
     struct tm_output_manifest output_manifest = {0};
     struct tm_lock invocation_lock = {-1};
+    struct tm_attempt_state attempt_state = {.directory_fd = -1};
     EVP_PKEY *signing_key = NULL;
     char **child_environment = NULL;
     const char *force_environment;
@@ -465,6 +469,7 @@ int main(int argc, char **argv)
     int explicit_inputs_unchanged = 1;
     int cache_hit = 0;
     int invocation_lock_acquired = 0;
+    int attempt_state_ready = 0, attempt_started = 0;
     int parse_result;
     int result;
 
@@ -761,11 +766,28 @@ int main(int argc, char **argv)
             fprintf(stderr, "tm: local invocation lock unavailable; concurrent cold runs may duplicate work\n");
         }
     }
+    if (invocation_lock_acquired && profile != NULL &&
+        tm_profile_is_deterministic(profile) &&
+        strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
+        reusable_context && command_fingerprint[0] != '\0' &&
+        trust_policy != NULL && runtime_root != NULL) {
+        if (tm_attempt_state_open_default(tm_profile_repository_id(profile),
+                command_fingerprint, tm_profile_digest(profile),
+                context_fingerprint, &attempt_state) == 0) {
+            attempt_state_ready = 1;
+            if (attempt_state.stale_running && options.explain)
+                fprintf(stderr, "tm: prior interrupted attempt blocks reuse until an eligible success\n");
+        } else if (options.explain) {
+            fprintf(stderr, "tm: local attempt state unavailable; cache reuse is disabled (%s)\n",
+                    strerror(errno));
+        }
+    }
     if (options.force && options.explain)
         fprintf(stderr, "tm: force requested; command will execute\n");
     if (options.explain && options.output_count > 0 && profile == NULL)
         fprintf(stderr, "tm: reuse rejected: --output requires an approved enforced profile\n");
-    if (!options.force && profile != NULL &&
+    if (!options.force && attempt_state_ready &&
+        !attempt_state.blocked_all && profile != NULL &&
         tm_profile_is_deterministic(profile) &&
         strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
         options.input_count == 0 &&
@@ -775,6 +797,8 @@ int main(int argc, char **argv)
         if (find_profile_cache_hit(repository_fd, profile, runtime_root,
                 repository_root, command_fingerprint, context_fingerprint,
                 trust_policy, options.output_paths, options.output_count,
+                (const char *const *)attempt_state.blocked_fingerprints,
+                attempt_state.blocked_count,
                 candidate_id) == 0) {
             cache_hit = 1;
             result = 0;
@@ -787,6 +811,13 @@ int main(int argc, char **argv)
     }
     if (!cache_hit) {
         int backend_result = 0;
+        if (attempt_state_ready && tm_attempt_state_begin(&attempt_state) == 0)
+            attempt_started = 1;
+        else if (attempt_state_ready) {
+            attempt_state_ready = 0;
+            if (options.explain)
+                fprintf(stderr, "tm: could not persist pending attempt; this run will not publish or reuse local evidence\n");
+        }
         backend_used = profile != NULL && runtime_root != NULL ?
             tm_backend_run(profile, runtime_root, repository_root,
                 options.output_paths, options.output_count,
@@ -869,8 +900,42 @@ int main(int argc, char **argv)
         fprintf(stderr,
             "tm: successful command was not eligible for signed publication\n");
     }
+    if (attempt_started) {
+        const char *verification_fingerprint = NULL;
+        char computed_fingerprint[72];
+        int exact = backend_used > 0 && reusable_context &&
+            unavailable_input_count == 0 && explicit_input_count == 0 &&
+            explicit_inputs_unchanged &&
+            tm_observer_report_allows_reuse(&observer_report);
+        if (exact) {
+            struct tm_verification_identity identity = {
+                tm_profile_repository_id(profile), command_fingerprint,
+                working_directory, tm_profile_digest(profile),
+                tm_profile_runtime_digest(profile), context_fingerprint,
+                observed_inputs.items, observed_inputs.count
+            };
+            if (tm_verification_fingerprint(&identity, computed_fingerprint) == 0)
+                verification_fingerprint = computed_fingerprint;
+        }
+        if (result == 0 && verification_fingerprint != NULL) {
+            if (tm_attempt_state_finish(&attempt_state,
+                    TM_ATTEMPT_ELIGIBLE_SUCCESS,
+                    verification_fingerprint) < 0 && options.explain)
+                fprintf(stderr, "tm: could not resolve local attempt state: %s\n",
+                        strerror(errno));
+        } else if (result != 0) {
+            if (tm_attempt_state_finish(&attempt_state, TM_ATTEMPT_FAILED,
+                    verification_fingerprint) < 0 && options.explain)
+                fprintf(stderr, "tm: could not persist failed attempt state: %s\n",
+                        strerror(errno));
+        } else {
+            (void)tm_attempt_state_finish(&attempt_state, TM_ATTEMPT_RUN_ONLY,
+                                          NULL);
+        }
+    }
     tm_observed_input_manifest_clear(&observed_inputs);
     tm_output_manifest_clear(&output_manifest);
+    tm_attempt_state_clear(&attempt_state);
     if (invocation_lock_acquired) tm_lock_release(&invocation_lock);
     if (options.explain)
         for (index = 0; index < unavailable_input_count; index++)

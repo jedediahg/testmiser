@@ -79,6 +79,18 @@ static int test_store(const unsigned char *record, size_t length,
                 &found_length, record_id) != 0 || found_length != length ||
             strcmp(record_id, expected_id) != 0) goto done;
         free(found); found = NULL;
+        {
+            const char *blocked[] = {summary.verification_fingerprint};
+            lookup = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
+                rootfd, rootfd, rootfd,
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                summary.profile_digest,
+                "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                trust, snapshot_paths, snapshot_roots, 1, NULL, 0, blocked, 1,
+                &found, &found_length, record_id);
+            if (lookup != 1 || found != NULL) goto done;
+        }
         lookup = tm_result_find_matching_inputs(rootfd, rootfd,
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 summary.profile_digest,

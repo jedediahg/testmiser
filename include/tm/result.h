@@ -101,6 +101,18 @@ int tm_result_find_matching_snapshot_inputs_and_restore(
     const int *snapshot_root_descriptors, size_t snapshot_root_count,
     const char *const *output_roots, size_t output_root_count,
     unsigned char **record, size_t *record_length, char record_id[72]);
+/* Snapshot lookup that refuses locally failed or quarantined fingerprints
+ * before restoring their outputs. */
+int tm_result_find_matching_snapshot_inputs_and_restore_blocked(
+    int store_root_fd, int repository_root_fd, int blob_store_root_fd,
+    const char *command_fingerprint, const char *profile_digest,
+    const char *runtime_digest, const char *context_digest,
+    const struct tm_trust_policy *trust_policy,
+    const char *const *snapshot_root_paths,
+    const int *snapshot_root_descriptors, size_t snapshot_root_count,
+    const char *const *output_roots, size_t output_root_count,
+    const char *const *blocked_fingerprints, size_t blocked_count,
+    unsigned char **record, size_t *record_length, char record_id[72]);
 
 /* As above, but restore the signed output manifest from the shared blob store
  * before returning a hit. The output roots are bound into command identity. */
