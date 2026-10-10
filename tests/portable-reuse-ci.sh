@@ -21,6 +21,12 @@ if ! command -v bwrap >/dev/null || ! command -v busybox >/dev/null; then
     exit 2
 fi
 sudo chmod u-s "$(command -v bwrap)"
+if ! bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net \
+    --unshare-uts --unshare-cgroup --uid 0 --gid 0 --ro-bind / / \
+    -- /usr/bin/true; then
+    printf '%s\n' 'Hosted runner cannot create the Bubblewrap profile namespaces required by the acceptance test.' >&2
+    exit 1
+fi
 
 make -C "$repo_root" build/tm build/portable-reuse-probe
 sudo install -d -o root -g root -m 0755 "$runtime/bin"
