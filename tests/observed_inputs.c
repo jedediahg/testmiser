@@ -131,9 +131,26 @@ int main(void)
         strcmp(snapshot_digest, manifest.items[0].digest) != 0 ||
         tm_input_capture_file(snapshot_root, "child", snapshot_digest) < 0 ||
         strcmp(snapshot_digest, manifest.items[1].digest) != 0 ||
+        tm_observed_inputs_match_snapshots(manifest.items, manifest.count,
+            snapshot_paths, snapshot_roots, 1) != 0 ||
         tm_input_matches(root, &manifest.items[1]) == 0) {
         fprintf(stderr, "snapshot input manifest did not retain consumed bytes\n");
         goto done;
+    }
+    {
+        struct tm_input_observation altered[2] = {
+            manifest.items[0], manifest.items[1]
+        };
+        char altered_digest[72];
+        memcpy(altered_digest, manifest.items[1].digest,
+               sizeof(altered_digest));
+        altered_digest[7] = altered_digest[7] == '0' ? '1' : '0';
+        altered[1].digest = altered_digest;
+        if (tm_observed_inputs_match_snapshots(altered,
+                manifest.count, snapshot_paths, snapshot_roots, 1) != 1) {
+            fprintf(stderr, "snapshot matcher accepted a changed digest\n");
+            goto done;
+        }
     }
     tm_observed_input_manifest_clear(&manifest);
     close(snapshot_root);
@@ -165,6 +182,8 @@ int main(void)
         tm_input_capture_file_root(snapshot_root, snapshot_digest) < 0 ||
         strcmp(snapshot_digest, manifest.items[0].digest) != 0 ||
         lseek(snapshot_root, 0, SEEK_CUR) != 0 ||
+        tm_observed_inputs_match_snapshots(manifest.items, manifest.count,
+            file_snapshot_paths, snapshot_roots, 1) != 0 ||
         tm_input_matches(root, &manifest.items[0]) == 0) {
         fprintf(stderr, "file-root snapshot manifest lost consumed bytes (count=%zu, digest=%s, snapshot=%s, match=%d)\n",
             manifest.count, manifest.count == 0 ? "-" : manifest.items[0].digest,

@@ -12,6 +12,7 @@
 
 #include "tm/result.h"
 #include "tm/identity.h"
+#include "tm/snapshot.h"
 #include "tm/trust.h"
 
 static int test_store(const unsigned char *record, size_t length,
@@ -24,6 +25,7 @@ static int test_store(const unsigned char *record, size_t length,
     char outside[] = "/tmp/tm-result-outside-XXXXXX";
     char filename[80], path[512];
     struct tm_result_summary summary = {0};
+    struct tm_snapshot *input_snapshot = NULL;
     char record_id[72];
     struct stat st;
     unsigned char *stored = NULL;
@@ -32,7 +34,7 @@ static int test_store(const unsigned char *record, size_t length,
     size_t found_length = 0;
     int rootfd = -1, clonefd = -1, sharedfd = -1, tmfd = -1;
     int resultsfd = -1, commandfd = -1;
-    int verifyfd = -1, fd = -1, result = -1;
+    int verifyfd = -1, snapshot_rootfd = -1, fd = -1, result = -1;
     if (mkdtemp(root) == NULL || mkdtemp(clone) == NULL ||
         mkdtemp(shared_store) == NULL ||
         mkdtemp(outside) == NULL) goto done;
@@ -56,6 +58,40 @@ static int test_store(const unsigned char *record, size_t length,
         memcmp(found, record, length) != 0 || strcmp(record_id, expected_id) != 0)
         goto done;
     free(found); found = NULL;
+    {
+        const char *snapshot_paths[] = {"tests"};
+        int snapshot_roots[1];
+        int lookup;
+        if (tm_snapshot_create(rootfd, snapshot_paths, 1,
+                               &input_snapshot) < 0 ||
+            (snapshot_rootfd = tm_snapshot_open_root_readable(
+                 input_snapshot, 0)) < 0) goto done;
+        snapshot_roots[0] = snapshot_rootfd;
+        fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
+        if (fd < 0 || write(fd, "changed", 7) != 7) goto done;
+        { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+        if (tm_result_find_matching_snapshot_inputs(rootfd,
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                summary.profile_digest,
+                "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                trust, snapshot_paths, snapshot_roots, 1, &found,
+                &found_length, record_id) != 0 || found_length != length ||
+            strcmp(record_id, expected_id) != 0) goto done;
+        free(found); found = NULL;
+        lookup = tm_result_find_matching_inputs(rootfd, rootfd,
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                summary.profile_digest,
+                "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                trust, &found, &found_length, record_id);
+        if (lookup != 1 || found != NULL) goto done;
+        fd = openat(rootfd, "tests/a", O_WRONLY | O_TRUNC | O_CLOEXEC);
+        if (fd < 0) goto done;
+        { int opened = fd; fd = -1; if (close(opened) < 0) goto done; }
+        close(snapshot_rootfd); snapshot_rootfd = -1;
+        tm_snapshot_free(input_snapshot); input_snapshot = NULL;
+    }
     if (tm_result_find_matching_inputs(rootfd, rootfd,
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             summary.profile_digest,
@@ -198,6 +234,8 @@ static int test_store(const unsigned char *record, size_t length,
     result = 0;
 done:
     if (fd >= 0) close(fd);
+    if (snapshot_rootfd >= 0) close(snapshot_rootfd);
+    tm_snapshot_free(input_snapshot);
     free(found);
     if (clonefd >= 0) close(clonefd);
     if (sharedfd >= 0) close(sharedfd);

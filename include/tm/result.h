@@ -81,6 +81,15 @@ int tm_result_find_matching_inputs(
     const char *profile_digest, const char *runtime_digest,
     const char *context_digest, const struct tm_trust_policy *trust_policy,
     unsigned char **record, size_t *record_length, char record_id[72]);
+/* As above, but compare each authenticated candidate's manifest against the
+ * approved input snapshots rather than the mutable checkout. */
+int tm_result_find_matching_snapshot_inputs(
+    int store_root_fd, const char *command_fingerprint,
+    const char *profile_digest, const char *runtime_digest,
+    const char *context_digest, const struct tm_trust_policy *trust_policy,
+    const char *const *root_paths, const int *root_descriptors,
+    size_t root_count, unsigned char **record, size_t *record_length,
+    char record_id[72]);
 
 /* As above, but restore the signed output manifest from the shared blob store
  * before returning a hit. The output roots are bound into command identity. */

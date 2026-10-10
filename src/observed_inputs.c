@@ -304,3 +304,84 @@ int tm_observer_capture_snapshot_inputs(
           compare_inputs);
     return 0;
 }
+
+static const char *candidate_kind(enum tm_input_kind kind)
+{
+    switch (kind) {
+    case TM_INPUT_DIRECTORY: return "directory listing";
+    case TM_INPUT_EXISTS: return "absent path";
+    case TM_INPUT_FILE: return "opened file";
+    case TM_INPUT_SYMLINK: return "symlink";
+    }
+    return NULL;
+}
+
+int tm_observed_inputs_match_snapshots(
+    const struct tm_input_observation *inputs, size_t input_count,
+    const char *const *root_paths, const int *root_descriptors,
+    size_t root_count)
+{
+    struct tm_observed_input_manifest current = {0};
+    size_t index, root_index;
+    int result = -1;
+    if ((input_count > 0 && inputs == NULL) ||
+        (root_count > 0 && (root_paths == NULL || root_descriptors == NULL)) ||
+        root_count > 10000 || input_count > TM_OBSERVER_MAX_CANDIDATES ||
+        (input_count > 0 && root_count == 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (input_count == 0) return 0;
+    current.items = calloc(input_count, sizeof(*current.items));
+    current.owned_fields = calloc(input_count * 2,
+                                  sizeof(*current.owned_fields));
+    if (current.items == NULL || current.owned_fields == NULL) goto done;
+    for (index = 0; index < input_count; index++) {
+        struct tm_observer_candidate candidate = {0};
+        const char *kind = candidate_kind(inputs[index].kind);
+        const char *relative = NULL;
+        size_t longest = 0, selected = SIZE_MAX;
+        if (kind == NULL || inputs[index].path == NULL ||
+            strlen(inputs[index].path) >= sizeof(candidate.path)) {
+            errno = EINVAL;
+            goto done;
+        }
+        strcpy(candidate.kind, kind);
+        strcpy(candidate.path, inputs[index].path);
+        for (root_index = 0; root_index < root_count; root_index++) {
+            const char *candidate_relative;
+            size_t length;
+            if (root_descriptors[root_index] < 0 ||
+                !path_is_canonical(root_paths[root_index]) ||
+                !root_relative_path(candidate.path, root_paths[root_index],
+                                    &candidate_relative)) continue;
+            length = strlen(root_paths[root_index]);
+            if (length > longest) {
+                longest = length;
+                relative = candidate_relative;
+                selected = root_index;
+            }
+        }
+        if (selected == SIZE_MAX || capture_one(&current,
+                root_descriptors[selected], &candidate, relative) < 0) {
+            result = 1;
+            goto done;
+        }
+    }
+    qsort(current.items, current.count, sizeof(*current.items), compare_inputs);
+    if (current.count != input_count) {
+        result = 1;
+        goto done;
+    }
+    for (index = 0; index < input_count; index++) {
+        if (strcmp(current.items[index].path, inputs[index].path) != 0 ||
+            !input_equal(&current.items[index], &inputs[index])) {
+            result = 1;
+            goto done;
+        }
+    }
+    result = 0;
+done:
+    tm_observed_input_manifest_clear(&current);
+    return result;
+}

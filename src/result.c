@@ -16,6 +16,7 @@
 #include "tm/digest.h"
 #include "tm/json.h"
 #include "tm/input.h"
+#include "tm/observed_inputs.h"
 #include "tm/result.h"
 #include "tm/tm.h"
 #include "tm/trust.h"
@@ -1173,7 +1174,10 @@ int tm_result_find_in_store(int store_root_fd, int repository_root_fd,
 }
 
 static int result_find_matching_inputs(
-    int store_root_fd, int repository_root_fd, const char *command_fingerprint,
+    int store_root_fd, int repository_root_fd,
+    const char *const *snapshot_root_paths,
+    const int *snapshot_root_descriptors, size_t snapshot_root_count,
+    const char *command_fingerprint,
     const char *profile_digest, const char *runtime_digest,
     const char *context_digest, const struct tm_trust_policy *trust_policy,
     int blob_store_root_fd, const char *const *output_roots,
@@ -1186,7 +1190,10 @@ static int result_find_matching_inputs(
     struct dirent *verification_entry;
     size_t visited = 0, visited_directories = 0;
 
-    if (store_root_fd < 0 || repository_root_fd < 0 ||
+    if (store_root_fd < 0 ||
+        (snapshot_root_paths == NULL && repository_root_fd < 0) ||
+        (snapshot_root_paths != NULL &&
+         (snapshot_root_count > 0 && snapshot_root_descriptors == NULL)) ||
         (output_root_count > 0 &&
          (blob_store_root_fd < 0 || output_roots == NULL)) ||
         tm_output_roots_validate(output_roots, output_root_count) < 0 ||
@@ -1286,8 +1293,15 @@ static int result_find_matching_inputs(
                                          "%s.tm.json", candidate_id + 7)) >= 0 &&
                 (size_t)name_length < sizeof(expected_name) &&
                 strcmp(entry->d_name, expected_name) == 0 &&
-                tm_result_verify_inputs_match(candidate, candidate_length,
-                    trust_policy, repository_root_fd, candidate_id) == 0)
+                (snapshot_root_paths == NULL ?
+                    tm_result_verify_inputs_match(candidate, candidate_length,
+                        trust_policy, repository_root_fd, candidate_id) == 0 :
+                    (tm_result_verify_trusted(candidate, candidate_length,
+                        trust_policy, summary.verification_fingerprint,
+                        candidate_id) == 0 &&
+                     tm_observed_inputs_match_snapshots(summary.inputs,
+                        summary.input_count, snapshot_root_paths,
+                        snapshot_root_descriptors, snapshot_root_count) == 0)))
                 candidate_valid = 1;
             if (candidate_valid && summary.output_count == 0)
                 matches = output_root_count == 0;
@@ -1335,8 +1349,25 @@ int tm_result_find_matching_inputs(
     unsigned char **record, size_t *record_length, char record_id[72])
 {
     return result_find_matching_inputs(store_root_fd, repository_root_fd,
-        command_fingerprint, profile_digest, runtime_digest, context_digest,
+        NULL, NULL, 0, command_fingerprint, profile_digest, runtime_digest,
+        context_digest,
         trust_policy, -1, NULL, 0, record, record_length, record_id);
+}
+
+int tm_result_find_matching_snapshot_inputs(
+    int store_root_fd, const char *command_fingerprint,
+    const char *profile_digest, const char *runtime_digest,
+    const char *context_digest, const struct tm_trust_policy *trust_policy,
+    const char *const *root_paths, const int *root_descriptors,
+    size_t root_count, unsigned char **record, size_t *record_length,
+    char record_id[72])
+{
+    const char *const empty_roots[] = {NULL};
+    return result_find_matching_inputs(store_root_fd, -1,
+        root_paths == NULL ? empty_roots : root_paths,
+        root_descriptors, root_count, command_fingerprint, profile_digest,
+        runtime_digest, context_digest, trust_policy, -1, NULL, 0, record,
+        record_length, record_id);
 }
 
 int tm_result_find_matching_inputs_and_restore(
@@ -1348,7 +1379,8 @@ int tm_result_find_matching_inputs_and_restore(
     unsigned char **record, size_t *record_length, char record_id[72])
 {
     return result_find_matching_inputs(store_root_fd, repository_root_fd,
-        command_fingerprint, profile_digest, runtime_digest, context_digest,
+        NULL, NULL, 0, command_fingerprint, profile_digest, runtime_digest,
+        context_digest,
         trust_policy, blob_store_root_fd, output_roots, output_root_count,
         record, record_length, record_id);
 }

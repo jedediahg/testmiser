@@ -110,9 +110,9 @@ $(BUILD_DIR)/test_json: tests/json.c src/json.c include/tm/json.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/json.c src/json.c $(LDLIBS)
 
-$(BUILD_DIR)/test_result: tests/result.c src/result.c src/outputs.c src/input.c src/identity.c src/trust.c src/json.c src/verification.c src/attestation.c src/digest.c include/tm/result.h include/tm/outputs.h include/tm/input.h include/tm/identity.h include/tm/trust.h
+$(BUILD_DIR)/test_result: tests/result.c src/result.c src/observed_inputs.c src/observer_report.c src/outputs.c src/input.c src/identity.c src/trust.c src/json.c src/verification.c src/attestation.c src/digest.c src/snapshot.c include/tm/result.h include/tm/observed_inputs.h include/tm/observer.h include/tm/outputs.h include/tm/input.h include/tm/identity.h include/tm/trust.h include/tm/snapshot.h
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/result.c src/result.c src/outputs.c src/input.c src/identity.c src/trust.c src/json.c src/verification.c src/attestation.c src/digest.c $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/result.c src/result.c src/observed_inputs.c src/observer_report.c src/outputs.c src/input.c src/identity.c src/trust.c src/json.c src/verification.c src/attestation.c src/digest.c src/snapshot.c $(LDLIBS)
 
 $(BUILD_DIR)/test_outputs: tests/outputs.c src/outputs.c include/tm/outputs.h
 	@mkdir -p $(BUILD_DIR)

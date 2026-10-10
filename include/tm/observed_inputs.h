@@ -22,6 +22,13 @@ int tm_observer_capture_snapshot_inputs(
     const struct tm_observer_report *report,
     const char *const *root_paths, const int *root_descriptors,
     size_t root_count, struct tm_observed_input_manifest *manifest);
+/* Compare an existing result manifest to approved-root snapshot contents.
+ * Return 0 for a match, 1 for changed/unsafe input, and -1 for bad arguments
+ * or resource failures. */
+int tm_observed_inputs_match_snapshots(
+    const struct tm_input_observation *inputs, size_t input_count,
+    const char *const *root_paths, const int *root_descriptors,
+    size_t root_count);
 void tm_observed_input_manifest_clear(
     struct tm_observed_input_manifest *manifest);
 
