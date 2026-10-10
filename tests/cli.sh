@@ -179,6 +179,15 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'
+"$tm_bin" --force --explain -- /bin/true 2>"$tmp_dir/force-option.err"
+grep -q 'tm: force requested; command will execute' "$tmp_dir/force-option.err"
+TM_FORCE=1 "$tm_bin" --explain -- /bin/true 2>"$tmp_dir/force-env.err"
+grep -q 'tm: force requested; command will execute' "$tmp_dir/force-env.err"
+TM_FORCE=01 "$tm_bin" --explain -- /bin/true 2>"$tmp_dir/force-other.err"
+if grep -q 'tm: force requested; command will execute' "$tmp_dir/force-other.err"; then
+    printf '%s\n' 'non-exact TM_FORCE value enabled force mode' >&2
+    exit 1
+fi
 
 set +e
 "$tm_bin" --unknown-option -- sh -c 'exit 0' \

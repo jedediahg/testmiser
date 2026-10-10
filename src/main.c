@@ -62,6 +62,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "Run a verification command (cache reuse is disabled during observer development).\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
+    fprintf(stream, "  TM_FORCE=1 has the same effect as --force\n");
     fprintf(stream, "  --explain  explain why the command is running\n");
     fprintf(stream, "  --profile FILE       select an approved profile (currently uncached)\n");
     fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
@@ -170,6 +171,7 @@ int main(int argc, char **argv)
     struct tm_profile *profile = NULL;
     struct tm_trust_policy *trust_policy = NULL;
     char **child_environment = NULL;
+    const char *force_environment;
     char *repository_root = NULL;
     struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
     char explicit_input_digests[TM_MAX_EXPLICIT_INPUTS][72];
@@ -187,6 +189,9 @@ int main(int argc, char **argv)
     if (parse_result != 0) {
         return parse_result > 0 ? 0 : TM_EXIT_INTERNAL_ERROR;
     }
+    force_environment = getenv("TM_FORCE");
+    if (force_environment != NULL && strcmp(force_environment, "1") == 0)
+        options.force = 1;
 
     if (options.trust_policy_path != NULL &&
         tm_trust_policy_load(options.trust_policy_path, &trust_policy) < 0) {
@@ -243,7 +248,8 @@ int main(int argc, char **argv)
             }
         }
     }
-    (void) options.force;
+    if (options.force && options.explain)
+        fprintf(stderr, "tm: force requested; command will execute\n");
     result = tm_observe_and_run(&argv[options.command_index], options.explain,
                                 child_environment, repository_root);
     for (index = 0; index < explicit_input_count; index++) {

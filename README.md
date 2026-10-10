@@ -28,9 +28,10 @@ The wrapper accepts a command after `--` and preserves its argument boundaries:
 tm --root . --input tests/fixtures/risk.json -- pytest tests/test_risk.py
 tm -- go test ./pkg/risk
 tm --force -- ./build/unit_tests
+TM_FORCE=1 tm -- ./build/unit_tests
 ```
 
-Every invocation currently runs the command. The target behavior is to record a result only after a normal successful exit and skip later only when command identity, complete repository inputs, controlled execution context, and trusted provenance still match. Uncertain or invalid state must cause the command to run.
+Every invocation currently runs the command. `--force` and the exact value `TM_FORCE=1` express an explicit rerun request; other `TM_FORCE` values do not enable force mode. The target behavior is to record a result only after a normal successful exit and skip later only when command identity, complete repository inputs, controlled execution context, and trusted provenance still match. Uncertain or invalid state must cause the command to run.
 
 ## Repository layout
 
