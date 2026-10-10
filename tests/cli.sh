@@ -554,6 +554,10 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
         2>"$tmp_dir/context-prlimit.err"
     grep -q 'process identity or resource limits are not part of the verified context' \
         "$tmp_dir/context-prlimit.err"
+    "$tm_bin" --explain -- "$context_probe" set_tid_address \
+        2>"$tmp_dir/context-set-tid-address.err"
+    grep -q 'process identity or resource limits are not part of the verified context' \
+        "$tmp_dir/context-set-tid-address.err"
 fi
 
 "$tm_bin" --force -- sh -c 'exit 0'

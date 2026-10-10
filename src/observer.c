@@ -903,8 +903,8 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 257: /* openat: path and flags captured by note_syscall */
     case 10:  /* mprotect */
     case 11:  /* munmap */
-    case 218: /* set_tid_address */
         return;
+    case 218: /* set_tid_address returns the volatile caller TID */
     case 39:  /* getpid is a volatile execution-context observation */
     case 302: /* prlimit64 can observe or change resource limits */
         observer.saw_context = 1;

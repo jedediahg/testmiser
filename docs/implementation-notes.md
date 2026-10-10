@@ -6,7 +6,7 @@ The observer treats `getcwd` as covered by the command's working-directory ident
 
 The observer models direct `readlink` path probes alongside `readlinkat`: successful calls contribute symlink candidates, `ENOENT`/`ENOTDIR` contribute absence candidates, and other errors block eligibility.
 
-The observer rejects `getpid` and `prlimit64` observations until process identity and resource limits are included in an enforced verification context; both can influence command behavior and are not normalized by the current profile backend.
+The observer rejects `getpid`, `set_tid_address`, and `prlimit64` observations until process identity and resource limits are included in an enforced verification context; these can expose volatile process identity or resource limits that the current profile backend does not normalize.
 
 Bubblewrap launcher and preflight children close all inherited descriptors above standard input/output/error with `close_range`, falling back to `/proc/self/fd` enumeration and the open-file limit. A backend integration test covers a non-close-on-exec descriptor above 65,535 when the host limit allows it.
 
