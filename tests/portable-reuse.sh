@@ -96,6 +96,7 @@ run_tm() {
     local checkout=$1 cache=$2
     local shared_store_for_run=${4:-}
     local run_id=${5:-$id}
+    local coordination_mode=${6:-available}
     local -a key_option=()
     local -a store_option=()
     mkdir -m 0700 -p "$cache"
@@ -111,6 +112,7 @@ run_tm() {
         cd "$checkout"
         env -u TM_SHARED_STORE -u TM_FORCE -u TM_ACCEPTANCE_SIGNING_KEY \
             "${store_option[@]}" XDG_CACHE_HOME="$cache" \
+            TM_COORDINATION_MODE="$coordination_mode" \
             TM_RUNTIME_ROOT="$runtime_root" \
             "$tm_bin" --root . --profile "$profile" \
             --trust-policy "$trust_policy" "${key_option[@]}" \
@@ -361,11 +363,11 @@ cp "$probe" "$work/concurrent/build/portable-reuse-probe"
 chmod 0755 "$work/concurrent/build/portable-reuse-probe"
 printf '%s\n' 'unchanged-input' >"$work/concurrent/build/portable-input.txt"
 run_tm "$work/concurrent" "$work/cache-concurrent-a" \
-    "$signing_key" "$shared_store" "$concurrent_id" \
+    "$signing_key" "$shared_store" "$concurrent_id" strict \
     >"$work/concurrent-a.out" 2>"$work/concurrent-a.err" &
 concurrent_a=$!
 run_tm "$work/concurrent" "$work/cache-concurrent-b" \
-    "$signing_key" "$shared_store" "$concurrent_id" \
+    "$signing_key" "$shared_store" "$concurrent_id" strict \
     >"$work/concurrent-b.out" 2>"$work/concurrent-b.err" &
 concurrent_b=$!
 status_a=0

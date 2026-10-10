@@ -21,7 +21,8 @@ record. A linked worktree with checked-in evidence removed must also skip from
 the producer's per-user cache, exercising same-user agent worktrees. The test
 repeats producer/consumer reuse, invalidation, and state reversion with
 `TM_SHARED_STORE`, then launches two equivalent cold requests concurrently
-and requires exactly one execution. Set `TM_ACCEPTANCE_SHARED_STORE` to an
+with strict coordination and requires exactly one execution plus a waiter hit.
+Set `TM_ACCEPTANCE_SHARED_STORE` to an
 existing absolute directory to test a mounted store; the script creates and
 removes a unique private subdirectory there. By default it creates a private
 temporary store. The gate also checks that `TM_COORDINATION_MODE=strict`
