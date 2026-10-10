@@ -115,9 +115,11 @@ int tm_backend_executable_identity(char **resolved_path, char digest[72])
         (before.st_mode & (S_ISUID | S_ISGID)) != 0 ||
         before.st_uid != 0 || (before.st_mode & 0222) != 0) {
         if (getenv("TM_BACKEND_DEBUG") != NULL)
-            fprintf(stderr, "tm backend trust: unsafe executable %s (euid=%lu uid=%lu mode=%o)\n",
-                    path, (unsigned long)geteuid(),
+            fprintf(stderr, "tm backend trust: unsafe executable %s (euid=%lu root=%d setid=%o uid=%lu writable=%o mode=%o)\n",
+                    path, (unsigned long)geteuid(), geteuid() == 0,
+                    (unsigned)(before.st_mode & (S_ISUID | S_ISGID)),
                     (unsigned long)before.st_uid,
+                    (unsigned)(before.st_mode & 0222),
                     (unsigned)(before.st_mode & 07777));
         free(path);
         errno = EPERM;
