@@ -26,8 +26,7 @@ int main(void)
     char failed_input_path[4200] = {0};
     char mprotect_input_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
-    char *output_command[] = {"/bin/sh", "-c",
-        "mkdir -p build/tm-observer-output-test/sub && printf data > build/tm-observer-output-test/sub/report", NULL};
+    char *output_command[] = {"./build/output_probe", NULL};
     char *traversal_command[] = {"/bin/sh", "-c",
         "printf escape > build/tm-observer-output-test/../tm-observer-output-escape", NULL};
     char *failed_command[] = {"./build/failing_read_probe",
