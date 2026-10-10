@@ -16,7 +16,7 @@ make clean    # remove generated build files
 
 Build requires a C11 compiler, GNU Make, and OpenSSL development headers/libraries (EVP, `-lcrypto`).
 
-The current executable is a transparent process wrapper with a Linux x86-64 `ptrace` observer prototype, OpenSSL-backed SHA-256/Ed25519 primitives, command and verification fingerprints, bounded JSON/JCS support, signed output-free v2 records, and operator-managed trust policy. `tm validate [--root DIR] [--trust-policy FILE] [--require-trust]` checks stored record structure and reports trust status without running tests. `--profile FILE --trust-policy FILE` validates the closed profile-v1 format and requires operator approval for its repository ID and canonical digest. An approved profile still runs uncached: backend enforcement, complete dependency/input validation, output restoration, lookup, and skips are not implemented.
+The current executable is a transparent process wrapper with a Linux x86-64 `ptrace` observer prototype, OpenSSL-backed SHA-256/Ed25519 primitives, command, context, and verification fingerprint helpers, bounded JSON/JCS support, signed output-free v2 records, and operator-managed trust policy. `tm validate [--root DIR] [--trust-policy FILE] [--require-trust]` checks stored record structure and reports trust status without running tests. `tm profile digest FILE` prints the repository ID and canonical profile-v1 digest. `--profile FILE --trust-policy FILE` validates the closed profile format and requires operator approval for its repository ID and digest. An approved profile still runs uncached: backend enforcement, complete dependency/input validation, output restoration, lookup, and skips are not implemented.
 
 ## Intended usage
 
