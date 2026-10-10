@@ -238,9 +238,23 @@ static int build_arguments(struct argument_vector *arguments,
     capacity += command_count;
     if (init_arguments(arguments, capacity) < 0) return -1;
 
-    if (push_argument(arguments, BWRAP_PATH) < 0 ||
-        push_argument(arguments, "--unshare-all") < 0 ||
-        push_argument(arguments, "--die-with-parent") < 0 ||
+    if (push_argument(arguments, BWRAP_PATH) < 0)
+        return -1;
+    if (strcmp(tm_profile_backend_contract(profile),
+               "bubblewrap-linux-x86_64-v2") == 0) {
+        if (push_argument(arguments, "--unshare-user") < 0 ||
+            push_argument(arguments, "--unshare-ipc") < 0 ||
+            push_argument(arguments, "--unshare-pid") < 0 ||
+            push_argument(arguments, "--unshare-net") < 0 ||
+            push_argument(arguments, "--unshare-uts") < 0 ||
+            push_argument(arguments, "--unshare-cgroup") < 0 ||
+            push_pair(arguments, "--uid", "0") < 0 ||
+            push_pair(arguments, "--gid", "0") < 0)
+            return -1;
+    } else if (push_argument(arguments, "--unshare-all") < 0) {
+        return -1;
+    }
+    if (push_argument(arguments, "--die-with-parent") < 0 ||
         push_pair(arguments, "--ro-bind", runtime_root) < 0 ||
         push_argument(arguments, "/") < 0 ||
         push_pair(arguments, "--ro-bind", repository_root) < 0 ||

@@ -19,9 +19,33 @@ temporary_overlay=no
 readonly_runtime=no
 hidden_metadata=no
 clean_environment=no
+user_namespace=no
+namespace_uid=no
+namespace_gid=no
+namespace_ipc=no
+namespace_pid=no
+namespace_net=no
+namespace_uts=no
+namespace_cgroup=no
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
     case "$1" in
         --unshare-all) unshare_all=yes ;;
+        --unshare-user) user_namespace=yes ;;
+        --unshare-ipc) namespace_ipc=yes ;;
+        --unshare-pid) namespace_pid=yes ;;
+        --unshare-net) namespace_net=yes ;;
+        --unshare-uts) namespace_uts=yes ;;
+        --unshare-cgroup) namespace_cgroup=yes ;;
+        --uid)
+            test "$#" -ge 2 && [ "$2" = 0 ] || fail 'namespace uid is not 0'
+            namespace_uid=yes
+            shift
+            ;;
+        --gid)
+            test "$#" -ge 2 && [ "$2" = 0 ] || fail 'namespace gid is not 0'
+            namespace_gid=yes
+            shift
+            ;;
         --die-with-parent) die_with_parent=yes ;;
         --overlay-src) overlay_source=yes ;;
         --tmp-overlay) temporary_overlay=yes ;;
@@ -40,7 +64,19 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
     shift
 done
 test "$#" -gt 1 || fail 'missing wrapped command'
-test "$unshare_all" = yes || fail '--unshare-all'
+if [ "$user_namespace" = yes ] || [ "$namespace_uid" = yes ] ||
+    [ "$namespace_gid" = yes ]; then
+    test "$user_namespace" = yes || fail '--unshare-user'
+    test "$namespace_ipc" = yes || fail '--unshare-ipc'
+    test "$namespace_pid" = yes || fail '--unshare-pid'
+    test "$namespace_net" = yes || fail '--unshare-net'
+    test "$namespace_uts" = yes || fail '--unshare-uts'
+    test "$namespace_cgroup" = yes || fail '--unshare-cgroup'
+    test "$namespace_uid" = yes || fail '--uid 0'
+    test "$namespace_gid" = yes || fail '--gid 0'
+else
+    test "$unshare_all" = yes || fail 'namespace isolation is missing'
+fi
 test "$die_with_parent" = yes || fail '--die-with-parent'
 test "$overlay_source" = yes || fail '--overlay-src'
 test "$temporary_overlay" = yes || fail '--tmp-overlay'

@@ -8,6 +8,7 @@ struct tm_profile;
 int tm_profile_load(const char *path, struct tm_profile **output);
 void tm_profile_free(struct tm_profile *profile);
 const char *tm_profile_repository_id(const struct tm_profile *profile);
+const char *tm_profile_backend_contract(const struct tm_profile *profile);
 const char *tm_profile_digest(const struct tm_profile *profile);
 const char *tm_profile_runtime_digest(const struct tm_profile *profile);
 size_t tm_profile_scratch_root_count(const struct tm_profile *profile);

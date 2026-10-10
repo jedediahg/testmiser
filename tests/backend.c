@@ -27,7 +27,7 @@ int main(void)
 {
     static const char profile_json[] =
         "{\"schema_version\":1,\"repository_id\":\"backend-test\","
-        "\"backend_contract\":\"bubblewrap-linux-x86_64-v1\","
+        "\"backend_contract\":\"bubblewrap-linux-x86_64-v2\","
         "\"runtime_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\","
         "\"workspace_path\":\"/workspace\",\"deterministic\":true,"
         "\"privacy_class\":\"public\",\"environment\":{},"

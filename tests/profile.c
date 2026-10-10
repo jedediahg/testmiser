@@ -64,7 +64,9 @@ int main(void)
         "\"scratch_roots\":[\"/tmp\"]}";
     struct tm_profile *profile = NULL;
     char path[] = "/tmp/tm-profile-test-XXXXXX";
+    char valid_v2[sizeof(valid)];
     char digest[72];
+    char *backend_name;
     int fd = mkstemp(path), status = 1;
     if (fd < 0) return 1;
     close(fd);
@@ -87,6 +89,19 @@ int main(void)
     profile = NULL;
     if (tm_profile_load(path, &profile) < 0 ||
         strcmp(digest, tm_profile_digest(profile)) != 0) goto done;
+    tm_profile_free(profile);
+    profile = NULL;
+    memcpy(valid_v2, valid, sizeof(valid));
+    backend_name = strstr(valid_v2, "bubblewrap-linux-x86_64-v1");
+    if (backend_name == NULL) goto done;
+    backend_name[strlen("bubblewrap-linux-x86_64-v")] = '2';
+    if (save(path, valid_v2) < 0 || tm_profile_load(path, &profile) < 0 ||
+        strcmp(tm_profile_backend_contract(profile),
+               "bubblewrap-linux-x86_64-v2") != 0 ||
+        strcmp(tm_profile_digest(profile), digest) == 0) {
+        fprintf(stderr, "profile did not preserve backend contract versioning\n");
+        goto done;
+    }
     tm_profile_free(profile);
     profile = NULL;
     if (save(path, nondeterministic) < 0 || tm_profile_load(path, &profile) < 0 ||

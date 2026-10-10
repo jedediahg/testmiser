@@ -219,7 +219,9 @@ int tm_profile_load(const char *path, struct tm_profile **output)
     privacy = string_value(profile->document, "privacy_class");
     if (tm_json_integer_value(get(profile->document, "schema_version")) != 1 ||
         !valid_repository_id(repository_id) ||
-        backend == NULL || strcmp(backend, "bubblewrap-linux-x86_64-v1") ||
+        backend == NULL ||
+        (strcmp(backend, "bubblewrap-linux-x86_64-v1") != 0 &&
+         strcmp(backend, "bubblewrap-linux-x86_64-v2") != 0) ||
         workspace == NULL || strcmp(workspace, "/workspace") ||
         !valid_digest(string_value(profile->document, "runtime_digest")) ||
         tm_json_typeof(get(profile->document, "deterministic")) !=
@@ -264,6 +266,12 @@ void tm_profile_free(struct tm_profile *profile)
 const char *tm_profile_repository_id(const struct tm_profile *profile)
 {
     return profile == NULL ? NULL : profile->repository_id;
+}
+
+const char *tm_profile_backend_contract(const struct tm_profile *profile)
+{
+    return profile == NULL ? NULL :
+        string_value(profile->document, "backend_contract");
 }
 
 const char *tm_profile_digest(const struct tm_profile *profile)
