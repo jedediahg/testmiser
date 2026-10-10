@@ -20,7 +20,7 @@ if ! command -v bwrap >/dev/null || ! command -v busybox >/dev/null; then
     printf '%s\n' 'Install bubblewrap and busybox-static before running this acceptance test.' >&2
     exit 2
 fi
-sudo chmod a-w,u-s "$(command -v bwrap)"
+sudo chmod u-s "$(command -v bwrap)"
 
 make -C "$repo_root" build/tm build/portable-reuse-probe
 sudo install -d -o root -g root -m 0755 "$runtime/bin"
