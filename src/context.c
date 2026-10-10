@@ -6,6 +6,13 @@
 #include "tm/context.h"
 #include "tm/digest.h"
 
+static int add_length(size_t *total, size_t length)
+{
+    if (length > SIZE_MAX - *total) return -1;
+    *total += length;
+    return 0;
+}
+
 static int valid_environment(const struct tm_json_value *environment)
 {
     size_t i;
@@ -42,6 +49,7 @@ int tm_context_fingerprint(const struct tm_json_value *environment,
     size_t object_prefix_length = sizeof(object_prefix) - 1;
     size_t separator_length = sizeof(separator) - 1;
     size_t identity_length;
+    size_t offset = 0;
     char hex[65];
     int result = -1;
 
@@ -54,25 +62,28 @@ int tm_context_fingerprint(const struct tm_json_value *environment,
                              &environment_length) < 0 ||
         tm_json_canonicalize(execution_context, &context_json,
                              &context_length) < 0) goto done;
-    if (environment_length > SIZE_MAX - context_length - prefix_length -
-                              object_prefix_length - separator_length - 1) {
+    identity_length = 0;
+    if (add_length(&identity_length, prefix_length) < 0 ||
+        add_length(&identity_length, object_prefix_length) < 0 ||
+        add_length(&identity_length, environment_length) < 0 ||
+        add_length(&identity_length, separator_length) < 0 ||
+        add_length(&identity_length, context_length) < 0 ||
+        add_length(&identity_length, 1) < 0) {
         errno = EOVERFLOW;
         goto done;
     }
-    identity_length = prefix_length + object_prefix_length + environment_length +
-                      separator_length + context_length + 1;
     identity = malloc(identity_length);
     if (identity == NULL) goto done;
-    memcpy(identity, prefix, prefix_length);
-    memcpy(identity + prefix_length, object_prefix, object_prefix_length);
-    memcpy(identity + prefix_length + object_prefix_length, environment_json,
-           environment_length);
-    memcpy(identity + prefix_length + object_prefix_length + environment_length,
-           separator, separator_length);
-    memcpy(identity + prefix_length + object_prefix_length + environment_length +
-           separator_length, context_json,
-           context_length);
-    identity[identity_length - 1] = '}';
+    memcpy(identity + offset, prefix, prefix_length); offset += prefix_length;
+    memcpy(identity + offset, object_prefix, object_prefix_length);
+    offset += object_prefix_length;
+    memcpy(identity + offset, environment_json, environment_length);
+    offset += environment_length;
+    memcpy(identity + offset, separator, separator_length);
+    offset += separator_length;
+    memcpy(identity + offset, context_json, context_length);
+    offset += context_length;
+    identity[offset++] = '}';
     if (tm_sha256_bytes(identity, identity_length, hex) < 0) goto done;
     memcpy(output, "sha256:", 7);
     memcpy(output + 7, hex, sizeof(hex));
