@@ -14,4 +14,4 @@ TM_ACCEPTANCE_SIGNING_KEY=/absolute/path/producer.pem \
   tests/portable-reuse.sh
 ```
 
-The script needs working Bubblewrap user/network namespaces and ptrace. It fails if the producer is ineligible or the consumer executes instead of reusing. The private key is used only in the producer invocation; the consumer receives only the profile and public trust policy.
+The script needs working Bubblewrap user/network namespaces and ptrace. It fails if the producer is ineligible or the consumer executes instead of reusing. The CI wrapper reports a warning and skips this acceptance test when its runner cannot create the required namespaces; that warning is not evidence of portable reuse. The private key is used only in the producer invocation; the consumer receives only the profile and public trust policy.
