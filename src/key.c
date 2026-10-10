@@ -13,6 +13,16 @@
 #include "tm/attestation.h"
 #include "tm/key.h"
 
+static int reject_key_password(char *buffer, int size, int writing,
+                               void *userdata)
+{
+    (void)buffer;
+    (void)size;
+    (void)writing;
+    (void)userdata;
+    return 0;
+}
+
 int tm_key_generate(const char *path)
 {
     EVP_PKEY_CTX *context = NULL;
@@ -84,4 +94,45 @@ done:
     EVP_PKEY_CTX_free(context);
     errno = saved;
     return result;
+}
+
+int tm_key_load_private(const char *path, EVP_PKEY **key)
+{
+    struct stat status;
+    BIO *bio = NULL;
+    EVP_PKEY *loaded = NULL;
+    int descriptor = -1, saved;
+    if (path == NULL || path[0] == '\0' || key == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    *key = NULL;
+    descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) return -1;
+    if (fstat(descriptor, &status) < 0) goto done;
+    if (!S_ISREG(status.st_mode) || status.st_uid != getuid() ||
+        (status.st_mode & 077) != 0 || status.st_nlink != 1 ||
+        status.st_size <= 0 || status.st_size > 1024 * 1024) {
+        errno = EACCES;
+        goto done;
+    }
+    bio = BIO_new_fd(descriptor, BIO_CLOSE);
+    if (bio == NULL) { errno = ENOMEM; goto done; }
+    descriptor = -1;
+    loaded = PEM_read_bio_PrivateKey(bio, NULL, reject_key_password, NULL);
+    if (loaded == NULL || EVP_PKEY_is_a(loaded, "ED25519") != 1) {
+        errno = EINVAL;
+        goto done;
+    }
+    *key = loaded;
+    loaded = NULL;
+    BIO_free(bio);
+    return 0;
+done:
+    saved = errno;
+    BIO_free(bio);
+    if (descriptor >= 0) close(descriptor);
+    EVP_PKEY_free(loaded);
+    errno = saved;
+    return -1;
 }

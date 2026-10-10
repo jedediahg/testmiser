@@ -53,6 +53,7 @@ int main(void)
     int descriptor = -1;
     int encoded_length;
     int status = 1;
+    uint64_t producer_epoch = 0;
     char revoked_json[2048];
 
     key = EVP_PKEY_new_raw_private_key_ex(NULL, "ED25519", NULL, seed,
@@ -79,6 +80,9 @@ int main(void)
     descriptor = -1;
     if (write_policy(path, json) < 0 ||
         tm_trust_policy_load(path, &policy) != 0 ||
+        tm_trust_policy_producer_epoch(policy, "sample", profile, key_id,
+                                       &producer_epoch) != 0 ||
+        producer_epoch != 2 ||
         tm_trust_policy_authorize(policy, "sample", profile, key_id, 2, 2,
                                   &resolved) != 0 ||
         resolved == NULL) goto done;

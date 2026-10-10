@@ -13,7 +13,7 @@ OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
 all: $(TARGET)
 
-test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_DIR)/descriptor_dup_probe $(BUILD_DIR)/clone3_probe $(BUILD_DIR)/cwd_probe $(BUILD_DIR)/path_error_probe $(BUILD_DIR)/network_syscall_probe $(BUILD_DIR)/execveat_probe $(BUILD_DIR)/getcwd_probe $(BUILD_DIR)/readlink_probe $(BUILD_DIR)/context_probe $(BUILD_DIR)/test_digest $(BUILD_DIR)/test_attestation $(BUILD_DIR)/test_identity $(BUILD_DIR)/test_context $(BUILD_DIR)/test_input $(BUILD_DIR)/test_verification $(BUILD_DIR)/test_json $(BUILD_DIR)/test_result $(BUILD_DIR)/test_outputs $(BUILD_DIR)/test_trust $(BUILD_DIR)/test_profile $(BUILD_DIR)/test_repo $(BUILD_DIR)/test_lock $(BUILD_DIR)/test_local_store $(BUILD_DIR)/test_runtime $(BUILD_DIR)/test_backend $(BUILD_DIR)/test_observer_report $(BUILD_DIR)/test_observer_start $(BUILD_DIR)/test_observed_inputs
+test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_DIR)/descriptor_dup_probe $(BUILD_DIR)/clone3_probe $(BUILD_DIR)/cwd_probe $(BUILD_DIR)/path_error_probe $(BUILD_DIR)/network_syscall_probe $(BUILD_DIR)/execveat_probe $(BUILD_DIR)/getcwd_probe $(BUILD_DIR)/readlink_probe $(BUILD_DIR)/context_probe $(BUILD_DIR)/test_digest $(BUILD_DIR)/test_attestation $(BUILD_DIR)/test_identity $(BUILD_DIR)/test_context $(BUILD_DIR)/test_input $(BUILD_DIR)/test_verification $(BUILD_DIR)/test_json $(BUILD_DIR)/test_result $(BUILD_DIR)/test_outputs $(BUILD_DIR)/test_trust $(BUILD_DIR)/test_profile $(BUILD_DIR)/test_repo $(BUILD_DIR)/test_lock $(BUILD_DIR)/test_local_store $(BUILD_DIR)/test_runtime $(BUILD_DIR)/test_backend $(BUILD_DIR)/test_observer_report $(BUILD_DIR)/test_observer_start $(BUILD_DIR)/test_observed_inputs $(BUILD_DIR)/test_key
 	TM_BIN=./$(TARGET) OPENAT2_PROBE=./$(BUILD_DIR)/openat2_probe OPEN_MODE_PROBE=./$(BUILD_DIR)/open_mode_probe DESCRIPTOR_DUP_PROBE=./$(BUILD_DIR)/descriptor_dup_probe CLONE3_PROBE=./$(BUILD_DIR)/clone3_probe CWD_PROBE=./$(BUILD_DIR)/cwd_probe PATH_ERROR_PROBE=./$(BUILD_DIR)/path_error_probe EXECVEAT_PROBE=./$(BUILD_DIR)/execveat_probe GETCWD_PROBE=./$(BUILD_DIR)/getcwd_probe READLINK_PROBE=./$(BUILD_DIR)/readlink_probe CONTEXT_PROBE=./$(BUILD_DIR)/context_probe sh tests/cli.sh
 	./$(BUILD_DIR)/test_digest
 	./$(BUILD_DIR)/test_attestation
@@ -34,6 +34,7 @@ test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_
 	./$(BUILD_DIR)/test_observer_report
 	./$(BUILD_DIR)/test_observer_start
 	./$(BUILD_DIR)/test_observed_inputs
+	./$(BUILD_DIR)/test_key
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -89,6 +90,10 @@ $(BUILD_DIR)/test_digest: tests/digest.c src/digest.c include/tm/digest.h
 $(BUILD_DIR)/test_attestation: tests/attestation.c src/attestation.c src/digest.c include/tm/attestation.h include/tm/digest.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/attestation.c src/attestation.c src/digest.c $(LDLIBS)
+
+$(BUILD_DIR)/test_key: tests/key.c src/key.c src/attestation.c src/digest.c include/tm/key.h include/tm/attestation.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/key.c src/key.c src/attestation.c src/digest.c $(LDLIBS)
 
 $(BUILD_DIR)/test_identity: tests/identity.c src/identity.c src/digest.c include/tm/identity.h include/tm/digest.h
 	@mkdir -p $(BUILD_DIR)

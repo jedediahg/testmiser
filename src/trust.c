@@ -357,6 +357,42 @@ int tm_trust_policy_approves_profile(const struct tm_trust_policy *policy,
     return -1;
 }
 
+int tm_trust_policy_producer_epoch(const struct tm_trust_policy *policy,
+                                   const char *repository_id,
+                                   const char *profile_digest,
+                                   const char *key_id, uint64_t *epoch)
+{
+    const struct tm_json_value *repositories;
+    size_t index;
+    if (policy == NULL || repository_id == NULL ||
+        !valid_digest(profile_digest) || !valid_digest(key_id) ||
+        epoch == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    repositories = field(policy->document, "repositories");
+    for (index = 0; index < tm_json_size(repositories); index++) {
+        const struct tm_json_value *repository =
+            tm_json_array_get(repositories, index);
+        const char *candidate = string_field(repository, "repository_id");
+        if (candidate != NULL && strcmp(candidate, repository_id) == 0) {
+            uint64_t minimum = tm_json_integer_value(
+                field(repository, "minimum_trust_epoch"));
+            EVP_PKEY *public_key = NULL;
+            int authorized;
+            if (minimum == UINT64_MAX) { errno = EINVAL; return -1; }
+            authorized = tm_trust_policy_authorize(policy, repository_id,
+                profile_digest, key_id, minimum, 2, &public_key);
+            EVP_PKEY_free(public_key);
+            if (authorized < 0) return -1;
+            *epoch = minimum;
+            return 0;
+        }
+    }
+    errno = EACCES;
+    return -1;
+}
+
 enum tm_trust_status tm_trust_policy_classify(
     const struct tm_trust_policy *policy, const char *repository_id,
     const char *profile_digest, const char *key_id, uint64_t trust_epoch,

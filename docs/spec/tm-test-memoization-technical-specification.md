@@ -774,7 +774,7 @@ The existing wrapper contract remains `tm [--force] [--explain] -- COMMAND [ARGU
 Target commands for the first portable release (not claims of current implementation):
 
 ```text
-tm [--root DIR] [--profile FILE] [--trust-policy FILE] [--input FILE] [--output PATH] [--force] [--explain] -- COMMAND [ARGUMENT ...]
+tm [--root DIR] [--profile FILE] [--trust-policy FILE] [--signing-key FILE] [--input FILE] [--output PATH] [--force] [--explain] -- COMMAND [ARGUMENT ...]
 tm profile digest FILE
 tm runtime digest ROOTFS_DIR
 tm runtime verify PROFILE TRUST_POLICY ROOTFS_DIR
@@ -783,6 +783,8 @@ tm clean [--root DIR] [--records]
 ```
 
 `--input` and `--output` are repeatable, canonical relative declarations; repeated singleton options or missing values return 125. An approved profile may be selected by external operator configuration instead of a flag. Profiles are declarative versioned data, never executable checkout hooks.
+
+`--signing-key FILE` is producer-only. The file MUST be a regular, non-symlink Ed25519 private key owned by the invoking user, mode 0600 or stricter, and approved for the selected repository/profile by the trust policy. The signer stays in the supervisor; if the enforced backend cannot run the command, signing mode returns 125 instead of running the child natively. Signing does not affect the verification fingerprint. The current implementation publishes only successful eligible output-free runs; output capture/restoration and cache lookup remain separate gates.
 
 With an approved profile, each explicit `--input` and `--output` MUST be equal to or nested below a corresponding profile `input_roots` or `output_roots` entry. A declaration outside those roots is invalid configuration (125) and the child is not launched. Profile roots define permissions; command declarations remain part of command identity.
 

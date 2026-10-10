@@ -781,7 +781,7 @@ int tm_backend_run(const struct tm_profile *profile,
     }
     if (explain)
         fprintf(stderr,
-            "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; cache reuse remains disabled\n");
+            "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; lookup remains disabled\n");
     result = run_bubblewrap(&arguments, explain, report, command,
                             working_directory, command_result);
     if (result > 0 && *command_result == 0 &&
@@ -821,7 +821,7 @@ int tm_backend_run(const struct tm_profile *profile,
                     strerror(errno));
         } else if (explain) {
             fprintf(stderr,
-                "tm: captured %zu observed inputs from pinned snapshots (diagnostic only; reuse remains disabled)\n",
+                "tm: captured %zu observed inputs from pinned snapshots (lookup remains disabled)\n",
                 observed_inputs->count);
         }
     }

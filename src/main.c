@@ -9,6 +9,7 @@
 
 #include "tm/input.h"
 #include "tm/backend.h"
+#include "tm/attestation.h"
 #include "tm/clean.h"
 #include "tm/context.h"
 #include "tm/identity.h"
@@ -18,9 +19,11 @@
 #include "tm/observer.h"
 #include "tm/profile.h"
 #include "tm/repo.h"
+#include "tm/result.h"
 #include "tm/runtime.h"
 #include "tm/tm.h"
 #include "tm/trust.h"
+#include "tm/verification.h"
 #include "tm/validate.h"
 
 #define TM_MAX_EXPLICIT_INPUTS 128
@@ -31,6 +34,7 @@ struct options {
     int explain;
     const char *profile_path;
     const char *trust_policy_path;
+    const char *signing_key_path;
     const char *root_path;
     const char *input_paths[TM_MAX_EXPLICIT_INPUTS];
     size_t input_count;
@@ -197,6 +201,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "  --explain  explain why the command is running\n");
     fprintf(stream, "  --profile FILE       select an approved profile (currently uncached)\n");
     fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
+    fprintf(stream, "  --signing-key FILE   sign eligible controlled-profile successes\n");
     fprintf(stream, "  --root DIR           set repository root (default: nearest .git)\n");
     fprintf(stream, "  --input PATH         declare a repository-relative input file\n");
     fprintf(stream, "  --output PATH        declare a repository-relative output root\n");
@@ -275,6 +280,7 @@ static int parse_options(int argc, char **argv, struct options *options)
     options->explain = 0;
     options->profile_path = NULL;
     options->trust_policy_path = NULL;
+    options->signing_key_path = NULL;
     options->root_path = NULL;
     options->input_count = 0;
     options->output_count = 0;
@@ -327,12 +333,15 @@ static int parse_options(int argc, char **argv, struct options *options)
                 options->output_paths[options->output_count++] = output_path;
         } else if (strcmp(argv[index], "--profile") == 0 ||
                    strcmp(argv[index], "--trust-policy") == 0 ||
-                   strcmp(argv[index], "--root") == 0) {
+                   strcmp(argv[index], "--root") == 0 ||
+                   strcmp(argv[index], "--signing-key") == 0) {
             const char *option = argv[index];
             const char **destination = strcmp(option, "--profile") == 0 ?
                 &options->profile_path :
                 (strcmp(option, "--trust-policy") == 0 ?
-                 &options->trust_policy_path : &options->root_path);
+                 &options->trust_policy_path :
+                 (strcmp(option, "--root") == 0 ? &options->root_path :
+                  &options->signing_key_path));
             if (*destination != NULL || index + 1 >= argc ||
                 strcmp(argv[index + 1], "--") == 0) {
                 fprintf(stderr, "tm: missing or repeated value for %s\n", option);
@@ -371,16 +380,25 @@ int main(int argc, char **argv)
     struct tm_trust_policy *trust_policy = NULL;
     struct tm_observer_report observer_report = {0};
     struct tm_observed_input_manifest observed_inputs = {0};
+    EVP_PKEY *signing_key = NULL;
     char **child_environment = NULL;
     const char *force_environment;
     const char *runtime_root = NULL;
     char *repository_root = NULL;
+    char *working_directory = NULL;
+    char command_fingerprint[72] = {0};
+    char context_fingerprint[72] = {0};
+    char signing_key_id[72] = {0};
+    uint64_t signing_epoch = 0;
     struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
     char explicit_input_digests[TM_MAX_EXPLICIT_INPUTS][72];
     char *explicit_input_targets[TM_MAX_EXPLICIT_INPUTS] = {0};
     const char *unavailable_inputs[TM_MAX_EXPLICIT_INPUTS];
     size_t explicit_input_count = 0, unavailable_input_count = 0, index;
     int repository_fd = -1;
+    int backend_used = 0;
+    int reusable_context = 0;
+    int explicit_inputs_unchanged = 1;
     int parse_result;
     int result;
 
@@ -415,6 +433,13 @@ int main(int argc, char **argv)
     force_environment = getenv("TM_FORCE");
     if (force_environment != NULL && strcmp(force_environment, "1") == 0)
         options.force = 1;
+
+    if (options.signing_key_path != NULL &&
+        (options.profile_path == NULL || options.trust_policy_path == NULL)) {
+        fprintf(stderr,
+                "tm: --signing-key requires --profile and --trust-policy\n");
+        return TM_EXIT_INTERNAL_ERROR;
+    }
 
     if (options.trust_policy_path != NULL &&
         tm_trust_policy_load(options.trust_policy_path, &trust_policy) < 0) {
@@ -462,12 +487,28 @@ int main(int argc, char **argv)
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
         }
+        if (options.signing_key_path != NULL) {
+            if (tm_key_load_private(options.signing_key_path,
+                                    &signing_key) < 0 ||
+                tm_ed25519_key_id(signing_key, signing_key_id) < 0 ||
+                tm_trust_policy_producer_epoch(trust_policy,
+                    tm_profile_repository_id(profile),
+                    tm_profile_digest(profile), signing_key_id,
+                    &signing_epoch) < 0) {
+                fprintf(stderr,
+                    "tm: signing requires a protected key approved for this profile\n");
+                EVP_PKEY_free(signing_key);
+                tm_profile_free(profile);
+                tm_trust_policy_free(trust_policy);
+                return TM_EXIT_INTERNAL_ERROR;
+            }
+        }
         if (options.explain) {
             if (!tm_profile_is_deterministic(profile))
                 fprintf(stderr, "tm: reuse rejected: profile does not declare deterministic results\n");
             if (strcmp(tm_profile_privacy_class(profile), "secret-dependent") == 0)
                 fprintf(stderr, "tm: reuse rejected: secret-dependent profiles are not portable\n");
-            fprintf(stderr, "tm: RUN: profile approved; reuse remains disabled until complete observation and signed record publication are integrated\n");
+            fprintf(stderr, "tm: RUN: profile approved; reuse remains disabled until trusted lookup, output restoration, and complete equivalence are integrated\n");
         }
         child_environment = profile_environment(profile);
         if (child_environment == NULL) {
@@ -476,14 +517,13 @@ int main(int argc, char **argv)
             tm_trust_policy_free(trust_policy);
             return TM_EXIT_INTERNAL_ERROR;
         }
-        if (options.explain) {
+        if (options.explain || signing_key != NULL) {
             struct tm_json_value *environment =
                 environment_json(child_environment);
             struct tm_json_value *execution_context = NULL;
             struct tm_json_value *profile_context = NULL;
             char *bubblewrap_path = NULL;
             char bubblewrap_digest[72];
-            char context_fingerprint[72];
             if (environment == NULL ||
                 tm_backend_executable_identity(&bubblewrap_path,
                                                bubblewrap_digest) < 0 ||
@@ -496,9 +536,22 @@ int main(int argc, char **argv)
                                       context_fingerprint) < 0) {
                 fprintf(stderr,
                     "tm: reuse rejected: trusted Bubblewrap executable and Linux execution context could not be fingerprinted\n");
+                if (signing_key != NULL) {
+                    free(bubblewrap_path);
+                    tm_json_free(profile_context);
+                    tm_json_free(execution_context);
+                    tm_json_free(environment);
+                    free_environment(child_environment);
+                    EVP_PKEY_free(signing_key);
+                    tm_profile_free(profile);
+                    tm_trust_policy_free(trust_policy);
+                    return TM_EXIT_INTERNAL_ERROR;
+                }
             } else {
-                fprintf(stderr, "tm: context fingerprint: %s (diagnostic only; reuse remains disabled)\n",
-                        context_fingerprint);
+                reusable_context = 1;
+                if (options.explain)
+                    fprintf(stderr, "tm: context fingerprint: %s (lookup remains disabled)\n",
+                            context_fingerprint);
             }
             free(bubblewrap_path);
             tm_json_free(profile_context);
@@ -510,13 +563,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "tm: invalid repository root: %s\n",
                 options.root_path == NULL ? "." : options.root_path);
         free_environment(child_environment);
+        EVP_PKEY_free(signing_key);
         tm_profile_free(profile);
         tm_trust_policy_free(trust_policy);
         return TM_EXIT_INTERNAL_ERROR;
     }
-    if (options.explain && profile != NULL) {
+    if ((options.explain || signing_key != NULL) && profile != NULL) {
         char *current_directory = getcwd(NULL, 0);
-        char *working_directory = current_directory == NULL ? NULL :
+        working_directory = current_directory == NULL ? NULL :
             tm_repo_relative_path(repository_root, current_directory);
         if (working_directory == NULL) {
             fprintf(stderr,
@@ -529,18 +583,28 @@ int main(int argc, char **argv)
                 options.input_paths, options.input_count,
                 options.output_paths, options.output_count
             };
-            char command_fingerprint[72];
-            if (tm_command_fingerprint(&identity, command_fingerprint) == 0)
-                fprintf(stderr, "tm: command fingerprint: %s\n",
-                        command_fingerprint);
-            else
+            if (tm_command_fingerprint(&identity, command_fingerprint) == 0) {
+                if (options.explain)
+                    fprintf(stderr, "tm: command fingerprint: %s\n",
+                            command_fingerprint);
+            } else {
                 fprintf(stderr,
                         "tm: reuse rejected: command identity is not portable\n");
+            }
         }
-        free(working_directory);
         free(current_directory);
+        if (signing_key != NULL &&
+            (working_directory == NULL || command_fingerprint[0] == '\0')) {
+            free(working_directory);
+            free_environment(child_environment);
+            EVP_PKEY_free(signing_key);
+            tm_profile_free(profile);
+            tm_trust_policy_free(trust_policy);
+            free(repository_root);
+            return TM_EXIT_INTERNAL_ERROR;
+        }
     }
-    if (options.input_count > 0) {
+    if (options.input_count > 0 || signing_key != NULL) {
         repository_fd = open(repository_root,
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         for (index = 0; index < options.input_count; index++) {
@@ -585,13 +649,17 @@ int main(int argc, char **argv)
         fprintf(stderr, "tm: reuse rejected: --output requires an approved enforced profile\n");
     {
         int backend_result = 0;
-        int backend_used = profile != NULL && runtime_root != NULL ?
+        backend_used = profile != NULL && runtime_root != NULL ?
             tm_backend_run(profile, runtime_root, repository_root,
                 options.output_paths, options.output_count,
                 &argv[options.command_index], options.explain,
                 &observer_report, &observed_inputs, &backend_result) : 0;
         if (backend_used > 0) {
             result = backend_result;
+        } else if (signing_key != NULL) {
+            fprintf(stderr,
+                "tm: trusted signing requires the controlled profile backend; command was not launched\n");
+            result = TM_EXIT_INTERNAL_ERROR;
         } else {
             result = tm_observe_and_run(&argv[options.command_index],
                 options.explain, child_environment, repository_root,
@@ -617,11 +685,49 @@ int main(int argc, char **argv)
                     candidate->external ? "<external>" : candidate->path);
         }
     for (index = 0; index < explicit_input_count; index++) {
-        if (tm_input_matches(repository_fd, &explicit_inputs[index]) != 0 &&
-            options.explain)
+        if (tm_input_matches(repository_fd, &explicit_inputs[index]) != 0) {
+            explicit_inputs_unchanged = 0;
+            if (options.explain)
+                fprintf(stderr,
+                        "tm: reuse rejected: declared input changed or became unsafe: %s\n",
+                        explicit_inputs[index].path);
+        }
+    }
+    if (signing_key != NULL && result == 0 && !options.force &&
+        tm_profile_is_deterministic(profile) &&
+        strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
+        backend_used > 0 && reusable_context &&
+        options.output_count == 0 && unavailable_input_count == 0 &&
+        explicit_input_count == 0 && explicit_inputs_unchanged &&
+        tm_observer_report_allows_reuse(&observer_report)) {
+        struct tm_verification_identity identity = {
+            tm_profile_repository_id(profile), command_fingerprint,
+            working_directory, tm_profile_digest(profile),
+            tm_profile_runtime_digest(profile), context_fingerprint,
+            observed_inputs.items, observed_inputs.count
+        };
+        char verification_fingerprint[72];
+        unsigned char *record = NULL;
+        size_t record_length = 0;
+        char record_id[72];
+        if (tm_verification_fingerprint(&identity,
+                                        verification_fingerprint) == 0 &&
+            tm_result_create(&identity, signing_epoch, signing_key,
+                &record, &record_length, record_id) == 0 &&
+            tm_result_store(repository_fd, record, record_length,
+                            record_id) == 0) {
+            if (options.explain)
+                fprintf(stderr, "tm: signed result published: %s\n",
+                        record_id);
+        } else if (options.explain) {
             fprintf(stderr,
-                    "tm: reuse rejected: declared input changed or became unsafe: %s\n",
-                    explicit_inputs[index].path);
+                "tm: successful command was not published (%s)\n",
+                strerror(errno));
+        }
+        free(record);
+    } else if (signing_key != NULL && options.explain && result == 0) {
+        fprintf(stderr,
+            "tm: successful command was not eligible for signed publication\n");
     }
     tm_observed_input_manifest_clear(&observed_inputs);
     if (options.explain)
@@ -633,6 +739,8 @@ int main(int argc, char **argv)
     for (index = 0; index < explicit_input_count; index++)
         free(explicit_input_targets[index]);
     free_environment(child_environment);
+    free(working_directory);
+    EVP_PKEY_free(signing_key);
     free(repository_root);
     tm_profile_free(profile);
     tm_trust_policy_free(trust_policy);

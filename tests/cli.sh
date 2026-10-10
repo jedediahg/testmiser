@@ -28,6 +28,14 @@ if "$tm_bin" key generate "$tmp_dir/producer-key.pem" >/dev/null 2>&1; then
     printf '%s\n' 'key generation overwrote an existing private key' >&2
     exit 1
 fi
+set +e
+"$tm_bin" --signing-key "$tmp_dir/producer-key.pem" -- /bin/true \
+    2>"$tmp_dir/signing-config.err"
+signing_status=$?
+set -e
+test "$signing_status" -eq 125
+grep -q -- '--signing-key requires --profile and --trust-policy' \
+    "$tmp_dir/signing-config.err"
 cmp "$tmp_dir/producer-key.pem" "$tmp_dir/producer-key.saved"
 
 mkdir -p "$tmp_dir/repo/.tm/results"

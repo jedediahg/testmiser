@@ -36,6 +36,12 @@ int tm_trust_policy_approves_profile(const struct tm_trust_policy *policy,
                                      const char *repository_id,
                                      const char *profile_digest);
 
+/* Return the minimum approved epoch for an authorized local producer key. */
+int tm_trust_policy_producer_epoch(const struct tm_trust_policy *policy,
+                                   const char *repository_id,
+                                   const char *profile_digest,
+                                   const char *key_id, uint64_t *epoch);
+
 /* Classify a claim and return its public key when that key is provisioned,
  * even if the profile or epoch is no longer approved. */
 enum tm_trust_status tm_trust_policy_classify(
