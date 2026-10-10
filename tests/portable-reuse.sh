@@ -120,6 +120,36 @@ run_tm() {
     )
 }
 
+assert_metadata_redacted() {
+    local record_root=$1
+    local record
+    local -a records=()
+    shift
+    local value
+    if [[ ! -d "$record_root" ]]; then
+        printf 'Portable result records were not created: %s\n' \
+            "$record_root" >&2
+        return 1
+    fi
+    mapfile -d '' -t records < <(
+        find "$record_root" -type f -name '*.tm.json' -print0
+    )
+    if ((${#records[@]} == 0)); then
+        printf 'Portable result records were not found: %s\n' \
+            "$record_root" >&2
+        return 1
+    fi
+    for value in "$@"; do
+        for record in "${records[@]}"; do
+            if grep -F -q -- "$value" "$record"; then
+                printf 'Portable result metadata contains host value: %s\n' \
+                    "$value" >&2
+                return 1
+            fi
+        done
+    done
+}
+
 if ! (
     unset GITHUB_RUN_ID GITHUB_WORKSPACE GITHUB_TOKEN
     export CI_JOB_ID=gitlab-producer-job CI_PIPELINE_ID=gitlab-producer-pipeline
@@ -137,10 +167,9 @@ if [[ "$(cat "$work/producer.out")" != "$id:unchanged-input" ||
     exit 1
 fi
 grep -q '^tm: RUN:' "$work/producer.err"
-if grep -R -F "$work/producer" "$work/producer/.tm/results"; then
-    printf '%s\n' 'Portable result metadata contains its producer checkout path.' >&2
-    exit 1
-fi
+assert_metadata_redacted "$work/producer/.tm/results" \
+    "$work/producer" "$work/gitlab-host-home" \
+    gitlab-producer-job gitlab-producer-pipeline gitlab-test-token
 git -C "$work/producer" add -f .tm/results .tm/blobs \
     build/portable-input.txt build/portable-reuse-probe
 git -C "$work/producer" commit --quiet -m 'Add portable reuse acceptance evidence'
@@ -230,8 +259,15 @@ cp "$probe" "$work/shared-producer/build/portable-reuse-probe"
 chmod 0755 "$work/shared-producer/build/portable-reuse-probe"
 printf '%s\n' 'unchanged-input' \
     >"$work/shared-producer/build/portable-input.txt"
-if ! run_tm "$work/shared-producer" "$work/cache-shared-producer" \
-    "$signing_key" "$shared_store" "$shared_id" \
+if ! (
+    unset CI_JOB_ID CI_PIPELINE_ID CI_PROJECT_DIR CI_JOB_TOKEN
+    export GITHUB_RUN_ID=github-producer-run
+    export GITHUB_WORKSPACE="$work/shared-producer" \
+        GITHUB_TOKEN=github-producer-token
+    export HOME="$work/github-producer-host-home"
+    run_tm "$work/shared-producer" "$work/cache-shared-producer" \
+        "$signing_key" "$shared_store" "$shared_id"
+) \
     >"$work/shared-producer.out" \
     2>"$work/shared-producer.err"; then
     cat "$work/shared-producer.err" >&2
@@ -245,10 +281,9 @@ if [[ "$(cat "$work/shared-producer.out")" != \
     printf '%s\n' 'Shared-store producer did not create the expected output.' >&2
     exit 1
 fi
-if grep -R -F "$work/shared-producer" "$work/shared-producer/.tm/results"; then
-    printf '%s\n' 'Shared-store result metadata contains its producer checkout path.' >&2
-    exit 1
-fi
+assert_metadata_redacted "$work/shared-producer/.tm/results" \
+    "$work/shared-producer" "$work/github-producer-host-home" \
+    github-producer-run github-producer-token
 git -C "$work/shared-producer" add -f \
     build/portable-input.txt build/portable-reuse-probe
 git -C "$work/shared-producer" commit --quiet -m \
@@ -259,8 +294,15 @@ git -C "$work/shared-consumer" rm --quiet --ignore-unmatch -r \
 mkdir -p "$work/shared-consumer/build/reports"
 printf '%s\n' 'stale output' \
     >"$work/shared-consumer/build/reports/stale.txt"
-if ! run_tm "$work/shared-consumer" "$work/cache-shared-consumer" \
-    '' "$shared_store" "$shared_id" >"$work/shared-consumer.out" \
+if ! (
+    unset GITHUB_RUN_ID GITHUB_WORKSPACE GITHUB_TOKEN
+    export CI_JOB_ID=gitlab-consumer-job CI_PIPELINE_ID=gitlab-consumer-pipeline
+    export CI_PROJECT_DIR="$work/shared-consumer" \
+        CI_JOB_TOKEN=gitlab-consumer-token
+    export HOME="$work/gitlab-consumer-host-home"
+    run_tm "$work/shared-consumer" "$work/cache-shared-consumer" \
+        '' "$shared_store" "$shared_id"
+) >"$work/shared-consumer.out" \
     2>"$work/shared-consumer.err"; then
     cat "$work/shared-consumer.err" >&2
     exit 1
