@@ -277,6 +277,20 @@ const char *tm_profile_runtime_digest(const struct tm_profile *profile)
         string_value(profile->document, "runtime_digest");
 }
 
+size_t tm_profile_scratch_root_count(const struct tm_profile *profile)
+{
+    return profile == NULL ? 0 :
+        tm_json_size(get(profile->document, "scratch_roots"));
+}
+
+const char *tm_profile_scratch_root(const struct tm_profile *profile,
+                                    size_t index)
+{
+    if (profile == NULL) return NULL;
+    return tm_json_string_value(tm_json_array_get(
+        get(profile->document, "scratch_roots"), index));
+}
+
 static int path_within_roots(const struct tm_json_value *roots,
                              const char *path)
 {

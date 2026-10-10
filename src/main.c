@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "tm/input.h"
+#include "tm/backend.h"
 #include "tm/clean.h"
 #include "tm/identity.h"
 #include "tm/outputs.h"
@@ -90,7 +91,7 @@ static int verify_selected_runtime(const struct tm_profile *profile,
     }
     if (explain)
         fprintf(stderr,
-            "tm: runtime identity matches the approved profile; portable backend is not enforced, so reuse is disabled\n");
+            "tm: runtime identity matches the approved profile\n");
     return 0;
 }
 
@@ -279,6 +280,7 @@ int main(int argc, char **argv)
     struct tm_observer_report observer_report = {0};
     char **child_environment = NULL;
     const char *force_environment;
+    const char *runtime_root = NULL;
     char *repository_root = NULL;
     struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
     char explicit_input_digests[TM_MAX_EXPLICIT_INPUTS][72];
@@ -312,6 +314,7 @@ int main(int argc, char **argv)
         return TM_EXIT_INTERNAL_ERROR;
     }
     if (options.profile_path != NULL) {
+        runtime_root = getenv("TM_RUNTIME_ROOT");
         if (tm_profile_load(options.profile_path, &profile) < 0) {
             fprintf(stderr, "tm: invalid profile: %s\n", options.profile_path);
             tm_trust_policy_free(trust_policy);
@@ -355,7 +358,7 @@ int main(int argc, char **argv)
                 fprintf(stderr, "tm: reuse rejected: profile does not declare deterministic results\n");
             if (strcmp(tm_profile_privacy_class(profile), "secret-dependent") == 0)
                 fprintf(stderr, "tm: reuse rejected: secret-dependent profiles are not portable\n");
-            fprintf(stderr, "tm: RUN: profile approved and its environment applied; portable backend is not enforced, so reuse is disabled\n");
+            fprintf(stderr, "tm: RUN: profile approved; reuse remains disabled until complete observation and signed record publication are integrated\n");
         }
         child_environment = profile_environment(profile);
         if (child_environment == NULL) {
@@ -442,9 +445,21 @@ int main(int argc, char **argv)
         fprintf(stderr, "tm: force requested; command will execute\n");
     if (options.explain && options.output_count > 0 && profile == NULL)
         fprintf(stderr, "tm: reuse rejected: --output requires an approved enforced profile\n");
-    result = tm_observe_and_run(&argv[options.command_index], options.explain,
-                                child_environment, repository_root,
-                                &observer_report);
+    {
+        int backend_result = 0;
+        int backend_used = profile != NULL && runtime_root != NULL ?
+            tm_backend_run(profile, runtime_root, repository_root,
+                options.output_paths, options.output_count,
+                &argv[options.command_index], options.explain,
+                &observer_report, &backend_result) : 0;
+        if (backend_used > 0) {
+            result = backend_result;
+        } else {
+            result = tm_observe_and_run(&argv[options.command_index],
+                options.explain, child_environment, repository_root,
+                &observer_report);
+        }
+    }
     if (options.explain)
         for (index = 0; index < observer_report.candidate_count; index++) {
             const struct tm_observer_candidate *candidate =

@@ -2,6 +2,7 @@
 set -eu
 
 tm_bin=${TM_BIN:-./build/tm}
+repo_directory=$(pwd)
 openat2_probe=${OPENAT2_PROBE:-./build/openat2_probe}
 open_mode_probe=${OPEN_MODE_PROBE:-./build/open_mode_probe}
 network_syscall_probe=${NETWORK_SYSCALL_PROBE:-./build/network_syscall_probe}
@@ -245,10 +246,34 @@ chmod 600 "$tmp_dir/runtime-policy.json"
     | grep -q "runtime identity verified: $runtime_digest"
 TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$tm_bin" \
     --profile "$tmp_dir/runtime-profile.json" \
-    --trust-policy "$tmp_dir/runtime-policy.json" --explain -- /bin/true \
+    --trust-policy "$tmp_dir/runtime-policy.json" --explain -- \
+    sh -c 'printf ran > "$1"' sh "$tmp_dir/runtime-fallback-ran" \
     2>"$tmp_dir/runtime-selected.err"
 grep -q 'runtime identity matches the approved profile' \
     "$tmp_dir/runtime-selected.err"
+grep -q 'Bubblewrap profile view is unavailable' \
+    "$tmp_dir/runtime-selected.err"
+test "$(cat "$tmp_dir/runtime-fallback-ran")" = ran
+sed 's/"output_roots":\[\]/"output_roots":["build\/reports"]/' \
+    "$tmp_dir/runtime-profile.json" >"$tmp_dir/output-profile.json"
+output_profile_digest=$("$tm_bin" profile digest \
+    "$tmp_dir/output-profile.json" | cut -d ' ' -f 2)
+printf '{"schema_version":1,"repositories":[{"repository_id":"sample","minimum_trust_epoch":1,"allowed_semantics":[2],"profiles":["%s"],"keys":[],"revoked_key_ids":[]}]}\n' \
+    "$output_profile_digest" >"$tmp_dir/output-policy.json"
+chmod 600 "$tmp_dir/output-policy.json"
+mkdir -p "$tmp_dir/profile-output-root"
+(
+    cd "$tmp_dir/profile-output-root"
+    TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$repo_directory/$tm_bin" \
+        --root . --profile "$tmp_dir/output-profile.json" \
+        --trust-policy "$tmp_dir/output-policy.json" \
+        --output build/reports --explain -- \
+        sh -c 'mkdir -p build/reports; printf preserved >build/reports/report.txt' \
+        2>"$tmp_dir/output-fallback.err"
+)
+test "$(cat "$tmp_dir/profile-output-root/build/reports/report.txt")" = preserved
+grep -q 'declared output restoration is not integrated' \
+    "$tmp_dir/output-fallback.err"
 printf 'different runtime\n' >"$tmp_dir/runtime-root/bin/tool"
 set +e
 TM_RUNTIME_ROOT="$tmp_dir/runtime-root" "$tm_bin" \
