@@ -12,9 +12,13 @@ awk '
         if (block == "verify") verify = 1
         if (block == "acceptance") acceptance = 1
     }
-    END { if (!verify || !acceptance) exit 1 }
+    /docs\/spec\/\*\*/ {
+        if (block == "verify") verify_spec = 1
+        if (block == "acceptance") acceptance_spec = 1
+    }
+    END { if (!verify || !acceptance || !verify_spec || !acceptance_spec) exit 1 }
 ' "$workflow" || {
-    printf '%s\n' 'GitLab change rules must run verification and portable acceptance for profile changes.' >&2
+    printf '%s\n' 'GitLab change rules must run verification and portable acceptance for profile and specification changes.' >&2
     exit 1
 }
 
@@ -22,13 +26,64 @@ grep -Fq 'CI_COMMIT_REF_PROTECTED == "true"' "$workflow" || {
     printf '%s\n' 'GitLab privileged acceptance must require a protected ref.' >&2
     exit 1
 }
-if awk '
+if ! awk '
     /^portable-acceptance:/ { in_acceptance = 1 }
-    in_acceptance && /CI_PIPELINE_SOURCE == "merge_request_event"/ { found = 1 }
-    END { exit !found }
+    in_acceptance && /^[^[:space:]][^:]*:/ && $0 !~ /^portable-acceptance:/ {
+        in_acceptance = 0
+    }
+    in_acceptance && /CI_PIPELINE_SOURCE != "merge_request_event"/ { excluded = 1 }
+    END { exit !excluded }
 ' "$workflow"; then
-    printf '%s\n' 'GitLab privileged acceptance must not run on merge-request refs.' >&2
+    printf '%s\n' 'GitLab privileged acceptance must explicitly exclude merge-request pipelines.' >&2
     exit 1
 fi
 
-echo 'GitLab profile-change and protected-runner rules checks passed.'
+grep -Fq 'stage: acceptance-policy' "$workflow" || {
+    printf '%s\n' 'GitLab must run a downstream acceptance policy check.' >&2
+    exit 1
+}
+grep -Fq 'dotenv: portable-acceptance.env' "$workflow" || {
+    printf '%s\n' 'GitLab acceptance must publish a dotenv result for policy validation.' >&2
+    exit 1
+}
+
+policy=$repo_root/scripts/tm-gitlab-acceptance-policy.sh
+if CI_PIPELINE_SOURCE=push CI_COMMIT_BRANCH=main CI_COMMIT_TAG= \
+    CI_DEFAULT_BRANCH=main CI_COMMIT_REF_PROTECTED=false \
+    TM_CI_TESTS_REQUIRED=true TM_PORTABLE_ACCEPTANCE_PASSED= \
+    bash "$policy" >/dev/null 2>&1; then
+    printf '%s\n' 'Unprotected default-branch source change unexpectedly qualified.' >&2
+    exit 1
+fi
+if CI_PIPELINE_SOURCE=push CI_COMMIT_BRANCH=main CI_COMMIT_TAG= \
+    CI_DEFAULT_BRANCH=main CI_COMMIT_REF_PROTECTED=true \
+    TM_CI_TESTS_REQUIRED=true TM_PORTABLE_ACCEPTANCE_PASSED= \
+    bash "$policy" >/dev/null 2>&1; then
+    printf '%s\n' 'Protected source change without acceptance unexpectedly qualified.' >&2
+    exit 1
+fi
+CI_PIPELINE_SOURCE=push CI_COMMIT_BRANCH=main CI_COMMIT_TAG= \
+    CI_DEFAULT_BRANCH=main CI_COMMIT_REF_PROTECTED=true \
+    TM_CI_TESTS_REQUIRED=true TM_PORTABLE_ACCEPTANCE_PASSED=true \
+    bash "$policy" >/dev/null
+CI_PIPELINE_SOURCE=merge_request_event CI_COMMIT_BRANCH= \
+    CI_COMMIT_TAG= CI_DEFAULT_BRANCH=main CI_COMMIT_REF_PROTECTED=false \
+    TM_CI_TESTS_REQUIRED=true TM_PORTABLE_ACCEPTANCE_PASSED= \
+    bash "$policy" >/dev/null
+CI_PIPELINE_SOURCE=push CI_COMMIT_BRANCH=feature CI_COMMIT_TAG= \
+    CI_DEFAULT_BRANCH=main CI_COMMIT_REF_PROTECTED=false \
+    TM_CI_TESTS_REQUIRED=true TM_PORTABLE_ACCEPTANCE_PASSED= \
+    bash "$policy" >/dev/null
+if CI_PIPELINE_SOURCE=push CI_COMMIT_BRANCH=main CI_COMMIT_TAG= \
+    CI_DEFAULT_BRANCH=main CI_COMMIT_REF_PROTECTED=false \
+    TM_CI_TESTS_REQUIRED=false TM_PORTABLE_ACCEPTANCE_PASSED= \
+    bash "$policy" >/dev/null 2>&1; then
+    printf '%s\n' 'Unprotected docs-only default branch unexpectedly passed policy.' >&2
+    exit 1
+fi
+CI_PIPELINE_SOURCE=push CI_COMMIT_BRANCH=main CI_COMMIT_TAG= \
+    CI_DEFAULT_BRANCH=main CI_COMMIT_REF_PROTECTED=true \
+    TM_CI_TESTS_REQUIRED=false TM_PORTABLE_ACCEPTANCE_PASSED= \
+    bash "$policy" >/dev/null
+
+echo 'GitLab acceptance and protected-runner policy checks passed.'

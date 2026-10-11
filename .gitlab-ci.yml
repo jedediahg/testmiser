@@ -11,6 +11,7 @@ workflow:
 stages:
   - verify
   - portable-acceptance
+  - acceptance-policy
 
 verify:
   stage: verify
@@ -65,6 +66,7 @@ portable-acceptance:
     - job: verify
       artifacts: false
   script:
+    - rm -f portable-acceptance.env
     - docker info
     - |
       acceptance_uid=$(id -u)
@@ -118,16 +120,52 @@ portable-acceptance:
               "cd /home/tester/testmiser && bash tests/portable-reuse-ci.sh"
           '
       fi
+      printf 'TM_PORTABLE_ACCEPTANCE_PASSED=true\n' >portable-acceptance.env
+  artifacts:
+    reports:
+      dotenv: portable-acceptance.env
+    expire_in: 1 day
   rules:
     # Privileged Docker runs only on server-protected refs. Fork and ordinary
     # merge requests use the verification job and qualify after a trusted push.
-    - if: '$CI_COMMIT_REF_PROTECTED == "true" && ($CI_COMMIT_BRANCH || $CI_COMMIT_TAG)'
+    - if: '$CI_PIPELINE_SOURCE != "merge_request_event" && $CI_COMMIT_REF_PROTECTED == "true" && ($CI_COMMIT_BRANCH || $CI_COMMIT_TAG)'
       changes: &acceptance_changes
         - Makefile
         - .gitlab-ci.yml
         - .github/workflows/**
         - .tm/profiles/**
+        - docs/spec/**
         - include/**
         - src/**
         - tests/**
         - scripts/**
+
+portable-acceptance-policy:
+  stage: acceptance-policy
+  image: debian:bookworm-slim
+  variables:
+    GIT_DEPTH: "0"
+  before_script:
+    - apt-get update -qq
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git
+  script:
+    - |
+      if [[ "$CI_PIPELINE_SOURCE" == "merge_request_event" ]]; then
+        TM_CI_TESTS_REQUIRED=false \
+          bash scripts/tm-gitlab-acceptance-policy.sh
+        exit 0
+      fi
+      base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-${CI_COMMIT_BEFORE_SHA:-}}"
+      classification=$(bash scripts/tm-ci-classify-changes.sh \
+        "$base" "$CI_COMMIT_SHA")
+      tests_required=$(sed -n \
+        's/^tests_required=//p' <<<"$classification")
+      if [[ "$tests_required" != true && "$tests_required" != false ]]; then
+        echo 'CI classifier returned invalid tests_required value.' >&2
+        exit 2
+      fi
+      TM_CI_TESTS_REQUIRED="$tests_required" \
+        bash scripts/tm-gitlab-acceptance-policy.sh
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'

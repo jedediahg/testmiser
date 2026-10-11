@@ -23,10 +23,12 @@ uses a dedicated self-hosted runner group whose Docker daemon permits the
 nested namespace and ptrace operations. The GitLab gate uses
 the `linux-bwrap` runner tag for the same reason. Mark that runner protected,
 and reserve the tag for a dedicated disposable host. The job runs only on
-protected branch/tag pipelines after review; merge requests run verification
-on ordinary runners and qualify for portable acceptance after merge. A runner
-tag or job-level rule alone is not a security boundary because a merge request
-can edit `.gitlab-ci.yml`. Provision only runners that pass the portable
+protected branch/tag pipelines and explicitly excludes merge-request pipelines,
+including same-project requests whose source and target branches are both
+protected. Merge requests run verification on ordinary runners and qualify
+for portable acceptance after merge. A runner tag or job-level rule alone is
+not a security boundary because a merge request can edit `.gitlab-ci.yml`.
+Provision only runners that pass the portable
 acceptance gate; a successful repository workflow does not prove a separate
 project's runner has the same namespace, ptrace, filesystem, or UID behavior.
 
@@ -62,8 +64,12 @@ host. Do not expose secrets, deployment credentials, or internal network access
 to this runner. Do not attach this runner to the default or any unrestricted
 group.
 
-The repository's `.gitlab-ci.yml` routes `verify` and `portable-acceptance`
-to separate stages. Workflow rules prevent duplicate branch pipelines when a
+The repository's `.gitlab-ci.yml` routes verification, portable acceptance,
+and a final acceptance-policy check to ordered stages. The policy recomputes
+whether a source change requires acceptance, validates a dotenv success result
+from the acceptance job, and fails if a protected source change
+skipped that job. It also rejects an unprotected default branch or release
+tag. Workflow rules prevent duplicate branch pipelines when a
 merge request is open. The verification job starts only for source, test,
 build, specification, CI, or `.tm` evidence changes; its shared classifier
 then skips source tests for evidence-only commits while still requiring strict
