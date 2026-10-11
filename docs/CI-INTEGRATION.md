@@ -123,8 +123,8 @@ need signature and input validation.
    ```
 
    The staged executable dynamically links OpenSSL 3 (`libcrypto.so.3`), so
-   include the matching runtime library in the project image (Debian Bookworm:
-   `libssl3`) and verify the binary starts in that image. Provision that same
+   include the matching runtime library in the project image (Debian Trixie:
+   `libssl3t64`) and verify the binary starts in that image. Provision that same
    reviewed build for local agents and the compatible CI runner pool. Create
    the team's profile/runtime through an operator-owned
    process. The profile must declare the canonical workspace, public
@@ -351,8 +351,8 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
-The full portable reuse acceptance script passed on commit `83a978b` inside a
-disposable, privileged Debian Bookworm container with Bubblewrap and ptrace.
+The full portable reuse acceptance script passed on commit `a41f4af` inside a
+disposable, privileged Debian Trixie container with Bubblewrap and ptrace.
 The suite exercises checked-in and linked-worktree reuse, input invalidation,
 failure/quarantine resolution, state reversion, output restoration, and
 cold-miss coordination. It also checks signed checked-in evidence in both

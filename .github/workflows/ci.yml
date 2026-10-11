@@ -61,7 +61,7 @@ jobs:
               --volume "$TM_ACCEPTANCE_SHARED_STORE:$TM_ACCEPTANCE_SHARED_STORE"
             )
           fi
-          docker run "${docker_args[@]}" debian:bookworm-slim sh -ec '
+          docker run "${docker_args[@]}" debian:trixie-slim sh -ec '
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install --yes \
               --no-install-recommends build-essential bubblewrap \
