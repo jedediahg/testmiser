@@ -66,8 +66,9 @@ group.
 
 The repository's `.gitlab-ci.yml` routes verification, portable acceptance,
 and final policy checks to ordered stages. A lightweight protected-ref job
-uses no checkout to reject an unprotected default branch or release tag. The
-history-based acceptance policy runs only for non-merge-request source changes;
+starts immediately with no checkout to reject an unprotected default branch
+or release tag. The history-based acceptance policy runs only for
+non-merge-request source changes;
 it recomputes whether those changes require acceptance and validates the dotenv
 success result from the acceptance job. This keeps documentation-only and
 merge-request pipelines from installing Git and fetching full history just to

@@ -173,6 +173,7 @@ portable-acceptance-policy:
 protected-ref-policy:
   stage: acceptance-policy
   image: busybox:1.37
+  needs: []
   variables:
     GIT_STRATEGY: none
   script:

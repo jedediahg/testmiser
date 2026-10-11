@@ -61,10 +61,14 @@ if ! awk '
     }
     in_policy && /GIT_STRATEGY: none/ { no_checkout = 1 }
     in_policy && /image: busybox:/ { lightweight_image = 1 }
+    in_policy && /needs: \[\]/ { starts_immediately = 1 }
     in_policy && /CI_COMMIT_REF_PROTECTED/ { checks_protection = 1 }
-    END { exit !(no_checkout && lightweight_image && checks_protection) }
+    END {
+        exit !(no_checkout && lightweight_image && starts_immediately &&
+               checks_protection)
+    }
 ' "$workflow"; then
-    printf '%s\n' 'Protected-ref policy must avoid checkout and full Git setup.' >&2
+    printf '%s\n' 'Protected-ref policy must start immediately without checkout or Git setup.' >&2
     exit 1
 fi
 grep -Fq 'dotenv: portable-acceptance.env' "$workflow" || {
