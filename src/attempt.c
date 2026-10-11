@@ -249,9 +249,14 @@ int tm_attempt_state_finish(struct tm_attempt_state *state,
                    (int)sizeof(name) || marker(state->directory_fd, name) < 0)
             return -1;
     } else if (outcome == TM_ATTEMPT_ELIGIBLE_SUCCESS) {
+        char quarantined[80];
         if (remove_marker(state->directory_fd, "block-all") < 0) return -1;
         if (snprintf(name, sizeof(name), "%s.failed", verification_fingerprint + 7) >=
             (int)sizeof(name) || remove_marker(state->directory_fd, name) < 0) return -1;
+        if (snprintf(quarantined, sizeof(quarantined), "%s.quarantined",
+                     verification_fingerprint + 7) >=
+                (int)sizeof(quarantined) ||
+            remove_marker(state->directory_fd, quarantined) < 0) return -1;
         for (size_t i = 0; i < state->blocked_count; i++) {
             if (strcmp(state->blocked_fingerprints[i], verification_fingerprint) == 0) {
                 free(state->blocked_fingerprints[i]);

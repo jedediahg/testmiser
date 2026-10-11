@@ -15,15 +15,16 @@ checks the uncached fallback.
 declared-only input invalidation and state reversion, test executable
 invalidation, repeated execution
 after a failed input state while preserving an unrelated trusted success,
+forced same-fingerprint failure quarantine and successful recovery,
 sign-enabled signal termination without result publication, stale-output
 replacement, linked worktree reuse from the per-user store, and cross-client
 reuse through the optional filesystem store. It also checks that `--explain`
 reports each hit's trusted record, verification fingerprint, and store source,
-plus CI metadata
-redaction, strict mode failure when coordination is unavailable, and
-exactly-one execution for concurrent cold requests. That cold-miss test also
-asserts that the CLI reports one `WAIT` before the waiter reuses the owner's
-trusted result. The probe uses
+plus CI metadata redaction, strict coordination failure and the available-mode
+duplicate-work warning when the shared store is unavailable, and exactly-one
+execution for concurrent cold requests. That cold-miss test also asserts that
+the CLI reports one `WAIT` before the waiter reuses the owner's trusted result.
+The probe uses
 GitLab-like and GitHub-like environment variables; this does not exercise
 either provider's actual pipeline configuration.
 

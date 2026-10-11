@@ -34,7 +34,12 @@ fi
 
 work=$(mktemp -d)
 shared_store_cleanup=
+forced_pid=
 cleanup() {
+    if [[ -n "$forced_pid" ]]; then
+        kill -TERM "$forced_pid" 2>/dev/null || true
+        wait "$forced_pid" 2>/dev/null || true
+    fi
     if [[ "${TM_ACCEPTANCE_KEEP_WORK:-}" == 1 ]]; then
         printf 'Keeping portable acceptance workspace: %s\n' "$work" >&2
     else
@@ -102,8 +107,11 @@ run_tm() {
     local shared_store_for_run=${4:-}
     local run_id=${5:-$id}
     local coordination_mode=${6:-available}
+    local force_mode=${7:-}
+    local output_path=${8:-build/reports/portable-reuse.txt}
     local -a key_option=()
     local -a store_option=()
+    local -a force_option=()
     mkdir -m 0700 -p "$cache"
     shift 2
     if [[ -n "${1:-}" ]]; then
@@ -113,18 +121,24 @@ run_tm() {
     if [[ -n "$shared_store_for_run" ]]; then
         store_option=(TM_SHARED_STORE="$shared_store_for_run")
     fi
+    if [[ "$force_mode" == force ]]; then
+        force_option=(--force)
+    elif [[ -n "$force_mode" ]]; then
+        printf 'Unknown run_tm force mode: %s\n' "$force_mode" >&2
+        return 2
+    fi
     (
         cd "$checkout"
         env -u TM_SHARED_STORE -u TM_FORCE -u TM_ACCEPTANCE_SIGNING_KEY \
             "${store_option[@]}" XDG_CACHE_HOME="$cache" \
             TM_COORDINATION_MODE="$coordination_mode" \
             TM_RUNTIME_ROOT="$runtime_root" \
-            "$tm_bin" --root . --profile "$profile" \
+            "$tm_bin" "${force_option[@]}" --root . --profile "$profile" \
             --trust-policy "$trust_policy" "${key_option[@]}" \
             --input build/declared-only.txt \
             --output build/reports --explain -- \
             ./build/portable-reuse-probe build/portable-input.txt \
-            build/reports/portable-reuse.txt "$run_id"
+            "$output_path" "$run_id"
     )
 }
 
@@ -201,6 +215,99 @@ fi
 assert_metadata_redacted "$work/producer/.tm/results" \
     "$work/producer" "$work/gitlab-host-home" \
     gitlab-producer-job gitlab-producer-pipeline gitlab-test-token
+
+# A forced interruption with the same fingerprint contradicts the prior
+# trusted success. It must block that result until a successful rerun resolves
+# the quarantine.
+forced_id=wait-forced-quarantine
+forced_output=build/reports/forced-quarantine.txt
+if ! run_tm "$work/producer" "$work/cache-producer" "$signing_key" \
+    '' "$forced_id" available '' "$forced_output" \
+    >"$work/forced-success.out" 2>"$work/forced-success.err"; then
+    cat "$work/forced-success.err" >&2
+    printf '%s\n' 'Could not establish the forced-quarantine fixture result.' >&2
+    exit 1
+fi
+if [[ "$(cat "$work/producer/$forced_output")" != \
+      "$forced_id:unchanged-input" ]]; then
+    printf '%s\n' 'Forced-quarantine fixture output was not created.' >&2
+    exit 1
+fi
+rm -f -- "$work/producer/$forced_output"
+(
+    cd "$work/producer"
+    exec env -u TM_SHARED_STORE -u TM_FORCE -u TM_ACCEPTANCE_SIGNING_KEY \
+        XDG_CACHE_HOME="$work/cache-producer" \
+        TM_COORDINATION_MODE=available TM_RUNTIME_ROOT="$runtime_root" \
+        "$tm_bin" --force --root . --profile "$profile" \
+        --trust-policy "$trust_policy" --signing-key "$signing_key" \
+        --input build/declared-only.txt --output build/reports --explain -- \
+        ./build/portable-reuse-probe build/portable-input.txt \
+        "$forced_output" "$forced_id"
+) >"$work/forced-failure.out" 2>"$work/forced-failure.err" &
+forced_pid=$!
+for attempt in $(seq 1 500); do
+    if [[ -s "$work/forced-failure.out" ]]; then
+        break
+    fi
+    if ! kill -0 "$forced_pid" 2>/dev/null; then
+        wait "$forced_pid" || true
+        forced_pid=
+        cat "$work/forced-failure.err" >&2
+        printf '%s\n' 'Forced attempt ended before reaching the controlled interruption point.' >&2
+        exit 1
+    fi
+    sleep 0.01
+done
+if [[ "$(cat "$work/forced-failure.out")" != \
+      "$forced_id:unchanged-input" ]] ||
+   ! grep -q 'forced run is checking trusted prior result' \
+       "$work/forced-failure.err" ||
+   ! grep -q '^tm: RUN:' "$work/forced-failure.err"; then
+    cat "$work/forced-failure.err" >&2
+    printf '%s\n' 'Forced attempt did not reach the expected trusted execution.' >&2
+    exit 1
+fi
+kill -TERM "$forced_pid"
+set +e
+wait "$forced_pid"
+forced_status=$?
+set -e
+forced_pid=
+if [[ "$forced_status" -ne 143 ]] ||
+   ! grep -q 'CONTRADICTION: forced failure matches trusted prior success' \
+       "$work/forced-failure.err"; then
+    cat "$work/forced-failure.err" >&2
+    printf 'Forced same-fingerprint failure was not quarantined (status %s).\n' \
+        "$forced_status" >&2
+    exit 1
+fi
+if ! run_tm "$work/producer" "$work/cache-producer" \
+    '' '' "$forced_id" available '' "$forced_output" \
+    >"$work/quarantine-retry.out" 2>"$work/quarantine-retry.err"; then
+    cat "$work/quarantine-retry.err" >&2
+    exit 1
+fi
+if [[ "$(cat "$work/quarantine-retry.out")" != \
+      "$forced_id:unchanged-input" ]] ||
+   grep -q '^tm: SKIP: trusted result ' "$work/quarantine-retry.err" ||
+   ! grep -q '^tm: RUN:' "$work/quarantine-retry.err"; then
+    cat "$work/quarantine-retry.err" >&2
+    printf '%s\n' 'Quarantined trusted result was reused after a forced failure.' >&2
+    exit 1
+fi
+if ! run_tm "$work/producer" "$work/cache-producer" \
+    '' '' "$forced_id" available '' "$forced_output" \
+    >"$work/quarantine-recovery.out" 2>"$work/quarantine-recovery.err"; then
+    cat "$work/quarantine-recovery.err" >&2
+    exit 1
+fi
+if [[ -s "$work/quarantine-recovery.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/quarantine-recovery.err"; then
+    cat "$work/quarantine-recovery.err" >&2
+    printf '%s\n' 'Successful rerun did not clear forced-failure quarantine.' >&2
+    exit 1
+fi
 
 # A declared input participates even when the command never opens it.
 printf '%s\n' 'declared-input-b' \
@@ -602,4 +709,4 @@ if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
     exit 1
 fi
 
-printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, test/input invalidation, failed/signal run recovery, state reversion, output restoration, and cold-miss coordination passed.'
+printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, test/input invalidation, failure/quarantine recovery, state reversion, output restoration, and cold-miss coordination passed.'
