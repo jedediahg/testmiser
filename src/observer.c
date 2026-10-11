@@ -898,11 +898,14 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 217: /* getdents64 */
         if (entering) {
             const char *path = tracked_descriptor(task, (int)descriptor);
+            /* Membership hashes are sorted, but the tracee sees native
+             * filesystem order. Until the backend normalizes that order,
+             * enumeration itself cannot authorize reuse. */
+            observer.saw_directory = 1;
             if (path != NULL && descriptor_is_directory(task, (int)descriptor)) {
                 if (!path_is_declared_output(path))
                     candidate_path("directory listing", path);
             } else {
-                observer.saw_directory = 1;
                 if (path == NULL) observer.saw_external_descriptor = 1;
             }
         }

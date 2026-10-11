@@ -26,6 +26,7 @@ int main(void)
     struct tm_observer_report getcwd_report = {0};
     struct tm_observer_report metadata_report = {0};
     struct tm_observer_report descriptor_report = {0};
+    struct tm_observer_report directory_report = {0};
     char repository[4096], device_executable[4200] = {0};
     char output_path[4200] = {0};
     char escape_path[4200] = {0};
@@ -48,6 +49,7 @@ int main(void)
     char *getcwd_command[] = {"./build/getcwd_probe", NULL};
     char *metadata_command[] = {"./build/metadata_probe", "Makefile", NULL};
     char *descriptor_command[] = {"./build/descriptor_dup_probe", "Makefile", NULL};
+    char *directory_command[] = {"./build/directory_probe", NULL, NULL};
     size_t index, executable_count = 0;
     int result;
     if (syscall(SYS_close_range, 3U, ~0U, 0U) < 0) {
@@ -58,6 +60,7 @@ int main(void)
         fprintf(stderr, "could not determine observer test repository\n");
         return 1;
     }
+    directory_command[1] = repository;
     if (snprintf(device_executable, sizeof(device_executable),
                  "%s/./build/device_probe", repository) >=
         (int)sizeof(device_executable)) {
@@ -160,6 +163,16 @@ int main(void)
         fprintf(stderr,
             "observer lost descriptor provenance across dup operations (reasons=0x%08x)\n",
             descriptor_report.ineligibility_reasons);
+        return 1;
+    }
+    if (tm_observe_and_run(directory_command, 0, NULL, repository,
+            &directory_report) != 0 ||
+        (directory_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_DIRECTORY) == 0 ||
+        tm_observer_report_allows_reuse(&directory_report)) {
+        fprintf(stderr,
+            "observer accepted directory enumeration with native ordering (reasons=0x%08x)\n",
+            directory_report.ineligibility_reasons);
         return 1;
     }
     if (snprintf(output_path, sizeof(output_path), "%s/%s", repository,

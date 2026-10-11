@@ -47,7 +47,9 @@ command/context/verification fingerprint helpers, bounded JSON/JCS support,
 schema-v3 signed records (v2 semantics) with optional output manifests, and
 operator-managed trust policy. The observer tracks a conservative subset of
 file descriptor provenance; unsupported syscalls and metadata observations
-prevent reuse.
+prevent reuse. Directory membership can be fingerprinted, but commands that
+enumerate directories are currently ineligible because the sandbox does not
+normalize the order visible to the test process.
 
 Repeatable `--input PATH` declarations capture stable regular-file contents
 or, for a directory, sorted immediate-child names and kinds. Directories do
