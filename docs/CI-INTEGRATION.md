@@ -341,24 +341,30 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
-At `054fabaef8e1feeac4ac9390901cd5ce5feb9762`, the full portable reuse
-acceptance script passed inside a disposable, privileged Debian Bookworm
-container with Bubblewrap and ptrace. The GitHub Actions `test` job also
-passed, but its protected portable-acceptance job was skipped, so the
-acceptance-policy job correctly failed the main-branch run. Review the
-[workflow run](https://github.com/jedediahg/testmiser/actions/runs/38108446586)
-and provision the dedicated runner group and enablement variable before
-relying on that GitHub gate. This local container pass does not replace a
-successful run on the dedicated GitHub runner or a real adopting project's
-GitLab pipeline.
+At `822cb17`, the full portable reuse acceptance script passed inside a
+disposable, privileged Debian Bookworm container with Bubblewrap and ptrace.
+The suite now checks that an unavailable shared store has two distinct
+outcomes: strict mode refuses to launch, while available mode runs and warns
+that duplicate cold work is possible. GitHub Actions run
+[`38109745517`](https://github.com/jedediahg/testmiser/actions/runs/38109745517)
+passed its `test` job, skipped `portable-acceptance`, and failed the
+acceptance-policy job because the dedicated protected runner is not enabled.
+This local pass does not replace a successful run on that runner or a real
+adopting project's GitLab pipeline. Provision the dedicated runner group and
+enablement variable before relying on the GitHub portable-acceptance gate.
 
-The repo's current CI validates this repository's evidence and runs its own
-tests; that does not prove a separate project's test job is integrated.
-Cross-worktree behavior has an acceptance script, but the full portable gate
-must pass on the target runner. Available-mode shared filesystem coordination
-can duplicate cold runs if locking is unavailable; strict mode fails before
-launch in that case, but neither mode is partition-safe or uses leases/fencing.
-Remote result stores, cross-provider acceptance, and a general-purpose
-installation package are not implemented.
-Treat this as a controlled pilot until the target project's GitLab producer
-and consumer flow has passed the checks above.
+The repo's CI validates this repository's evidence and runs its own tests; it
+does not prove a separate project's test job is integrated. Provider identity
+is simulated in the acceptance fixture, so AC-22's real GitLab-to-GitHub and
+reverse producer/consumer pipelines remain unverified. The cold-miss test
+proves serialization only for processes sharing one coherent filesystem; it
+does not demonstrate a distributed coordinator, leases, fencing-token checks,
+or partition recovery required by AC-23/24. Available mode can duplicate cold
+runs when coordination is unavailable. Strict mode blocks if it cannot obtain
+the shared filesystem lock, but that lock does not fence a stale remote owner.
+Remote result-store adapters and a general-purpose installation package are
+also not implemented. Limit the beta pilot to compatible Linux x86-64 workers,
+checked-in signed evidence and/or a tested coherent shared filesystem, and
+explicitly accept duplicate work in available mode. Do not describe that
+setup as partition-safe or exactly-once; qualify each adopting project's real
+GitLab producer and consumer flow before relying on skipped tests.
