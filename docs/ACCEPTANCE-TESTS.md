@@ -15,7 +15,8 @@ checks the uncached fallback.
 declared-only input invalidation and state reversion, test executable
 invalidation, repeated execution
 after a failed input state while preserving an unrelated trusted success,
-forced same-fingerprint failure quarantine and successful recovery,
+forced same-fingerprint failure quarantine, persistence across successful
+reruns, and reuse only after explicit operator resolution,
 sign-enabled signal termination without result publication, stale-output
 replacement, linked worktree reuse from the per-user store, and cross-client
 reuse through the optional filesystem store. It also checks that `--explain`

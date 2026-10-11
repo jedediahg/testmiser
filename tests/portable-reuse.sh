@@ -217,8 +217,8 @@ assert_metadata_redacted "$work/producer/.tm/results" \
     gitlab-producer-job gitlab-producer-pipeline gitlab-test-token
 
 # A forced interruption with the same fingerprint contradicts the prior
-# trusted success. It must block that result until a successful rerun resolves
-# the quarantine.
+# trusted success. Quarantine survives successful executions until the
+# operator explicitly resolves this command/context scope.
 forced_id=wait-forced-quarantine
 forced_output=build/reports/forced-quarantine.txt
 if ! run_tm "$work/producer" "$work/cache-producer" "$signing_key" \
@@ -298,14 +298,50 @@ if [[ "$(cat "$work/quarantine-retry.out")" != \
 fi
 if ! run_tm "$work/producer" "$work/cache-producer" \
     '' '' "$forced_id" available '' "$forced_output" \
-    >"$work/quarantine-recovery.out" 2>"$work/quarantine-recovery.err"; then
-    cat "$work/quarantine-recovery.err" >&2
+    >"$work/quarantine-still-blocked.out" \
+    2>"$work/quarantine-still-blocked.err"; then
+    cat "$work/quarantine-still-blocked.err" >&2
     exit 1
 fi
-if [[ -s "$work/quarantine-recovery.out" ]] ||
-   ! grep -q '^tm: SKIP: trusted result ' "$work/quarantine-recovery.err"; then
-    cat "$work/quarantine-recovery.err" >&2
-    printf '%s\n' 'Successful rerun did not clear forced-failure quarantine.' >&2
+if [[ "$(cat "$work/quarantine-still-blocked.out")" != \
+      "$forced_id:unchanged-input" ]] ||
+   grep -q '^tm: SKIP: trusted result ' \
+       "$work/quarantine-still-blocked.err" ||
+   ! grep -q '^tm: RUN:' "$work/quarantine-still-blocked.err"; then
+    cat "$work/quarantine-still-blocked.err" >&2
+    printf '%s\n' 'Successful execution implicitly cleared forced-failure quarantine.' >&2
+    exit 1
+fi
+
+repository_id=$(jq -r '.repository_id' "$profile")
+profile_digest=$("$tm_bin" profile digest "$profile" | sed 's/^[^ ]* //')
+command_fingerprint=$(sed -n \
+    's/^tm: command fingerprint: //p' "$work/forced-failure.err" | head -n 1)
+context_fingerprint=$(sed -n \
+    's/^tm: context fingerprint: //p' "$work/forced-failure.err" |
+    awk '{print $1}' | head -n 1)
+if [[ -z "$repository_id" || -z "$profile_digest" ||
+      -z "$command_fingerprint" || -z "$context_fingerprint" ]] ||
+   ! XDG_CACHE_HOME="$work/cache-producer" "$tm_bin" attempt resolve \
+       --repository-id "$repository_id" \
+       --command-fingerprint "$command_fingerprint" \
+       --profile-digest "$profile_digest" \
+       --context-digest "$context_fingerprint" --all \
+       >"$work/quarantine-resolve.out" 2>"$work/quarantine-resolve.err"; then
+    cat "$work/quarantine-resolve.err" >&2
+    printf '%s\n' 'Scoped operator resolution of forced-failure quarantine failed.' >&2
+    exit 1
+fi
+if ! run_tm "$work/producer" "$work/cache-producer" \
+    '' '' "$forced_id" available '' "$forced_output" \
+    >"$work/quarantine-resolved.out" 2>"$work/quarantine-resolved.err"; then
+    cat "$work/quarantine-resolved.err" >&2
+    exit 1
+fi
+if [[ -s "$work/quarantine-resolved.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/quarantine-resolved.err"; then
+    cat "$work/quarantine-resolved.err" >&2
+    printf '%s\n' 'Explicit quarantine resolution did not restore trusted reuse.' >&2
     exit 1
 fi
 
@@ -709,4 +745,4 @@ if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
     exit 1
 fi
 
-printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, test/input invalidation, failure/quarantine recovery, state reversion, output restoration, and cold-miss coordination passed.'
+printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, test/input invalidation, failure/quarantine resolution, state reversion, output restoration, and cold-miss coordination passed.'

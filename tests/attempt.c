@@ -43,24 +43,15 @@ int main(void)
     }
     if (tm_attempt_state_begin(&state) < 0 ||
         tm_attempt_state_finish(&state, TM_ATTEMPT_ELIGIBLE_SUCCESS, a) < 0 ||
-        tm_attempt_state_blocks(&state, a)) {
-        fprintf(stderr, "eligible success did not clear quarantine\n");
-        goto done;
-    }
-    tm_attempt_state_clear(&state);
-    if (tm_attempt_state_open_default("attempt-test", cmd, profile, context,
-                                      &state) < 0 ||
-        tm_attempt_state_blocks(&state, a) ||
-        tm_attempt_state_begin(&state) < 0 ||
-        tm_attempt_state_finish(&state, TM_ATTEMPT_QUARANTINED, a) < 0) {
-        fprintf(stderr, "quarantine could not be recreated after recovery\n");
+        !tm_attempt_state_blocks(&state, a)) {
+        fprintf(stderr, "eligible success cleared contradictory quarantine\n");
         goto done;
     }
     tm_attempt_state_clear(&state);
     if (tm_attempt_state_open_default("attempt-test", cmd, profile, context,
                                       &state) < 0 ||
         !tm_attempt_state_blocks(&state, a)) {
-        fprintf(stderr, "recreated quarantine did not persist\n");
+        fprintf(stderr, "eligible success did not persist quarantine\n");
         goto done;
     }
     if (tm_attempt_state_resolve(&state, a) < 0 ||
