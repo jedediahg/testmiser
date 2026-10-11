@@ -17,7 +17,9 @@ invalidation, repeated execution
 after a failed input state while preserving an unrelated trusted success,
 sign-enabled signal termination without result publication, stale-output
 replacement, linked worktree reuse from the per-user store, and cross-client
-reuse through the optional filesystem store. It also checks CI metadata
+reuse through the optional filesystem store. It also checks that `--explain`
+reports each hit's trusted record, verification fingerprint, and store source,
+plus CI metadata
 redaction, strict mode failure when coordination is unavailable, and
 exactly-one execution for concurrent cold requests. The probe uses
 GitLab-like and GitHub-like environment variables; this does not exercise

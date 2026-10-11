@@ -260,7 +260,7 @@ static void print_usage(FILE *stream)
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --force    always run the command\n");
     fprintf(stream, "  TM_FORCE=1 has the same effect as --force\n");
-    fprintf(stream, "  --explain  explain why the command is running\n");
+    fprintf(stream, "  --explain  explain RUN/SKIP and the evidence decision\n");
     fprintf(stream, "  --profile FILE       select an approved profile for controlled reuse\n");
     fprintf(stream, "  --trust-policy FILE  load operator trust configuration\n");
     fprintf(stream, "  --signing-key FILE   sign eligible controlled-profile successes\n");
@@ -501,7 +501,7 @@ static int find_profile_cache_hit(int repository_fd,
                                   size_t blocked_count,
                                   int probe_only,
                                   char verification_fingerprint[72],
-                                  int *found_in_shared_store,
+                                  const char **found_source,
                                   char record_id[72])
 {
     struct tm_snapshot *snapshot = NULL;
@@ -511,7 +511,7 @@ static int find_profile_cache_hit(int repository_fd,
     size_t record_length = 0, root_count, index;
     int preflight, found = 1, shared_store_fd = -1;
     int configured_store_fd = -1;
-    if (found_in_shared_store != NULL) *found_in_shared_store = 0;
+    if (found_source != NULL) *found_source = "repository";
     root_count = tm_profile_input_root_count(profile);
     if (root_count > 0) {
         root_paths = calloc(root_count, sizeof(*root_paths));
@@ -563,8 +563,8 @@ static int find_profile_cache_hit(int repository_fd,
                 trust_policy, root_paths, root_descriptors, root_count,
                 output_roots, output_root_count, blocked_fingerprints,
                 blocked_count, &record, &record_length, record_id);
-        if (found == 0 && found_in_shared_store != NULL)
-            *found_in_shared_store = 1;
+        if (found == 0 && found_source != NULL)
+            *found_source = "per-user shared store";
     }
     if (found != 0 &&
         tm_shared_store_open_configured(&configured_store_fd) == 0) {
@@ -583,14 +583,14 @@ static int find_profile_cache_hit(int repository_fd,
                 trust_policy, root_paths, root_descriptors, root_count,
                 output_roots, output_root_count, blocked_fingerprints,
                 blocked_count, &record, &record_length, record_id);
-        if (found == 0 && found_in_shared_store != NULL)
-            *found_in_shared_store = 1;
+        if (found == 0 && found_source != NULL)
+            *found_source = "configured shared store";
     } else if (found != 0 && getenv("TM_SHARED_STORE") != NULL &&
                getenv("TM_SHARED_STORE")[0] != '\0') {
         fprintf(stderr, "tm: configured shared result store is unavailable (%s)\n",
                 strerror(errno));
     }
-    if (found == 0 && probe_only) {
+    if (found == 0 && verification_fingerprint != NULL) {
         struct tm_result_summary summary = {0};
         char inspected_id[72];
         if (tm_result_inspect(record, record_length, &summary, inspected_id) < 0)
@@ -636,7 +636,7 @@ int main(int argc, char **argv)
     char context_fingerprint[72] = {0};
     char prior_forced_fingerprint[72] = {0};
     int prior_forced_success = 0;
-    int prior_forced_shared = 0;
+    const char *prior_forced_source = NULL;
     char signing_key_id[72] = {0};
     uint64_t signing_epoch = 0;
     struct tm_input_observation explicit_inputs[TM_MAX_EXPLICIT_INPUTS];
@@ -1047,13 +1047,12 @@ int main(int argc, char **argv)
                 repository_root, command_fingerprint, context_fingerprint,
                 trust_policy, options.output_paths, options.output_count,
                 NULL, 0, 1, prior_forced_fingerprint,
-                &prior_forced_shared,
+                &prior_forced_source,
                 prior_record_id) == 0) {
             prior_forced_success = 1;
             if (options.explain)
                 fprintf(stderr, "tm: forced run is checking trusted prior result %s (source=%s)\n",
-                        prior_record_id, prior_forced_shared ?
-                        "per-user shared store" : "repository");
+                        prior_record_id, prior_forced_source);
         }
     }
     if (options.explain && options.output_count > 0 && profile == NULL)
@@ -1065,21 +1064,23 @@ int main(int argc, char **argv)
         reusable_context && command_fingerprint[0] != '\0' &&
         repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
         char candidate_id[72];
-        int candidate_shared = 0;
+        char candidate_verification_fingerprint[72];
+        const char *candidate_source = NULL;
         if (find_profile_cache_hit(repository_fd, profile, runtime_root,
                 repository_root, command_fingerprint, context_fingerprint,
                 trust_policy, options.output_paths, options.output_count,
                 (const char *const *)attempt_state.blocked_fingerprints,
                 attempt_state.blocked_count,
-                0, NULL,
-                &candidate_shared,
+                0, candidate_verification_fingerprint,
+                &candidate_source,
                 candidate_id) == 0) {
             cache_hit = 1;
             result = 0;
             if (options.explain)
-                fprintf(stderr, "tm: SKIP: trusted result %s (source=%s)\n",
-                        candidate_id, candidate_shared ?
-                        "per-user shared store" : "repository");
+                fprintf(stderr,
+                    "tm: SKIP: trusted result record=%s verification=%s source=%s\n",
+                    candidate_id, candidate_verification_fingerprint,
+                    candidate_source);
         } else if (options.explain) {
             fprintf(stderr,
                 "tm: RUN: no trusted result matched the stable input snapshot\n");

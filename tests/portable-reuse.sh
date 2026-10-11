@@ -279,6 +279,8 @@ if ! (
 fi
 if [[ -s "$work/consumer.out" ]] ||
    ! grep -q '^tm: SKIP: trusted result ' "$work/consumer.err" ||
+   ! grep -Eq '^tm: SKIP: trusted result record=sha256:[0-9a-f]{64} verification=sha256:[0-9a-f]{64} source=repository$' \
+       "$work/consumer.err" ||
    [[ "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != "$id:unchanged-input" ||
       -e "$work/consumer/build/reports/stale.txt" ]]; then
     cat "$work/consumer.err" >&2
@@ -401,6 +403,8 @@ if ! run_tm "$work/worktree-consumer" "$work/cache-producer" \
 fi
 if [[ -s "$work/worktree.out" ]] ||
    ! grep -q '^tm: SKIP: trusted result ' "$work/worktree.err" ||
+   ! grep -Eq '^tm: SKIP: trusted result record=sha256:[0-9a-f]{64} verification=sha256:[0-9a-f]{64} source=per-user shared store$' \
+       "$work/worktree.err" ||
    [[ "$(cat "$work/worktree-consumer/build/reports/portable-reuse.txt")" != \
       "$id:unchanged-input" ||
       -e "$work/worktree-consumer/build/reports/stale.txt" ]]; then
@@ -474,6 +478,8 @@ if ! (
 fi
 if [[ -s "$work/shared-consumer.out" ]] ||
    ! grep -q '^tm: SKIP: trusted result ' "$work/shared-consumer.err" ||
+   ! grep -Eq '^tm: SKIP: trusted result record=sha256:[0-9a-f]{64} verification=sha256:[0-9a-f]{64} source=configured shared store$' \
+       "$work/shared-consumer.err" ||
    [[ "$(cat "$work/shared-consumer/build/reports/portable-reuse.txt")" != \
       "$shared_id:unchanged-input" ||
       -e "$work/shared-consumer/build/reports/stale.txt" ]]; then
