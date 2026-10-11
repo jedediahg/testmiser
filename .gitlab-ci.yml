@@ -1,9 +1,3 @@
-image: debian:bookworm-slim
-
-variables:
-  GIT_DEPTH: "0"
-  TM_REQUIRE_PTRACE: "1"
-
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -11,66 +5,125 @@ workflow:
       when: never
     - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: never
 
 stages:
-  - test
+  - verify
+  - portable-acceptance
 
-test:
-  stage: test
+verify:
+  stage: verify
+  image: debian:bookworm-slim
   interruptible: true
-  rules:
-    - changes:
-        - .tm/results/**/*
-        - .tm/blobs/**/*
-        - .tm/profiles/**/*
-        - src/**/*
-        - include/**/*
-        - tests/**/*
-        - scripts/**/*
-        - docs/spec/**/*
-        - Makefile
-        - .gitlab-ci.yml
-        - .github/workflows/ci.yml
+  variables:
+    GIT_DEPTH: "0"
+    TM_REQUIRE_PTRACE: "1"
+    TM_TRUST_POLICY_FILE: "$TM_CI_TRUST_POLICY_FILE"
   before_script:
-    - apt-get update
-    - apt-get install --yes --no-install-recommends build-essential libssl-dev ca-certificates git
+    - apt-get update -qq
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends build-essential ca-certificates git libssl-dev make
   script:
     - |
-      set -eu
       base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-${CI_COMMIT_BEFORE_SHA:-}}"
       bash scripts/tm-ci-run-tests.sh "$base" "$CI_COMMIT_SHA"
-
-portable_acceptance:
-  stage: test
-  interruptible: true
   rules:
-    - changes:
-        - .tm/profiles/**/*
-        - src/**/*
-        - include/**/*
-        - tests/**/*
-        - scripts/**/*
-        - docs/spec/**/*
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &verify_changes
         - Makefile
         - .gitlab-ci.yml
-        - .github/workflows/ci.yml
+        - .github/workflows/**
+        - include/**
+        - src/**
+        - tests/**
+        - scripts/**
+        - docs/spec/**
+        - .tm/results/**
+        - .tm/blobs/**
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule"'
+      changes: *verify_changes
+
+portable-acceptance:
+  stage: portable-acceptance
+  image: docker:27.5.1-cli
+  services:
+    - name: docker:27.5.1-dind
+      alias: docker
+  interruptible: true
+  variables:
+    GIT_DEPTH: "0"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: /certs
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: /certs/client
   tags:
     - linux-bwrap
   needs:
-    - test
-  before_script:
-    - apt-get update
-    - apt-get install --yes --no-install-recommends build-essential libssl-dev bubblewrap busybox-static jq sudo git
+    - job: verify
+      artifacts: false
   script:
+    - docker info
     - |
-      useradd --create-home --shell /bin/bash tm-acceptance
-      printf 'tm-acceptance ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/tm-acceptance
-      chmod 0440 /etc/sudoers.d/tm-acceptance
-      sudo -u tm-acceptance -H git config --global --add safe.directory "$CI_PROJECT_DIR"
-      sudo -u tm-acceptance -H git config --global --add safe.directory "$CI_PROJECT_DIR/.git"
-      sudo -u tm-acceptance -H git clone --quiet --no-hardlinks --local \
-        "$CI_PROJECT_DIR" /home/tm-acceptance/testmiser
-      sudo -u tm-acceptance -H env \
-        TM_ACCEPTANCE_SHARED_STORE="${TM_ACCEPTANCE_SHARED_STORE:-}" \
-        TM_REQUIRE_PTRACE=1 bash -c \
-        'cd /home/tm-acceptance/testmiser && bash tests/portable-reuse-ci.sh'
+      acceptance_uid=$(id -u)
+      if [ "$acceptance_uid" -eq 0 ]; then
+        acceptance_uid=1000
+      fi
+      if [ -n "${TM_ACCEPTANCE_SHARED_STORE:-}" ]; then
+        docker run --rm --privileged \
+          --volume "$CI_PROJECT_DIR:/repo:ro" \
+          --volume "$TM_ACCEPTANCE_SHARED_STORE:$TM_ACCEPTANCE_SHARED_STORE" \
+          --env "TM_ACCEPTANCE_UID=$acceptance_uid" \
+          --env "TM_ACCEPTANCE_SHARED_STORE=$TM_ACCEPTANCE_SHARED_STORE" \
+          debian:bookworm-slim sh -ec '
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+              --no-install-recommends build-essential bubblewrap \
+              busybox-static git jq libssl-dev sudo
+            useradd --uid "$TM_ACCEPTANCE_UID" --create-home \
+              --shell /bin/bash tester
+            printf "tester ALL=(ALL) NOPASSWD:ALL\\n" \
+              >/etc/sudoers.d/tester
+            chmod 0440 /etc/sudoers.d/tester
+            sudo -u tester -H git config --global --add safe.directory /repo
+            sudo -u tester -H git config --global --add safe.directory /repo/.git
+            sudo -u tester -H git clone --quiet --no-hardlinks --local \
+              /repo /home/tester/testmiser
+            sudo -u tester -H env \
+              TM_ACCEPTANCE_SHARED_STORE="$TM_ACCEPTANCE_SHARED_STORE" \
+              TM_REQUIRE_PTRACE=1 bash -c \
+              "cd /home/tester/testmiser && bash tests/portable-reuse-ci.sh"
+          '
+      else
+        docker run --rm --privileged \
+          --volume "$CI_PROJECT_DIR:/repo:ro" \
+          --env "TM_ACCEPTANCE_UID=$acceptance_uid" \
+          debian:bookworm-slim sh -ec '
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+              --no-install-recommends build-essential bubblewrap \
+              busybox-static git jq libssl-dev sudo
+            useradd --uid "$TM_ACCEPTANCE_UID" --create-home \
+              --shell /bin/bash tester
+            printf "tester ALL=(ALL) NOPASSWD:ALL\\n" \
+              >/etc/sudoers.d/tester
+            chmod 0440 /etc/sudoers.d/tester
+            sudo -u tester -H git config --global --add safe.directory /repo
+            sudo -u tester -H git config --global --add safe.directory /repo/.git
+            sudo -u tester -H git clone --quiet --no-hardlinks --local \
+              /repo /home/tester/testmiser
+            sudo -u tester -H env TM_REQUIRE_PTRACE=1 bash -c \
+              "cd /home/tester/testmiser && bash tests/portable-reuse-ci.sh"
+          '
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &acceptance_changes
+        - Makefile
+        - .gitlab-ci.yml
+        - .github/workflows/**
+        - include/**
+        - src/**
+        - tests/**
+        - scripts/**
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+      changes: *acceptance_changes

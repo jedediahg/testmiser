@@ -27,6 +27,19 @@ pass the portable acceptance gate; a successful repository workflow does not
 prove a separate project's runner has the same namespace, ptrace, filesystem,
 or UID behavior.
 
+The repository's `.gitlab-ci.yml` routes `verify` and `portable-acceptance`
+to separate stages. Workflow rules prevent duplicate branch pipelines when a
+merge request is open. The verification job starts only for source, test,
+build, specification, CI, or `.tm` evidence changes; its shared classifier
+then skips source tests for evidence-only commits while still requiring strict
+trusted validation. Configure `TM_CI_TRUST_POLICY_FILE` as a GitLab file-type
+variable containing the operator-managed public consumer trust policy; make it
+available to every pipeline that must validate evidence. Portable acceptance
+uses pinned Docker CLI/daemon images and requires the `linux-bwrap`
+runner to permit privileged Docker-in-Docker, nested user/network namespaces,
+and ptrace. Its Docker executor must mount `/certs/client` for TLS. Ordinary
+shared runners are not suitable for that job.
+
 Keep producers and consumers on a compatible execution context. `tm` includes
 host kernel identity, CPU features/affinity, resource limits, descriptor state,
 and other non-normalized context in the fingerprint. The same container or
@@ -146,7 +159,7 @@ fall back to running the full test suite and validating all available
 evidence; never ignore the classification error. Mixed source/evidence
 changes run the ordinary test job and validate evidence too.
 
-The repository's GitLab and GitHub workflows call the shared
+The repository's `.gitlab-ci.yml` and GitHub Actions workflow call the shared
 `scripts/tm-ci-run-tests.sh` policy runner. Its regression test verifies that
 result-only changes skip test execution but still require strict trust
 validation, mixed changes run tests and validate evidence, and validation
