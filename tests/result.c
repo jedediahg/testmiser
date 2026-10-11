@@ -412,7 +412,8 @@ done:
 
 static int test_output_lookup(
     const struct tm_verification_identity *identity, EVP_PKEY *private_key,
-    const struct tm_trust_policy *trust)
+    const struct tm_trust_policy *trust,
+    const struct tm_trust_policy *revoked_trust)
 {
     const char *argv[] = {"make", "test"};
     const char *input_paths[] = {"tests/a", "tests/missing"};
@@ -517,6 +518,18 @@ static int test_output_lookup(
             if (diagnostic_result != 1 || found != NULL ||
                 !diagnostics.context_changed || diagnostics.inputs_changed ||
                 diagnostics.trust_rejected) goto done;
+
+            memset(&diagnostics, 0, sizeof(diagnostics));
+            diagnostic_result =
+                tm_result_find_matching_snapshot_record_diagnostic(sharedfd,
+                    command_fingerprint, output_identity.profile_digest,
+                    output_identity.runtime_digest,
+                    output_identity.context_digest, revoked_trust,
+                    snapshot_paths, snapshot_roots, 1, &found, &found_length,
+                    record_id, &diagnostics);
+            if (diagnostic_result != 1 || found != NULL ||
+                !diagnostics.trust_rejected || diagnostics.inputs_changed ||
+                diagnostics.context_changed) goto done;
 
             filefd = openat(clone_testsfd, "a",
                 O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW);
@@ -711,18 +724,22 @@ int main(void)
     const char *signature_marker = "\"signature\":\"";
     char *signature_text;
     struct tm_trust_policy *trust = NULL;
+    struct tm_trust_policy *revoked_trust = NULL;
     char policy_path[] = "/tmp/tm-result-policy-XXXXXX";
+    char revoked_policy_path[] = "/tmp/tm-result-revoked-policy-XXXXXX";
     char input_root[] = "/tmp/tm-result-inputs-XXXXXX";
     char input_directory[256];
     char input_file[256];
     char policy_json[2048];
+    char revoked_policy_json[2048];
     unsigned char public_bytes[32];
     size_t public_length = sizeof(public_bytes);
     unsigned char public_b64[EVP_ENCODE_LENGTH(32)];
     unsigned char second_public_bytes[32];
     size_t second_public_length = sizeof(second_public_bytes);
     unsigned char second_public_b64[EVP_ENCODE_LENGTH(32)];
-    int policy_fd = -1, input_root_fd = -1, input_file_fd = -1;
+    int policy_fd = -1, revoked_policy_fd = -1;
+    int input_root_fd = -1, input_file_fd = -1;
     int policy_length;
     int public_b64_length;
 
@@ -926,6 +943,31 @@ int main(void)
         fprintf(stderr, "operator-policy result verification failed\n");
         goto fail;
     }
+    {
+        const char *revoked_field = strstr(policy_json,
+                                            "\"revoked_key_ids\":[]");
+        int prefix_length, revoked_length;
+        if (revoked_field == NULL) goto fail;
+        prefix_length = (int)(revoked_field - policy_json);
+        revoked_length = snprintf(revoked_policy_json,
+            sizeof(revoked_policy_json),
+            "%.*s\"revoked_key_ids\":[\"%s\"]}]}",
+            prefix_length, policy_json, first_key_id);
+        if (revoked_length < 0 ||
+            revoked_length >= (int)sizeof(revoked_policy_json)) goto fail;
+        revoked_policy_fd = mkstemp(revoked_policy_path);
+        if (revoked_policy_fd < 0 ||
+            write(revoked_policy_fd, revoked_policy_json,
+                  (size_t)revoked_length) != revoked_length ||
+            close(revoked_policy_fd) < 0) {
+            if (revoked_policy_fd >= 0) close(revoked_policy_fd);
+            revoked_policy_fd = -1;
+            goto fail;
+        }
+        revoked_policy_fd = -1;
+        if (tm_trust_policy_load(revoked_policy_path, &revoked_trust) != 0)
+            goto fail;
+    }
     if (tm_result_verify_trusted(
             second_record, second_record_length, trust,
             policy.expected_verification_fingerprint, verified_id) != 0 ||
@@ -944,7 +986,7 @@ int main(void)
         fprintf(stderr, "portable result storage/lookup checks failed\n");
         goto fail;
     }
-    if (test_output_lookup(&identity, private_key, trust) != 0) {
+    if (test_output_lookup(&identity, private_key, trust, revoked_trust) != 0) {
         fprintf(stderr, "trusted output result restore lookup failed\n");
         goto fail;
     }
@@ -1043,7 +1085,9 @@ int main(void)
     free(record);
     tm_result_summary_clear(&summary);
     tm_trust_policy_free(trust);
+    tm_trust_policy_free(revoked_trust);
     unlink(policy_path);
+    unlink(revoked_policy_path);
     if (input_root_fd >= 0) close(input_root_fd);
     unlink(input_file);
     rmdir(input_directory);
@@ -1059,10 +1103,13 @@ fail:
     free(record);
     tm_result_summary_clear(&summary);
     if (policy_fd >= 0) close(policy_fd);
+    if (revoked_policy_fd >= 0) close(revoked_policy_fd);
     if (input_file_fd >= 0) close(input_file_fd);
     if (input_root_fd >= 0) close(input_root_fd);
     tm_trust_policy_free(trust);
+    tm_trust_policy_free(revoked_trust);
     unlink(policy_path);
+    unlink(revoked_policy_path);
     unlink(input_file);
     rmdir(input_directory);
     rmdir(input_root);
