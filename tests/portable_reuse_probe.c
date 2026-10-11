@@ -76,6 +76,10 @@ int portable_main(long argc, char **argv)
     if (used == 0 || input[used - 1] != '\n') return 1;
     used--;
 
+    /* The portable acceptance fixture uses a distinct input state to model
+     * a deterministic test failure and verify retry/quarantine behavior. */
+    if (starts_with(input, "fail:")) return 23;
+
     destination = syscall3(2, (long)argv[2], 1 | 0100 | 01000 | 02000000 |
                            0400000, 0644);
     if (destination < 0) return 1;

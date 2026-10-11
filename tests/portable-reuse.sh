@@ -213,6 +213,41 @@ if [[ -s "$work/consumer.out" ]] ||
     exit 1
 fi
 
+# A deterministic failure for state B must execute again on the next
+# invocation, while the trusted success for state A remains reusable.
+printf '%s\n' 'fail:broken-state' \
+    >"$work/consumer/build/portable-input.txt"
+for attempt in 1 2; do
+    set +e
+    run_tm "$work/consumer" "$work/cache-consumer" \
+        >"$work/failed-$attempt.out" 2>"$work/failed-$attempt.err"
+    failed_status=$?
+    set -e
+    if [[ "$failed_status" -ne 23 || -s "$work/failed-$attempt.out" ]] ||
+       ! grep -q '^tm: RUN:' "$work/failed-$attempt.err" ||
+       grep -q '^tm: SKIP: trusted result ' "$work/failed-$attempt.err"; then
+        cat "$work/failed-$attempt.err" >&2
+        printf 'Failed input state did not execute on attempt %s (status %s).\n' \
+            "$attempt" "$failed_status" >&2
+        exit 1
+    fi
+done
+printf '%s\n' 'unchanged-input' \
+    >"$work/consumer/build/portable-input.txt"
+if ! run_tm "$work/consumer" "$work/cache-consumer" \
+    >"$work/failure-recovery.out" 2>"$work/failure-recovery.err"; then
+    cat "$work/failure-recovery.err" >&2
+    exit 1
+fi
+if [[ -s "$work/failure-recovery.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/failure-recovery.err" ||
+   [[ "$(cat "$work/consumer/build/reports/portable-reuse.txt")" != \
+      "$id:unchanged-input" ]]; then
+    cat "$work/failure-recovery.err" >&2
+    printf '%s\n' 'A failed input state blocked an unrelated trusted success.' >&2
+    exit 1
+fi
+
 printf '%s\n' 'changed-input' >"$work/consumer/build/portable-input.txt"
 if ! run_tm "$work/consumer" "$work/cache-consumer" \
     >"$work/changed.out" 2>"$work/changed.err"; then
@@ -414,4 +449,4 @@ if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
     exit 1
 fi
 
-printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, state reversion, output restoration, invalidation, and cold-miss coordination passed.'
+printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, failure retry/recovery, state reversion, output restoration, invalidation, and cold-miss coordination passed.'
