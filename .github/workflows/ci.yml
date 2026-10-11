@@ -37,12 +37,27 @@ jobs:
             diff_status=$?
             if [[ $diff_status -eq 1 ]]; then
               tests_required=false
+            else
+              echo "Could not classify test changes (status $diff_status)." >&2
+              exit "$diff_status"
             fi
           fi
           if bash scripts/tm-result-diff.sh any "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
             has_results=true
             if bash scripts/tm-result-diff.sh only "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
               results_only=true
+            else
+              diff_status=$?
+              if [[ $diff_status -ne 1 ]]; then
+                echo "Could not classify changed paths (status $diff_status)." >&2
+                exit "$diff_status"
+              fi
+            fi
+          else
+            diff_status=$?
+            if [[ $diff_status -ne 1 ]]; then
+              echo "Could not classify changed paths (status $diff_status)." >&2
+              exit "$diff_status"
             fi
           fi
           echo "results_only=$results_only" >> "$GITHUB_OUTPUT"
