@@ -252,8 +252,8 @@ only when the Git diff is limited to the two evidence trees:
 The validation helper accepts either `TM_TRUST_POLICY_FILE` (a path, suitable
 for GitLab file-type variables) or `TM_TRUST_POLICY_JSON` (policy contents,
 suitable for a protected GitHub Actions variable). Set at most one. If neither
-is set, it uses the repository's default trust policy and still requires
-trusted evidence.
+is set, no producer key is approved: strict validation rejects result sidecars
+as untrusted. The validator does not load trust policy from the checkout.
 
 ```sh
 base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-${CI_COMMIT_BEFORE_SHA:-}}"

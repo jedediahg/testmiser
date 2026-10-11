@@ -223,6 +223,17 @@ fi
 assert_metadata_redacted "$work/producer/.tm/results" \
     "$work/producer" "$work/gitlab-host-home" \
     gitlab-producer-job gitlab-producer-pipeline gitlab-test-token
+if "$tm_bin" validate --root "$work/producer" --require-trust \
+    >"$work/missing-policy-validation.out" \
+    2>"$work/missing-policy-validation.err"; then
+    printf '%s\n' 'Strict validation trusted a signed result without operator policy.' >&2
+    exit 1
+fi
+grep -q '(trust required)' "$work/missing-policy-validation.err" || {
+    cat "$work/missing-policy-validation.err" >&2
+    printf '%s\n' 'Missing operator policy did not reject the signed result.' >&2
+    exit 1
+}
 
 # A forced interruption with the same fingerprint contradicts the prior
 # trusted success. Quarantine survives successful executions until the
