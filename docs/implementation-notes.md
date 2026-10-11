@@ -6,6 +6,8 @@ Repeatable `--input` declarations for regular repository files now join the port
 
 The portable acceptance harness verifies checked-in signed evidence from a clean clone without the producer's private key. It also creates a linked Git worktree, removes its checked-in evidence, and requires a trusted hit from the producer's same-user cache with output restoration. The full harness passed on commit `a41f4af` in a disposable Debian Trixie container with Bubblewrap, `busybox-static`, and ptrace enabled. The native WSL2 environment still cannot create the network namespace, so that pass is container evidence rather than native-host support. The harness remains a CI release gate.
 
+The complete `TM_REQUIRE_PTRACE=1 make test` suite and `make analyze` also passed on commit `6ab855e` in Debian Trixie using GCC 14 and glibc 2.41. The Trixie full-suite run used the same disposable-container approach; it does not replace the protected GitHub runner or adopter-project CI qualification.
+
 The x86-64 observer allows `mprotect(PROT_WRITE)` only when the entire range is covered by private VMAs in the stopped tracee's `/proc/<pid>/maps` and no other traced task can change that address space. Shared, mixed, unknown, gapped, or concurrently mutable ranges remain ineligible. Tests verify that shared and mixed mappings are rejected while writes to a private copy-on-write mapping leave its source file unchanged.
 
 The CLI reports version `0.1`; newly produced signed sidecars use schema version 3 with signed `tm_version` producer metadata and retain verification semantics version 2. The x86-64 observer accepts pathname-based `execveat` calls with zero flags, records the executable path on successful exec, and treats `AT_EMPTY_PATH` or other flagged forms as unsupported.
