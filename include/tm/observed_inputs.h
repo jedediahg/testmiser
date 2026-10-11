@@ -4,11 +4,17 @@
 #include "tm/observer.h"
 #include "tm/verification.h"
 
+#define TM_OBSERVED_INPUT_MAX_SYMLINKS 40
+#define TM_OBSERVED_INPUT_MAX_ITEMS \
+    (TM_OBSERVER_MAX_CANDIDATES * (TM_OBSERVED_INPUT_MAX_SYMLINKS + 1))
+
 struct tm_observed_input_manifest {
     struct tm_input_observation *items;
     size_t count;
+    size_t capacity;
     char **owned_fields;
     size_t owned_field_count;
+    size_t owned_field_capacity;
 };
 
 /* Capture the complete, stable observer report as a deduplicated manifest.

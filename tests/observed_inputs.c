@@ -29,12 +29,18 @@ int main(void)
     char directory[] = "/tmp/tm-observed-inputs-XXXXXX";
     char file[512] = {0}, link_path[512] = {0};
     char subdirectory[512] = {0}, child[512] = {0}, extra[512] = {0};
+    char symlink_root[512] = {0}, symlink_target[512] = {0};
+    char symlink_other[512] = {0}, symlink_one[512] = {0};
+    char symlink_two[512] = {0}, symlink_directory[512] = {0};
+    char symlink_child[512] = {0}, symlink_dir_link[512] = {0};
     struct tm_observer_report report = {0};
     struct tm_observed_input_manifest manifest = {0};
-    struct tm_snapshot *snapshot = NULL;
+    struct tm_snapshot *snapshot = NULL, *changed_snapshot = NULL;
     const char *snapshot_paths[] = {"subdir"};
     const char *file_snapshot_paths[] = {"alpha"};
-    int snapshot_root = -1, snapshot_roots[1];
+    const char *symlink_snapshot_paths[] = {"symlink-root"};
+    int snapshot_root = -1, snapshot_roots[1], symlink_snapshot_root = -1;
+    int changed_snapshot_root = -1;
     char snapshot_digest[72];
     int root = -1, status = 1;
 
@@ -49,15 +55,41 @@ int main(void)
             (int)sizeof(child) ||
         snprintf(extra, sizeof(extra), "%s/extra", subdirectory) >=
             (int)sizeof(extra) ||
+        snprintf(symlink_root, sizeof(symlink_root), "%s/symlink-root",
+                 directory) >= (int)sizeof(symlink_root) ||
+        snprintf(symlink_target, sizeof(symlink_target), "%s/target",
+                 symlink_root) >= (int)sizeof(symlink_target) ||
+        snprintf(symlink_other, sizeof(symlink_other), "%s/other",
+                 symlink_root) >= (int)sizeof(symlink_other) ||
+        snprintf(symlink_one, sizeof(symlink_one), "%s/link-one",
+                 symlink_root) >= (int)sizeof(symlink_one) ||
+        snprintf(symlink_two, sizeof(symlink_two), "%s/link-two",
+                 symlink_root) >= (int)sizeof(symlink_two) ||
+        snprintf(symlink_directory, sizeof(symlink_directory), "%s/real-dir",
+                 symlink_root) >= (int)sizeof(symlink_directory) ||
+        snprintf(symlink_child, sizeof(symlink_child), "%s/child",
+                 symlink_directory) >= (int)sizeof(symlink_child) ||
+        snprintf(symlink_dir_link, sizeof(symlink_dir_link), "%s/dir-link",
+                 symlink_root) >= (int)sizeof(symlink_dir_link) ||
         write_file(file, "observed\n") < 0 ||
         symlink("alpha", link_path) < 0 || mkdir(subdirectory, 0700) < 0 ||
-        write_file(child, "member\n") < 0) goto done;
+        write_file(child, "member\n") < 0 || mkdir(symlink_root, 0700) < 0 ||
+        write_file(symlink_target, "symlink target\n") < 0 ||
+        write_file(symlink_other, "alternate target\n") < 0 ||
+        mkdir(symlink_directory, 0700) < 0 ||
+        write_file(symlink_child, "directory link target\n") < 0 ||
+        symlink("link-two", symlink_one) < 0 ||
+        symlink("target", symlink_two) < 0 ||
+        symlink("real-dir", symlink_dir_link) < 0) {
+        perror("observed-input fixture setup failed");
+        goto done;
+    }
     root = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (root < 0) goto done;
 
     report.observation_complete = 1;
     report.stable_input_view = 1;
-    report.candidate_count = 6;
+    report.candidate_count = 7;
     snprintf(report.candidates[0].kind,
              sizeof(report.candidates[0].kind), "opened file");
     snprintf(report.candidates[0].path,
@@ -82,6 +114,10 @@ int main(void)
              sizeof(report.candidates[5].kind), "cwd change");
     snprintf(report.candidates[5].path,
              sizeof(report.candidates[5].path), "subdir");
+    snprintf(report.candidates[6].kind,
+             sizeof(report.candidates[6].kind), "opened file");
+    snprintf(report.candidates[6].path,
+             sizeof(report.candidates[6].path), "link");
 
     if (tm_observer_capture_inputs(&report, root, &manifest) < 0 ||
         manifest.count != 4 ||
@@ -106,7 +142,98 @@ int main(void)
         fprintf(stderr, "directory membership did not invalidate its digest\n");
         goto done;
     }
+    if (tm_input_matches(root, &manifest.items[1]) != 0 ||
+        unlink(link_path) < 0 || symlink("subdir/child", link_path) < 0 ||
+        tm_input_matches(root, &manifest.items[1]) != 1) {
+        fprintf(stderr, "symlink target change did not invalidate its input\n");
+        goto done;
+    }
     tm_observed_input_manifest_clear(&manifest);
+
+    if (tm_snapshot_create(root, symlink_snapshot_paths, 1, &snapshot) < 0 ||
+        (symlink_snapshot_root = tm_snapshot_open_root_readable(
+            snapshot, 0)) < 0) {
+        perror("symlink snapshot create failed");
+        goto done;
+    }
+    snapshot_roots[0] = symlink_snapshot_root;
+    report.candidate_count = 2;
+    snprintf(report.candidates[0].kind,
+             sizeof(report.candidates[0].kind), "opened file");
+    snprintf(report.candidates[0].path,
+             sizeof(report.candidates[0].path),
+             "symlink-root/link-one");
+    snprintf(report.candidates[1].kind,
+             sizeof(report.candidates[1].kind), "opened file");
+    snprintf(report.candidates[1].path,
+             sizeof(report.candidates[1].path),
+             "symlink-root/dir-link/child");
+    if (tm_observer_capture_snapshot_inputs(&report,
+            symlink_snapshot_paths, snapshot_roots, 1, &manifest) < 0 ||
+        manifest.count != 5 ||
+        strcmp(manifest.items[0].path, "symlink-root/dir-link") != 0 ||
+        manifest.items[0].kind != TM_INPUT_SYMLINK ||
+        strcmp(manifest.items[0].target, "real-dir") != 0 ||
+        strcmp(manifest.items[1].path, "symlink-root/link-one") != 0 ||
+        manifest.items[1].kind != TM_INPUT_SYMLINK ||
+        strcmp(manifest.items[1].target, "link-two") != 0 ||
+        strcmp(manifest.items[2].path, "symlink-root/link-two") != 0 ||
+        manifest.items[2].kind != TM_INPUT_SYMLINK ||
+        strcmp(manifest.items[2].target, "target") != 0 ||
+        strcmp(manifest.items[3].path, "symlink-root/real-dir/child") != 0 ||
+        manifest.items[3].kind != TM_INPUT_FILE ||
+        strcmp(manifest.items[4].path, "symlink-root/target") != 0 ||
+        manifest.items[4].kind != TM_INPUT_FILE ||
+        tm_observed_inputs_match_snapshots(manifest.items, manifest.count,
+            symlink_snapshot_paths, snapshot_roots, 1) != 0) {
+        fprintf(stderr,
+            "snapshot input capture did not record a symlink chain and target\n");
+        goto done;
+    }
+    if (write_file(symlink_target, "changed target\n") < 0 ||
+        tm_snapshot_create(root, symlink_snapshot_paths, 1,
+                           &changed_snapshot) < 0 ||
+        (changed_snapshot_root = tm_snapshot_open_root_readable(
+            changed_snapshot, 0)) < 0) {
+        perror("changed symlink snapshot setup failed");
+        goto done;
+    }
+    snapshot_roots[0] = changed_snapshot_root;
+    if (tm_observed_inputs_match_snapshots(manifest.items, manifest.count,
+            symlink_snapshot_paths, snapshot_roots, 1) != 1) {
+        fprintf(stderr, "symlink target content change was not detected\n");
+        goto done;
+    }
+    close(changed_snapshot_root);
+    changed_snapshot_root = -1;
+    tm_snapshot_free(changed_snapshot);
+    changed_snapshot = NULL;
+    snapshot_roots[0] = symlink_snapshot_root;
+    if (tm_observer_capture_snapshot_inputs(&report,
+            symlink_snapshot_paths, snapshot_roots, 1, &manifest) < 0 ||
+        unlink(symlink_one) < 0 || symlink("other", symlink_one) < 0 ||
+        tm_snapshot_create(root, symlink_snapshot_paths, 1,
+                           &changed_snapshot) < 0 ||
+        (changed_snapshot_root = tm_snapshot_open_root_readable(
+            changed_snapshot, 0)) < 0) {
+        perror("changed symlink target setup failed");
+        goto done;
+    }
+    snapshot_roots[0] = changed_snapshot_root;
+    if (tm_observed_inputs_match_snapshots(manifest.items, manifest.count,
+            symlink_snapshot_paths, snapshot_roots, 1) != 1) {
+        fprintf(stderr, "symlink target change was not detected\n");
+        goto done;
+    }
+    tm_observed_input_manifest_clear(&manifest);
+    close(changed_snapshot_root);
+    changed_snapshot_root = -1;
+    tm_snapshot_free(changed_snapshot);
+    changed_snapshot = NULL;
+    close(symlink_snapshot_root);
+    symlink_snapshot_root = -1;
+    tm_snapshot_free(snapshot);
+    snapshot = NULL;
 
     if (tm_snapshot_create(root, snapshot_paths, 1, &snapshot) < 0 ||
         (snapshot_root = tm_snapshot_open_root(snapshot, 0)) < 0 ||
@@ -213,13 +340,24 @@ int main(void)
     status = 0;
 done:
     tm_observed_input_manifest_clear(&manifest);
+    if (changed_snapshot_root >= 0) close(changed_snapshot_root);
+    if (symlink_snapshot_root >= 0) close(symlink_snapshot_root);
     if (snapshot_root >= 0) close(snapshot_root);
     tm_snapshot_free(snapshot);
+    tm_snapshot_free(changed_snapshot);
     if (root >= 0) close(root);
     unlink(link_path);
     unlink(child);
     unlink(extra);
     rmdir(subdirectory);
+    unlink(symlink_one);
+    unlink(symlink_two);
+    unlink(symlink_dir_link);
+    unlink(symlink_child);
+    rmdir(symlink_directory);
+    unlink(symlink_target);
+    unlink(symlink_other);
+    rmdir(symlink_root);
     unlink(file);
     rmdir(directory);
     return status;
