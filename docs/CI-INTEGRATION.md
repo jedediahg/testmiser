@@ -98,10 +98,19 @@ need signature and input validation.
 1. Choose the exact command CI already runs, including all arguments. Keep
    setup and test inputs explicit; do not wrap a command that consumes mutable
    databases, network services, secrets, or undeclared generated state.
-2. Until a general installation package exists, build the binary from an
-   operator-pinned TestMiser source revision with `make -C /path/to/testmiser
-   build/tm`. Provision that same reviewed build for local agents and the
-   compatible CI runner pool. Create the team's profile/runtime through an operator-owned
+2. Until a general installation package exists, build from an operator-pinned
+   TestMiser source revision and stage the executable without changing the
+   build host:
+
+   ```sh
+   make -C /path/to/testmiser
+   make -C /path/to/testmiser install PREFIX=/usr \
+     DESTDIR=/path/to/staging/testmiser
+   # Staged binary: /path/to/staging/testmiser/usr/bin/tm
+   ```
+
+   Provision that same reviewed build for local agents and the compatible CI
+   runner pool. Create the team's profile/runtime through an operator-owned
    process. The profile must declare the canonical workspace, public
    environment, all permitted input/output roots, scratch roots, runtime
    digest, backend contract, and deterministic behavior. Profile and runtime
