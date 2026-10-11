@@ -15,10 +15,16 @@ if ! awk '
     printf '%s\n' 'Ordinary GitLab verification must not require ptrace from shared runners.' >&2
     exit 1
 fi
-grep -Fq 'TM_REQUIRE_PTRACE=1 bash -c' "$workflow" || {
-    printf '%s\n' 'GitLab portable acceptance must require ptrace on its dedicated runner.' >&2
+if ! awk '
+    /^portable-acceptance:/ { in_acceptance = 1 }
+    in_acceptance && /^[^[:space:]][^:]*:/ &&
+        $0 !~ /^portable-acceptance:/ { in_acceptance = 0 }
+    in_acceptance && /TM_REQUIRE_PTRACE=1 bash -c/ { ptrace_runs++ }
+    END { exit ptrace_runs != 2 }
+' "$workflow"; then
+    printf '%s\n' 'Both GitLab portable-acceptance execution paths must require ptrace.' >&2
     exit 1
-}
+fi
 
 awk '
     /changes: &verify_changes/ { block = "verify"; next }
