@@ -26,6 +26,17 @@ int main(void)
          "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
          NULL, 0}
     };
+    const struct tm_input_observation directory_input[] = {
+        {"tests/data", TM_INPUT_DIRECTORY,
+         "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+         NULL, 0}
+    };
+    const struct tm_input_observation existing_input[] = {
+        {"tests/generated", TM_INPUT_EXISTS, NULL, NULL, 1}
+    };
+    const struct tm_input_observation symlink_input[] = {
+        {"tests/current", TM_INPUT_SYMLINK, NULL, "data/v1", 0}
+    };
     struct tm_verification_identity identity = {
         "sample",
         "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -83,6 +94,29 @@ int main(void)
     identity.working_directory = ".";
     if (tm_verification_fingerprint(&identity, reordered_fingerprint) != 0) {
         fprintf(stderr, "repository-root working directory was rejected\n");
+        return 1;
+    }
+    identity.working_directory = "subdir";
+    identity.inputs = directory_input;
+    identity.input_count = 1;
+    if (tm_verification_fingerprint(&identity, reordered_fingerprint) != 0 ||
+        strcmp(reordered_fingerprint,
+            "sha256:4fcbdd8fd30fbf482882e4bac640fb1ebc66381ea273a5ed342c6cb470bcf892") != 0) {
+        fprintf(stderr, "directory input golden vector failed\n");
+        return 1;
+    }
+    identity.inputs = existing_input;
+    if (tm_verification_fingerprint(&identity, reordered_fingerprint) != 0 ||
+        strcmp(reordered_fingerprint,
+            "sha256:b92788dd98e7b0bdc412a483a1547eba442496ddccf0eb85e6914a5f35263541") != 0) {
+        fprintf(stderr, "present-path input golden vector failed\n");
+        return 1;
+    }
+    identity.inputs = symlink_input;
+    if (tm_verification_fingerprint(&identity, reordered_fingerprint) != 0 ||
+        strcmp(reordered_fingerprint,
+            "sha256:d543e46c387b8cd45e245b167f26c78dff5269e6b3a7d4559b8a4707c5763d66") != 0) {
+        fprintf(stderr, "symlink input golden vector failed\n");
         return 1;
     }
     return 0;
