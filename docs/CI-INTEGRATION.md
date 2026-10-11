@@ -27,6 +27,25 @@ pass the portable acceptance gate; a successful repository workflow does not
 prove a separate project's runner has the same namespace, ptrace, filesystem,
 or UID behavior.
 
+For GitHub, register a dedicated self-hosted runner with the unique label
+`tm-portable-acceptance`, then set the repository Actions variable to that
+single label:
+
+```sh
+./config.sh --url https://github.com/jedediahg/testmiser \
+  --token "$RUNNER_TOKEN" --labels tm-portable-acceptance --ephemeral
+gh variable set TM_PORTABLE_ACCEPTANCE_RUNNER \
+  --repo jedediahg/testmiser --body tm-portable-acceptance
+```
+
+The workflow skips the privileged acceptance job for pull requests from forks;
+it still runs the check for same-repository pull requests and qualifying pushes.
+Use a one-job ephemeral runner and destroy or reimage its VM after the job.
+`--ephemeral` deregisters the runner after one job but does not wipe its host.
+Do not expose secrets, deployment credentials, or internal network access to
+this runner. A persistent runner that executes fork pull-request code can be
+compromised through the privileged Docker job.
+
 The repository's `.gitlab-ci.yml` routes `verify` and `portable-acceptance`
 to separate stages. Workflow rules prevent duplicate branch pipelines when a
 merge request is open. The verification job starts only for source, test,
