@@ -298,6 +298,26 @@ int tm_attempt_state_blocks(const struct tm_attempt_state *state,
     return found != 0;
 }
 
+int tm_attempt_state_has_quarantine(const struct tm_attempt_state *state)
+{
+    size_t i;
+    if (state == NULL || state->directory_fd < 0) { errno = EINVAL; return -1; }
+    for (i = 0; i < state->blocked_count; i++) {
+        char name[80];
+        int found;
+        if (!valid_digest(state->blocked_fingerprints[i])) continue;
+        if (snprintf(name, sizeof(name), "%s.quarantined",
+                     state->blocked_fingerprints[i] + 7) >= (int)sizeof(name)) {
+            errno = EOVERFLOW;
+            return -1;
+        }
+        found = checked_marker(state->directory_fd, name);
+        if (found < 0) return -1;
+        if (found) return 1;
+    }
+    return 0;
+}
+
 static void remove_blocked_memory(struct tm_attempt_state *state,
                                   const char *fingerprint)
 {

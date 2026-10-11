@@ -27,7 +27,8 @@ int main(void)
                                       &state) < 0) { perror("attempt open 2"); goto done; }
     if (
         !tm_attempt_state_blocks(&state, a) ||
-        tm_attempt_state_blocks(&state, b)) { fprintf(stderr, "attempt exact block failed\n"); goto done; }
+        tm_attempt_state_blocks(&state, b) ||
+        tm_attempt_state_has_quarantine(&state) != 0) { fprintf(stderr, "attempt exact block failed\n"); goto done; }
     if (tm_attempt_state_begin(&state) < 0 ||
         tm_attempt_state_finish(&state, TM_ATTEMPT_ELIGIBLE_SUCCESS, a) < 0 ||
         tm_attempt_state_blocks(&state, a)) { perror("attempt success clear"); goto done; }
@@ -37,7 +38,8 @@ int main(void)
     tm_attempt_state_clear(&state);
     if (tm_attempt_state_open_default("attempt-test", cmd, profile, context,
                                       &state) < 0 ||
-        !tm_attempt_state_blocks(&state, a)) {
+        !tm_attempt_state_blocks(&state, a) ||
+        tm_attempt_state_has_quarantine(&state) != 1) {
         fprintf(stderr, "quarantine was not retained across reopen\n");
         goto done;
     }
@@ -55,7 +57,8 @@ int main(void)
         goto done;
     }
     if (tm_attempt_state_resolve(&state, a) < 0 ||
-        tm_attempt_state_blocks(&state, a)) {
+        tm_attempt_state_blocks(&state, a) ||
+        tm_attempt_state_has_quarantine(&state) != 0) {
         fprintf(stderr, "explicit fingerprint resolution failed\n");
         goto done;
     }

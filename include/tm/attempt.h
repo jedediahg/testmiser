@@ -29,6 +29,9 @@ int tm_attempt_state_finish(struct tm_attempt_state *state,
                             const char *verification_fingerprint);
 int tm_attempt_state_blocks(const struct tm_attempt_state *state,
                             const char *verification_fingerprint);
+/* Return 1 when this attempt scope contains a contradictory-result
+ * quarantine, 0 when it does not, and -1 when marker state cannot be read. */
+int tm_attempt_state_has_quarantine(const struct tm_attempt_state *state);
 /* Explicit operator resolution: a fingerprint clears its local failure and
  * quarantine markers; NULL clears all markers in this attempt scope. */
 int tm_attempt_state_resolve(struct tm_attempt_state *state,

@@ -307,7 +307,8 @@ if [[ "$(cat "$work/quarantine-still-blocked.out")" != \
       "$forced_id:unchanged-input" ]] ||
    grep -q '^tm: SKIP: trusted result ' \
        "$work/quarantine-still-blocked.err" ||
-   ! grep -q '^tm: RUN:' "$work/quarantine-still-blocked.err"; then
+   ! grep -q '^tm: RUN: prior trusted results in this command/profile/context remain quarantined after a forced contradiction; explicit operator resolution is required$' \
+       "$work/quarantine-still-blocked.err"; then
     cat "$work/quarantine-still-blocked.err" >&2
     printf '%s\n' 'Successful execution implicitly cleared forced-failure quarantine.' >&2
     exit 1

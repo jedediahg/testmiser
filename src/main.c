@@ -1108,8 +1108,13 @@ int main(int argc, char **argv)
                     candidate_id, candidate_verification_fingerprint,
                     candidate_source);
         } else if (options.explain) {
-            fprintf(stderr,
-                "tm: RUN: no trusted result matched the stable input snapshot\n");
+            int quarantined = tm_attempt_state_has_quarantine(&attempt_state);
+            if (quarantined > 0)
+                fprintf(stderr,
+                    "tm: RUN: prior trusted results in this command/profile/context remain quarantined after a forced contradiction; explicit operator resolution is required\n");
+            else
+                fprintf(stderr,
+                    "tm: RUN: no trusted result matched the stable input snapshot\n");
         }
     }
     if (!cache_hit) {
