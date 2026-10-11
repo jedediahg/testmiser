@@ -138,13 +138,13 @@ must use disposable runners and prevent untrusted pipeline configuration
 from accessing the signing secret.
 
 For evidence-only commits, the test suite itself can be omitted after strict
-validation. The repository scripts `scripts/tm-result-diff.sh` and
-`scripts/tm-ci-validate-results.sh` show the current policy: detect changes
-limited to `.tm/results/**` and `.tm/blobs/**`, then run
-`tm validate --require-trust`. For mixed source/evidence changes, run the
-ordinary test job and validate evidence too. Adapt the base/head selection for
-merge requests and first commits; an unknown diff base must run tests rather
-than be treated as evidence-only.
+validation. The repository helper `scripts/tm-ci-classify-changes.sh` combines
+the source-change and result-diff checks and fails if it cannot classify the
+Git history. It handles an all-zero first-push base by comparing the full tree
+with Git's empty tree. For other unavailable bases, fetch enough history or
+fall back to running the full test suite and validating all available
+evidence; never ignore the classification error. Mixed source/evidence
+changes run the ordinary test job and validate evidence too.
 
 In an adopting project, vendor or adapt the reviewed result-diff helper and
 use logic like this in the test job. `tm-result-diff.sh` exits successfully
@@ -158,27 +158,29 @@ trusted evidence.
 
 ```sh
 base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-${CI_COMMIT_BEFORE_SHA:-}}"
-results_only=false
-has_results=false
-if [[ -n "$base" ]] &&
-  bash scripts/tm-result-diff.sh any "$base" "$CI_COMMIT_SHA"; then
-  has_results=true
-  if bash scripts/tm-result-diff.sh only "$base" "$CI_COMMIT_SHA"; then
-    results_only=true
-  fi
-fi
+classification=$(bash scripts/tm-ci-classify-changes.sh \
+  "$base" "$CI_COMMIT_SHA")
+tests_required=$(printf '%s\n' "$classification" |
+  sed -n 's/^tests_required=//p')
+has_results=$(printf '%s\n' "$classification" |
+  sed -n 's/^has_results=//p')
+results_only=$(printf '%s\n' "$classification" |
+  sed -n 's/^results_only=//p')
 
 if [[ "$results_only" == true ]]; then
   echo "Evidence-only change; skipping application tests."
-else
+elif [[ "$tests_required" == true ]]; then
   TM_RUNTIME_ROOT="$TM_RUNTIME_ROOT" "$TM_BIN" --root . \
     --profile .tm/profiles/portable-linux.json \
     --trust-policy "$TM_TRUST_POLICY_FILE" \
     --output build/reports -- ./scripts/test.sh
+else
+  echo "No test-relevant source changes."
 fi
 
 if [[ "$has_results" == true ]]; then
-  if [[ -d .tm/blobs/sha256 ]]; then
+  if [[ -d .tm/blobs/sha256 && ! -L .tm && ! -L .tm/blobs &&
+        ! -L .tm/blobs/sha256 ]]; then
     find .tm/blobs/sha256 -type f -exec chmod 0444 -- {} +
   fi
   "$TM_BIN" validate --root . \
@@ -186,13 +188,14 @@ if [[ "$has_results" == true ]]; then
 fi
 ```
 
-This preserves test execution for source changes and unknown diff bases while
-avoiding the suite for an evidence-only commit. Use the provider's correct
-merge-request base SHA and ensure the job has enough Git history for the
-three-dot comparison. A missing trust policy must fail strict validation;
-never downgrade it to a successful no-op. Git does not preserve read-only
-permission bits for checked-in regular files, so restore immutable blob mode
-`0444` before validation; the helper script performs this normalization.
+This preserves test execution for source changes and rejects unknown diff
+bases instead of accidentally treating them as evidence-only. Use the
+provider's correct merge-request base SHA and ensure the job has enough Git
+history for the three-dot comparison. A missing trust policy must fail strict
+validation; never downgrade it to a successful no-op. Git does not preserve
+read-only permission bits for checked-in regular files, so restore immutable
+blob mode `0444` before validation; the helper script performs this
+normalization.
 
 For ordinary GitLab pushes and merge requests, use `rules:changes` to avoid
 creating the test job for unrelated paths. Keep source, headers, tests, build
