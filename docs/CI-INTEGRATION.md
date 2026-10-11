@@ -357,7 +357,7 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
-The full portable reuse acceptance script passed on commit `e59159c` inside a
+The full portable reuse acceptance script passed on commit `6d31b80` inside a
 disposable, privileged Debian Trixie container with Bubblewrap and ptrace. This
 run also verified AC-25 behavior: a fresh consumer on another branch reused
 signed evidence whose sidecar and blob mtimes were set to January 2000.
@@ -368,14 +368,16 @@ provider-shaped directions: a GitLab-shaped producer consumed by a
 GitHub-shaped clone, and the reverse. Provider variables are simulated; the
 test does not exercise either provider's artifact service. The container was
 removed automatically after the run. GitHub Actions run
-[`38116857472`](https://github.com/jedediahg/testmiser/actions/runs/38116857472)
-for `7693c8f` passed the ordinary test job, then confirmed that the hosted VM
-cannot create the required network namespace (`Failed RTM_NEWADDR:
-Operation not permitted`) even in privileged Docker. The workflow was returned
-to the protected self-hosted runner requirement. Provision its runner group
-and enablement variable before relying on GitHub portable acceptance. Local
-container success does not replace a successful run on that protected runner
-or a real adopting project's GitLab pipeline.
+[`38118353560`](https://github.com/jedediahg/testmiser/actions/runs/38118353560)
+passed the Debian Trixie source-verification job on `6d31b80`; its final policy
+check correctly failed because the protected portable-acceptance runner is not
+configured. An earlier run ([`38116857472`](https://github.com/jedediahg/testmiser/actions/runs/38116857472))
+confirmed that the hosted VM cannot create the required network namespace
+(`Failed RTM_NEWADDR: Operation not permitted`) even in privileged Docker.
+Provision the restricted ephemeral runner group and enablement variable before
+relying on GitHub portable acceptance. Local container success does not replace
+a successful run on that protected runner or a real adopting project's GitLab
+pipeline.
 
 The repo's CI validates this repository's evidence and runs its own tests; it
 does not prove a separate project's test job is integrated. Provider identity

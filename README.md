@@ -5,10 +5,13 @@ commands. It observes files and execution context, records signed result
 evidence, and skips a command only when a previous successful result is still
 safe to reuse.
 
-The project is in early development. The design is in [the technical
-specification](docs/spec/tm-test-memoization-technical-specification.md); open
-design questions from review are tracked in [implementation
-notes](docs/implementation-notes.md).
+Version 0.1 is a beta candidate under qualification. Local signed reuse and the
+portable acceptance suite are implemented, but provider-level acceptance is
+still required before relying on skipped tests in a project CI pipeline. See
+the [CI integration runbook](docs/CI-INTEGRATION.md) for setup and current
+limits, the [technical specification](docs/spec/tm-test-memoization-technical-specification.md)
+for intended behavior, and [implementation notes](docs/implementation-notes.md)
+for open requirements.
 
 ## Build
 
