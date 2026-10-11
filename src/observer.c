@@ -1529,7 +1529,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     observer.explain = explain;
     observer.repository_root = repository_root;
     observer.controlled_runtime = controlled_runtime;
-    observer.normalized_identity = normalized_identity;
+    observer.normalized_identity = normalized_identity && controlled_runtime;
     observer.output_roots = output_roots;
     observer.output_root_count = output_root_count;
     observer.start_after_exec = start_after_exec;

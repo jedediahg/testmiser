@@ -122,6 +122,28 @@ int main(void)
             identity_report.ineligibility_reasons);
         return 1;
     }
+    if (tm_observe_and_run_with_fds_identity(identity_command, 0, NULL,
+            repository, NULL, 0, 0, 0, NULL, 1, 0, NULL, 0,
+            &identity_report) != 0 ||
+        (identity_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_CONTEXT) == 0 ||
+        tm_observer_report_allows_reuse(&identity_report)) {
+        fprintf(stderr,
+            "observer accepted identity queries without v2 normalization (reasons=0x%08x)\n",
+            identity_report.ineligibility_reasons);
+        return 1;
+    }
+    if (tm_observe_and_run_with_fds_identity(identity_command, 0, NULL,
+            repository, NULL, 0, 0, 0, NULL, 0, 1, NULL, 0,
+            &identity_report) != 0 ||
+        (identity_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_CONTEXT) == 0 ||
+        tm_observer_report_allows_reuse(&identity_report)) {
+        fprintf(stderr,
+            "observer accepted identity normalization without a controlled runtime (reasons=0x%08x)\n",
+            identity_report.ineligibility_reasons);
+        return 1;
+    }
     if (tm_observe_and_run_with_fds(device_command, 0, NULL, repository,
             NULL, 0, 0, 0, device_executable, 1, NULL, 0,
             &device_report) != 0 ||
