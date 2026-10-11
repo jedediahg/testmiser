@@ -736,11 +736,43 @@ fi
 assert_metadata_redacted "$work/shared-producer/.tm/results" \
     "$work/shared-producer" "$work/github-producer-host-home" \
     github-producer-run github-producer-token
-git -C "$work/shared-producer" add -f \
+git -C "$work/shared-producer" add -f .tm/results .tm/blobs \
     build/portable-input.txt build/declared-only.txt \
     build/portable-reuse-probe
 git -C "$work/shared-producer" commit --quiet -m \
-    'Add shared-store acceptance fixture'
+    'Commit GitHub-produced portable evidence'
+git clone --quiet --no-hardlinks --local "$work/shared-producer" \
+    "$work/gitlab-checked-consumer"
+if [[ -d "$work/gitlab-checked-consumer/.tm/blobs/sha256" ]]; then
+    find "$work/gitlab-checked-consumer/.tm/blobs/sha256" -type f \
+        -exec chmod 0444 -- {} +
+fi
+mkdir -p "$work/gitlab-checked-consumer/build/reports"
+if ! (
+    unset GITHUB_RUN_ID GITHUB_WORKSPACE GITHUB_TOKEN
+    export CI_JOB_ID=gitlab-checked-consumer-job
+    export CI_PIPELINE_ID=gitlab-checked-consumer-pipeline
+    export CI_PROJECT_DIR="$work/gitlab-checked-consumer"
+    export CI_JOB_TOKEN=gitlab-checked-consumer-token
+    export HOME="$work/gitlab-checked-consumer-home"
+    run_tm "$work/gitlab-checked-consumer" \
+        "$work/cache-gitlab-checked-consumer" '' '' "$shared_id"
+) >"$work/gitlab-checked-consumer.out" \
+  2>"$work/gitlab-checked-consumer.err"; then
+    cat "$work/gitlab-checked-consumer.err" >&2
+    printf '%s\n' 'GitLab-shaped clone failed to consume committed GitHub evidence.' >&2
+    exit 1
+fi
+if [[ -s "$work/gitlab-checked-consumer.out" ]] ||
+   ! grep -Eq '^tm: SKIP: trusted result record=sha256:[0-9a-f]{64} verification=sha256:[0-9a-f]{64} source=repository$' \
+       "$work/gitlab-checked-consumer.err" ||
+   [[ "$(cat "$work/gitlab-checked-consumer/build/reports/portable-reuse.txt")" != \
+      "$shared_id:unchanged-input" ]]; then
+    cat "$work/gitlab-checked-consumer.err" >&2
+    printf '%s\n' 'GitLab-shaped clone did not reuse committed GitHub evidence.' >&2
+    exit 1
+fi
+
 git clone --quiet --no-hardlinks --local "$work/shared-producer" "$work/shared-consumer"
 git -C "$work/shared-consumer" rm --quiet --ignore-unmatch -r \
     .tm/results .tm/blobs
