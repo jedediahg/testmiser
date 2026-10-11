@@ -987,6 +987,10 @@ int main(int argc, char **argv)
             fprintf(stderr,
                 "tm: strict coordination could not open TM_SHARED_STORE (%s)\n",
                 strerror(errno));
+        } else if (options.explain) {
+            fprintf(stderr,
+                "tm: shared-store invocation lock unavailable; concurrent cold runs may duplicate work (%s)\n",
+                strerror(errno));
         }
         if (!strict_coordination && !invocation_lock_acquired) {
             int lock_result = -1;
