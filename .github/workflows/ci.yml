@@ -33,7 +33,10 @@ jobs:
     needs: test
     # This job uses privileged Docker. Keep it to trusted default-branch pushes;
     # the runner group must independently restrict access to this workflow on main.
-    if: github.event_name == 'push' && needs.test.outputs.tests_required == 'true'
+    if: >-
+      github.event_name == 'push' &&
+      vars.TM_PORTABLE_ACCEPTANCE_ENABLED == 'true' &&
+      needs.test.outputs.tests_required == 'true'
     runs-on:
       group: tm-portable-acceptance
       labels: tm-portable-acceptance

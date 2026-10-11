@@ -36,10 +36,16 @@ dedicated self-hosted runner in that group with the label
 ```sh
 ./config.sh --url https://github.com/jedediahg/testmiser \
   --token "$RUNNER_TOKEN" --labels tm-portable-acceptance --ephemeral
+gh variable set TM_PORTABLE_ACCEPTANCE_ENABLED \
+  --repo jedediahg/testmiser --body true
 ```
 
-The privileged acceptance job runs only on pushes to `main`; pull requests run
-the hosted test job and must pass acceptance after merge. The runner-group
+The privileged acceptance job is skipped until the variable is set to `true`,
+then runs only on pushes to `main`; pull requests run the hosted test job and
+must pass acceptance after merge. Keep the variable unset until the runner
+group and runner are configured. Before beta rollout, require the acceptance
+check on `main` so a skipped or failed acceptance cannot qualify a release.
+The runner-group
 restriction is a security boundary: the job-level event condition is useful for
 scheduling but is not sufficient because pull requests can change workflow
 files. Use a one-job ephemeral runner and destroy or reimage its VM after the
