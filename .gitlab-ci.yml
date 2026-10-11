@@ -15,7 +15,7 @@ stages:
 
 verify:
   stage: verify
-  image: debian:bookworm-slim
+  image: debian:trixie-slim
   interruptible: true
   variables:
     GIT_DEPTH: "0"
@@ -78,7 +78,7 @@ portable-acceptance:
           --volume "$TM_ACCEPTANCE_SHARED_STORE:$TM_ACCEPTANCE_SHARED_STORE" \
           --env "TM_ACCEPTANCE_UID=$acceptance_uid" \
           --env "TM_ACCEPTANCE_SHARED_STORE=$TM_ACCEPTANCE_SHARED_STORE" \
-          debian:bookworm-slim sh -ec '
+          debian:trixie-slim sh -ec '
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install --yes \
               --no-install-recommends build-essential bubblewrap \
@@ -101,7 +101,7 @@ portable-acceptance:
         docker run --rm --privileged \
           --volume "$CI_PROJECT_DIR:/repo:ro" \
           --env "TM_ACCEPTANCE_UID=$acceptance_uid" \
-          debian:bookworm-slim sh -ec '
+          debian:trixie-slim sh -ec '
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install --yes \
               --no-install-recommends build-essential bubblewrap \
@@ -141,7 +141,7 @@ portable-acceptance:
 
 portable-acceptance-policy:
   stage: acceptance-policy
-  image: debian:bookworm-slim
+  image: debian:trixie-slim
   variables:
     GIT_DEPTH: "0"
   before_script:

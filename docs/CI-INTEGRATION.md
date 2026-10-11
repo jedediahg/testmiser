@@ -40,6 +40,9 @@ require ptrace: its observer
 exec-boundary integration check reports a skip when the shared runner denies
 tracing. The protected portable-acceptance job sets `TM_REQUIRE_PTRACE=1`, so
 the release gate still fails if the dedicated runner cannot perform tracing.
+All GitLab job and nested acceptance images use `debian:trixie-slim`; keep
+adopter qualification on the same Debian release when validating runtime
+compatibility.
 
 For GitHub, create an organization runner group named
 `tm-portable-acceptance`, allow only the `jedediahg/testmiser` repository, and
