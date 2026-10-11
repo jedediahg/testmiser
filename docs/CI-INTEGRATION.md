@@ -16,57 +16,31 @@ approved files. If the backend cannot enforce the profile, ordinary runs fall
 back to execution without reuse. A producer invocation with `--signing-key`
 fails closed if the controlled backend cannot start.
 
-The GitHub Actions acceptance job runs Bubblewrap inside a disposable
-privileged Debian container as a non-root user. Standard GitHub-hosted runners
-deny the required network namespace, even for that nested container. The job
-uses a dedicated self-hosted runner group whose Docker daemon permits the
-nested namespace and ptrace operations. The GitLab gate uses
-the `linux-bwrap` runner tag for the same reason. Mark that runner protected,
-and reserve the tag for a dedicated disposable host. The job runs only on
-protected branch/tag pipelines and explicitly excludes merge-request pipelines,
-including same-project requests whose source and target branches are both
-protected. Merge requests run verification on ordinary runners and qualify
-for portable acceptance after merge. A runner tag or job-level rule alone is
-not a security boundary because a merge request can edit `.gitlab-ci.yml`.
-Provision only runners that pass the portable
-acceptance gate; a successful repository workflow does not prove a separate
-project's runner has the same namespace, ptrace, filesystem, or UID behavior.
-The ordinary GitLab verification job does not require ptrace: its observer
+The GitHub Actions acceptance job runs Bubblewrap inside a privileged Debian
+Trixie container as a non-root user on a fresh `ubuntu-24.04` hosted VM. It is
+limited to pushes to `main`; pull requests never run privileged acceptance.
+The acceptance checkout sets `persist-credentials: false`, so no checkout
+token is stored in the workspace mounted into that container. GitHub
+provisions a fresh VM per hosted job and decommissions it
+when the job finishes ([hosted runner lifecycle](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners),
+[workflow containers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container)).
+The required policy check fails a main-branch source change if acceptance is
+skipped or fails. Passing this job qualifies only its hosted-worker setup; it
+does not prove a separate project's runner has equivalent namespace, ptrace,
+filesystem, or UID behavior.
+
+The GitLab gate uses the protected `linux-bwrap` runner tag. Mark that runner
+protected and reserve the tag for a dedicated disposable host. The gate runs
+only on protected branch/tag pipelines and explicitly excludes merge-request
+pipelines, including same-project requests whose source and target branches
+are both protected. Merge requests run verification on ordinary runners. A
+runner tag or job-level rule alone is not a security boundary because a merge
+request can edit `.gitlab-ci.yml`. Provision only runners that pass the
+portable acceptance gate. The ordinary GitLab verification job does not
+require ptrace: its observer
 exec-boundary integration check reports a skip when the shared runner denies
 tracing. The protected portable-acceptance job sets `TM_REQUIRE_PTRACE=1`, so
 the release gate still fails if the dedicated runner cannot perform tracing.
-
-For GitHub, create an organization runner group named
-`tm-portable-acceptance`, allow only the `jedediahg/testmiser` repository, and
-restrict workflow access to
-`jedediahg/testmiser/.github/workflows/ci.yml@refs/heads/main`. Register a
-dedicated self-hosted runner in that group with the label
-`tm-portable-acceptance`:
-
-```sh
-./config.sh --url https://github.com/jedediahg/testmiser \
-  --token "$RUNNER_TOKEN" --labels tm-portable-acceptance --ephemeral
-gh variable set TM_PORTABLE_ACCEPTANCE_ENABLED \
-  --repo jedediahg/testmiser --body true
-```
-
-The privileged acceptance job is skipped until the variable is set to `true`,
-then runs only on pushes to `main`; pull requests run the hosted test job and
-qualify for portable acceptance after merge. GitHub treats a conditionally
-skipped job as successful, so the separate `portable-acceptance-policy` check
-fails a main-branch source-change run unless the privileged acceptance job
-actually succeeds. It passes on pull requests because privileged acceptance
-is deliberately deferred until after merge. Keep the variable unset until the
-runner group and runner are configured; do not qualify a main-branch source
-commit or beta release while this policy check is failing.
-The runner-group
-restriction is a security boundary: the job-level event condition is useful for
-scheduling but is not sufficient because pull requests can change workflow
-files. Use a one-job ephemeral runner and destroy or reimage its VM after the
-job. `--ephemeral` deregisters the runner after one job but does not wipe its
-host. Do not expose secrets, deployment credentials, or internal network access
-to this runner. Do not attach this runner to the default or any unrestricted
-group.
 
 The repository's `.gitlab-ci.yml` routes verification, portable acceptance,
 and final policy checks to ordered stages. A lightweight protected-ref job

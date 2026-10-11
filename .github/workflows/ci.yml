@@ -31,19 +31,17 @@ jobs:
 
   portable-acceptance:
     needs: test
-    # This job uses privileged Docker. Keep it to trusted default-branch pushes;
-    # the runner group must independently restrict access to this workflow on main.
+    # Privileged Docker runs only on GitHub's fresh hosted VM after trusted
+    # default-branch pushes. Pull requests never execute this job.
     if: >-
       github.event_name == 'push' &&
-      vars.TM_PORTABLE_ACCEPTANCE_ENABLED == 'true' &&
       needs.test.outputs.tests_required == 'true'
-    runs-on:
-      group: tm-portable-acceptance
-      labels: tm-portable-acceptance
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Verify signed cross-worktree reuse
         env:
           TM_ACCEPTANCE_SHARED_STORE: ${{ vars.TM_ACCEPTANCE_SHARED_STORE }}

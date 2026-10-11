@@ -6,18 +6,19 @@ workflow=$repo_root/.github/workflows/ci.yml
 runbook=$repo_root/docs/CI-INTEGRATION.md
 
 grep -Fq "github.event_name == 'push'" "$workflow"
-grep -Fq "vars.TM_PORTABLE_ACCEPTANCE_ENABLED == 'true'" "$workflow"
+grep -Fq "needs.test.outputs.tests_required == 'true'" "$workflow"
+grep -Fq 'runs-on: ubuntu-24.04' "$workflow"
+grep -Fq 'debian:trixie-slim' "$workflow"
+grep -Fq -- '--privileged' "$workflow"
+grep -Fq 'persist-credentials: false' "$workflow"
+! grep -Fq 'TM_PORTABLE_ACCEPTANCE_ENABLED' "$workflow"
 grep -Fq 'portable-acceptance-policy:' "$workflow"
 grep -Fq 'if: always()' "$workflow"
 grep -Fq 'bash scripts/tm-github-acceptance-policy.sh' "$workflow"
-grep -Fq 'group: tm-portable-acceptance' "$workflow"
-grep -Fq 'labels: tm-portable-acceptance' "$workflow"
-grep -Fq 'tm-portable-acceptance' "$runbook"
-grep -Fq 'ci.yml@refs/heads/main' "$runbook"
-grep -Fq 'gh variable set TM_PORTABLE_ACCEPTANCE_ENABLED' "$runbook"
-grep -Fq 'job-level event condition is useful for' "$runbook"
-grep -Fq 'one-job ephemeral runner' "$runbook"
-grep -Fq 'destroy or reimage its VM' "$runbook"
+grep -Fq 'fresh `ubuntu-24.04` hosted VM' "$runbook"
+grep -Fq 'persist-credentials: false' "$runbook"
+! grep -Fq 'TM_PORTABLE_ACCEPTANCE_ENABLED' "$runbook"
+! grep -Fq 'tm-portable-acceptance' "$runbook"
 
 if EVENT_NAME=push REF=refs/heads/main TESTS_REQUIRED=true \
     ACCEPTANCE_RESULT=skipped bash \
@@ -35,4 +36,4 @@ EVENT_NAME=push REF=refs/heads/main TESTS_REQUIRED=false \
     ACCEPTANCE_RESULT=skipped bash \
     "$repo_root/scripts/tm-github-acceptance-policy.sh"
 
-echo 'GitHub privileged-runner policy checks passed.'
+echo 'GitHub portable-acceptance policy checks passed.'
