@@ -11,17 +11,32 @@ int tm_lock_acquire(const char *cache_root, const char *repository_id,
                     const char *command_fingerprint,
                     const char *profile_digest, const char *context_digest,
                     struct tm_lock *lock);
+/* Try to acquire without waiting: 0 acquired, 1 already held, -1 error. */
+int tm_lock_try_acquire(const char *cache_root, const char *repository_id,
+                        const char *command_fingerprint,
+                        const char *profile_digest, const char *context_digest,
+                        struct tm_lock *lock);
 int tm_lock_acquire_default(const char *repository_id,
                             const char *command_fingerprint,
                             const char *profile_digest,
                             const char *context_digest,
                             struct tm_lock *lock);
+int tm_lock_try_acquire_default(const char *repository_id,
+                                const char *command_fingerprint,
+                                const char *profile_digest,
+                                const char *context_digest,
+                                struct tm_lock *lock);
 /* Acquire the same slot under the configured shared result store, allowing
  * clients on a coherent shared filesystem to serialize cold misses. */
 int tm_lock_acquire_store(int store_root_fd, const char *repository_id,
                           const char *command_fingerprint,
                           const char *profile_digest,
                           const char *context_digest, struct tm_lock *lock);
+int tm_lock_try_acquire_store(int store_root_fd, const char *repository_id,
+                              const char *command_fingerprint,
+                              const char *profile_digest,
+                              const char *context_digest,
+                              struct tm_lock *lock);
 void tm_lock_release(struct tm_lock *lock);
 
 /* Serialize publication into one checkout's .tm/results tree with

@@ -83,10 +83,10 @@ static int open_private_directory(int parent, const char *name)
     return directory;
 }
 
-int tm_lock_acquire(const char *cache_root, const char *repository_id,
+static int acquire_user(const char *cache_root, const char *repository_id,
                     const char *command_fingerprint,
                     const char *profile_digest, const char *context_digest,
-                    struct tm_lock *lock)
+                    struct tm_lock *lock, int nonblocking)
 {
     static const unsigned char domain[] = "tm-local-lock-v1\0";
     unsigned char material[sizeof(domain) - 1 + 4 + 128 + 3 * (4 + 71)];
@@ -135,8 +135,15 @@ int tm_lock_acquire(const char *cache_root, const char *repository_id,
         errno = EACCES;
         goto fail;
     }
-    while (flock(descriptor, LOCK_EX) < 0) {
+    while (flock(descriptor, LOCK_EX | (nonblocking ? LOCK_NB : 0)) < 0) {
         if (errno == EINTR) continue;
+        if (nonblocking && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            close(descriptor);
+            close(locks);
+            close(app);
+            close(root);
+            return 1;
+        }
         goto fail;
     }
     lock->fd = descriptor;
@@ -156,10 +163,29 @@ fail:
     return -1;
 }
 
-int tm_lock_acquire_store(int store_root_fd, const char *repository_id,
+int tm_lock_acquire(const char *cache_root, const char *repository_id,
+                    const char *command_fingerprint,
+                    const char *profile_digest, const char *context_digest,
+                    struct tm_lock *lock)
+{
+    return acquire_user(cache_root, repository_id, command_fingerprint,
+                        profile_digest, context_digest, lock, 0);
+}
+
+int tm_lock_try_acquire(const char *cache_root, const char *repository_id,
+                        const char *command_fingerprint,
+                        const char *profile_digest, const char *context_digest,
+                        struct tm_lock *lock)
+{
+    return acquire_user(cache_root, repository_id, command_fingerprint,
+                        profile_digest, context_digest, lock, 1);
+}
+
+static int acquire_store(int store_root_fd, const char *repository_id,
                           const char *command_fingerprint,
                           const char *profile_digest,
-                          const char *context_digest, struct tm_lock *lock)
+                          const char *context_digest, struct tm_lock *lock,
+                          int nonblocking)
 {
     static const unsigned char domain[] = "tm-shared-lock-v1\0";
     unsigned char material[sizeof(domain) - 1 + 4 + 128 + 3 * (4 + 71)];
@@ -205,8 +231,13 @@ int tm_lock_acquire_store(int store_root_fd, const char *repository_id,
         errno = EACCES;
         goto fail;
     }
-    while (flock(descriptor, LOCK_EX) < 0) {
+    while (flock(descriptor, LOCK_EX | (nonblocking ? LOCK_NB : 0)) < 0) {
         if (errno == EINTR) continue;
+        if (nonblocking && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            close(descriptor);
+            close(locks);
+            return 1;
+        }
         goto fail;
     }
     lock->fd = descriptor;
@@ -220,6 +251,25 @@ fail:
     if (locks >= 0) close(locks);
     errno = saved;
     return -1;
+}
+
+int tm_lock_acquire_store(int store_root_fd, const char *repository_id,
+                          const char *command_fingerprint,
+                          const char *profile_digest,
+                          const char *context_digest, struct tm_lock *lock)
+{
+    return acquire_store(store_root_fd, repository_id, command_fingerprint,
+                         profile_digest, context_digest, lock, 0);
+}
+
+int tm_lock_try_acquire_store(int store_root_fd, const char *repository_id,
+                              const char *command_fingerprint,
+                              const char *profile_digest,
+                              const char *context_digest,
+                              struct tm_lock *lock)
+{
+    return acquire_store(store_root_fd, repository_id, command_fingerprint,
+                         profile_digest, context_digest, lock, 1);
 }
 
 int tm_lock_acquire_repository_results(int repository_fd,
@@ -281,6 +331,23 @@ int tm_lock_acquire_default(const char *repository_id,
     if (tm_user_cache_root(&cache_root) < 0) return -1;
     result = tm_lock_acquire(cache_root, repository_id, command_fingerprint,
                              profile_digest, context_digest, lock);
+    saved = errno;
+    free(cache_root);
+    errno = saved;
+    return result;
+}
+
+int tm_lock_try_acquire_default(const char *repository_id,
+                               const char *command_fingerprint,
+                               const char *profile_digest,
+                               const char *context_digest,
+                               struct tm_lock *lock)
+{
+    char *cache_root = NULL;
+    int result, saved;
+    if (tm_user_cache_root(&cache_root) < 0) return -1;
+    result = tm_lock_try_acquire(cache_root, repository_id,
+        command_fingerprint, profile_digest, context_digest, lock);
     saved = errno;
     free(cache_root);
     errno = saved;

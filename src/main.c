@@ -955,10 +955,24 @@ int main(int argc, char **argv)
         reusable_context && command_fingerprint[0] != '\0' &&
         repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
         if (tm_shared_store_open_configured(&lock_store_fd) == 0) {
-            if (tm_lock_acquire_store(lock_store_fd,
+            int lock_result = options.explain ?
+                tm_lock_try_acquire_store(lock_store_fd,
                     tm_profile_repository_id(profile), command_fingerprint,
                     tm_profile_digest(profile), context_fingerprint,
-                    &invocation_lock) == 0) {
+                    &invocation_lock) : -1;
+            if (lock_result == 1) {
+                fprintf(stderr, "tm: WAIT: equivalent invocation owns the shared execution slot; waiting to recheck trusted results\n");
+                lock_result = tm_lock_acquire_store(lock_store_fd,
+                    tm_profile_repository_id(profile), command_fingerprint,
+                    tm_profile_digest(profile), context_fingerprint,
+                    &invocation_lock);
+            } else if (lock_result < 0) {
+                lock_result = tm_lock_acquire_store(lock_store_fd,
+                    tm_profile_repository_id(profile), command_fingerprint,
+                    tm_profile_digest(profile), context_fingerprint,
+                    &invocation_lock);
+            }
+            if (lock_result == 0) {
                 invocation_lock_acquired = 1;
             } else if (strict_coordination) {
                 fprintf(stderr,
@@ -974,44 +988,52 @@ int main(int argc, char **argv)
                 "tm: strict coordination could not open TM_SHARED_STORE (%s)\n",
                 strerror(errno));
         }
-        if (!strict_coordination && !invocation_lock_acquired &&
-            tm_lock_acquire_default(tm_profile_repository_id(profile),
-                command_fingerprint, tm_profile_digest(profile),
-                context_fingerprint, &invocation_lock) == 0) {
-            invocation_lock_acquired = 1;
-            /* Waiting may outlast a host-context change. Do not use a lock
-             * acquired under a stale fingerprint for lookup or publication. */
-            {
-                struct tm_json_value *environment =
-                    environment_json(child_environment);
-                struct tm_json_value *execution_context = NULL;
-                struct tm_json_value *profile_context = NULL;
-                char *bubblewrap_path = NULL;
-                char bubblewrap_digest[72], current_context[72];
-                int stable = environment != NULL &&
-                    tm_backend_executable_identity(&bubblewrap_path,
-                        bubblewrap_digest) == 0 &&
-                    tm_context_capture_linux(&execution_context) == 0 &&
-                    tm_context_project_bubblewrap(execution_context,
-                        tm_profile_backend_contract(profile),
-                        bubblewrap_digest, &profile_context) == 0 &&
-                    tm_context_fingerprint(environment, profile_context,
-                        current_context) == 0 &&
-                    strcmp(current_context, context_fingerprint) == 0;
-                free(bubblewrap_path);
-                tm_json_free(profile_context);
-                tm_json_free(execution_context);
-                tm_json_free(environment);
-                if (!stable) {
-                    reusable_context = 0;
-                    tm_lock_release(&invocation_lock);
-                    invocation_lock_acquired = 0;
-                    if (options.explain)
-                        fprintf(stderr, "tm: reuse rejected: execution context changed while waiting for the invocation lock\n");
-                }
+        if (!strict_coordination && !invocation_lock_acquired) {
+            int lock_result = -1;
+            if (options.explain) {
+                lock_result = tm_lock_try_acquire_default(
+                    tm_profile_repository_id(profile), command_fingerprint,
+                    tm_profile_digest(profile), context_fingerprint,
+                    &invocation_lock);
+                if (lock_result == 1)
+                    fprintf(stderr, "tm: WAIT: equivalent invocation owns the per-user execution slot; waiting to recheck trusted results\n");
             }
-        } else if (!strict_coordination && !invocation_lock_acquired && options.explain) {
-            fprintf(stderr, "tm: invocation lock unavailable; concurrent cold runs may duplicate work\n");
+            if (lock_result != 0)
+                lock_result = tm_lock_acquire_default(
+                    tm_profile_repository_id(profile), command_fingerprint,
+                    tm_profile_digest(profile), context_fingerprint,
+                    &invocation_lock);
+            if (lock_result == 0) invocation_lock_acquired = 1;
+            if (!invocation_lock_acquired && options.explain)
+                fprintf(stderr, "tm: invocation lock unavailable; concurrent cold runs may duplicate work\n");
+        }
+    }
+    if (invocation_lock_acquired) {
+        struct tm_json_value *environment = environment_json(child_environment);
+        struct tm_json_value *execution_context = NULL;
+        struct tm_json_value *profile_context = NULL;
+        char *bubblewrap_path = NULL;
+        char bubblewrap_digest[72], current_context[72];
+        int stable = environment != NULL &&
+            tm_backend_executable_identity(&bubblewrap_path,
+                bubblewrap_digest) == 0 &&
+            tm_context_capture_linux(&execution_context) == 0 &&
+            tm_context_project_bubblewrap(execution_context,
+                tm_profile_backend_contract(profile), bubblewrap_digest,
+                &profile_context) == 0 &&
+            tm_context_fingerprint(environment, profile_context,
+                current_context) == 0 &&
+            strcmp(current_context, context_fingerprint) == 0;
+        free(bubblewrap_path);
+        tm_json_free(profile_context);
+        tm_json_free(execution_context);
+        tm_json_free(environment);
+        if (!stable) {
+            reusable_context = 0;
+            tm_lock_release(&invocation_lock);
+            invocation_lock_acquired = 0;
+            if (options.explain)
+                fprintf(stderr, "tm: reuse rejected: execution context changed while waiting for the invocation lock\n");
         }
     }
     if (strict_coordination && !invocation_lock_acquired) {

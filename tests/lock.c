@@ -114,6 +114,9 @@ int main(int argc, char **argv)
         struct pollfd event = {acquired[0], POLLIN, 0};
         int polled;
         if (read(ready[0], &byte, 1) != 1 || byte != 'r') goto done;
+        if (tm_lock_try_acquire_default("sample", command_digest,
+                profile_digest, context_digest, &rejected) != 1 ||
+            rejected.fd >= 0) goto done;
         polled = poll(&event, 1, 100);
         if (polled != 0) {
             fprintf(stderr, "lock became available early: poll=%d revents=%d\n",
@@ -136,6 +139,9 @@ int main(int argc, char **argv)
         child = -1;
     }
     stage = 6;
+    if (tm_lock_try_acquire_default("sample", command_digest,
+            profile_digest, context_digest, &rejected) != 0) goto done;
+    tm_lock_release(&rejected);
     if (mkdtemp(link) == NULL) goto done;
     if (rmdir(link) < 0 || symlink(cache, link) < 0 ||
         tm_lock_acquire(link, "sample", command_digest, profile_digest,
@@ -184,6 +190,9 @@ int main(int argc, char **argv)
         struct pollfd event = {shared_acquired[0], POLLIN, 0};
         int polled;
         if (read(shared_ready[0], &byte, 1) != 1 || byte != 'r') goto done;
+        if (tm_lock_try_acquire_store(store_fd, "sample", command_digest,
+                profile_digest, context_digest, &rejected) != 1 ||
+            rejected.fd >= 0) goto done;
         polled = poll(&event, 1, 100);
         if (polled != 0) {
             fprintf(stderr, "shared-store lock became available early\n");
