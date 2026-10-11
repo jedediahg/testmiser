@@ -8,6 +8,7 @@ fi
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/.." && pwd)
+cd "$repo_root"
 classification=$(bash "$script_dir/tm-ci-classify-changes.sh" "$1" "$2")
 tests_required=$(sed -n 's/^tests_required=//p' <<<"$classification")
 has_results=$(sed -n 's/^has_results=//p' <<<"$classification")

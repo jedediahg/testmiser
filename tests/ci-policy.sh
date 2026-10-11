@@ -44,10 +44,10 @@ git -C "$fixture" commit --quiet -m evidence
 evidence=$(git -C "$fixture" rev-parse HEAD)
 : >"$work/make.log"
 : >"$work/validate.log"
-(cd "$fixture" && PATH="$fixture/bin:$PATH" \
+(cd "$work" && PATH="$fixture/bin:$PATH" \
     TM_CI_MAKE_LOG="$work/make.log" TM_CI_VALIDATE_LOG="$work/validate.log" \
     GITHUB_OUTPUT="$work/github-output" \
-    bash scripts/tm-ci-run-tests.sh "$base" "$evidence")
+    bash "$fixture/scripts/tm-ci-run-tests.sh" "$base" "$evidence")
 grep -Fqx 'build/tm' "$work/make.log"
 grep -Fq 'validate --root . --require-trust' "$work/validate.log"
 grep -Fxq 'tests_required=false' "$work/github-output"
