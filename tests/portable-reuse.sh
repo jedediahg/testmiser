@@ -442,6 +442,9 @@ git -C "$work/producer" add -f .tm/results .tm/blobs \
 git -C "$work/producer" commit --quiet -m 'Add portable reuse acceptance evidence'
 
 git clone --quiet --no-hardlinks --local "$work/producer" "$work/consumer"
+git -C "$work/consumer" switch --quiet --create tm-old-evidence
+find "$work/consumer/.tm/results" "$work/consumer/.tm/blobs" \
+    -type f -exec touch -d '2000-01-01 UTC' -- {} +
 if [[ -d "$work/consumer/.tm/blobs/sha256" ]]; then
     find "$work/consumer/.tm/blobs/sha256" -type f \
         -exec chmod 0444 -- {} +
@@ -493,8 +496,16 @@ fi
 
 # A trusted input match with a missing required output blob must explain the
 # artifact miss, then execute the command instead of returning a false hit.
+consumer_record_id=$(sed -n \
+    's/^tm: SKIP: trusted result record=sha256:\([0-9a-f]*\) verification=.*/\1/p' \
+    "$work/consumer.err")
+if [[ ! "$consumer_record_id" =~ ^[0-9a-f]{64}$ ]]; then
+    cat "$work/consumer.err" >&2
+    printf '%s\n' 'Could not identify the accepted consumer record.' >&2
+    exit 1
+fi
 consumer_record=$(find "$work/consumer/.tm/results" -type f \
-    -name '*.tm.json' -print -quit)
+    -name "$consumer_record_id.tm.json" -print -quit)
 consumer_blob_digest=$(jq -r \
     '[.payload.outputs[]? | select(.kind == "file") | .sha256][0] // empty' \
     "$consumer_record")

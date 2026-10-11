@@ -116,10 +116,12 @@ The generic cache unit is a command invocation. Overlapping suites cannot dedupl
 Acceptance criteria AC-13 through AC-25 remain release requirements for
 provenance, privacy, output restoration, canonical identities, cross-provider
 reuse, coordination, and no implicit repeat policy. The portable acceptance
-harness covers checked-in clean-clone reuse, linked-worktree per-user reuse,
-mounted-store reuse/invalidation, test executable and input invalidation,
-output restoration, retry after failed inputs, sign-enabled signal termination
-without result publication, and shared-store cold-miss coordination. A failed
+harness covers checked-in clean-clone reuse on a new branch with old sidecar
+and blob modification times, both provider-shaped evidence directions,
+linked-worktree per-user reuse, mounted-store reuse/invalidation, test
+executable and input invalidation, output restoration, retry after failed
+inputs, sign-enabled signal termination without result publication, and
+shared-store cold-miss coordination. A failed
 state for input B preserves a prior trusted success for input A. Incomplete
 signal observation conservatively creates a command/context-wide local block;
 the signal test isolates that state to avoid masking the prior success under

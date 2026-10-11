@@ -19,7 +19,9 @@ forced same-fingerprint failure quarantine, persistence across successful
 reruns, and reuse only after explicit operator resolution,
 sign-enabled signal termination without result publication, stale-output
 replacement, linked worktree reuse from the per-user store, and cross-client
-reuse through the optional filesystem store. It also checks that `--explain`
+reuse through the optional filesystem store. The clean-clone hit uses a new
+branch and old sidecar/blob mtimes, proving transport age and branch changes
+alone do not expire accepted evidence. It also checks that `--explain`
 reports each hit's trusted record, verification fingerprint, and store source,
 plus revoked-producer lookup rejection and approval restoration, CI metadata
 redaction, strict coordination failure and the available-mode duplicate-work
