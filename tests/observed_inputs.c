@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,8 @@ int main(void)
     char symlink_other[512] = {0}, symlink_one[512] = {0};
     char symlink_two[512] = {0}, symlink_directory[512] = {0};
     char symlink_child[512] = {0}, symlink_dir_link[512] = {0};
+    char symlink_escape[512] = {0}, symlink_absolute[512] = {0};
+    char symlink_chain[TM_OBSERVED_INPUT_MAX_SYMLINKS + 1][512] = {{0}};
     struct tm_observer_report report = {0};
     struct tm_observed_input_manifest manifest = {0};
     struct tm_snapshot *snapshot = NULL, *changed_snapshot = NULL;
@@ -43,6 +46,7 @@ int main(void)
     int changed_snapshot_root = -1;
     char snapshot_digest[72];
     int root = -1, status = 1;
+    size_t chain_index;
 
     if (mkdtemp(directory) == NULL) return 1;
     if (snprintf(file, sizeof(file), "%s/alpha", directory) >=
@@ -235,6 +239,68 @@ int main(void)
     tm_snapshot_free(snapshot);
     snapshot = NULL;
 
+    if (snprintf(symlink_escape, sizeof(symlink_escape), "%s/escape",
+                 symlink_root) >= (int)sizeof(symlink_escape) ||
+        snprintf(symlink_absolute, sizeof(symlink_absolute), "%s/absolute",
+                 symlink_root) >= (int)sizeof(symlink_absolute) ||
+        symlink("../outside", symlink_escape) < 0 ||
+        symlink("/etc/passwd", symlink_absolute) < 0) {
+        perror("unsafe symlink fixture setup failed");
+        goto done;
+    }
+    for (chain_index = 0;
+         chain_index <= TM_OBSERVED_INPUT_MAX_SYMLINKS; chain_index++) {
+        char link_name[64], next_name[64];
+        int length = snprintf(link_name, sizeof(link_name), "long-%02zu",
+                              chain_index);
+        if (length < 0 || (size_t)length >= sizeof(link_name) ||
+            snprintf(symlink_chain[chain_index],
+                     sizeof(symlink_chain[chain_index]), "%s/%s",
+                     symlink_root, link_name) >=
+                (int)sizeof(symlink_chain[chain_index])) {
+            errno = ENAMETOOLONG;
+            goto done;
+        }
+        if (chain_index < TM_OBSERVED_INPUT_MAX_SYMLINKS) {
+            length = snprintf(next_name, sizeof(next_name), "long-%02zu",
+                              chain_index + 1);
+            if (length < 0 || (size_t)length >= sizeof(next_name)) {
+                errno = ENAMETOOLONG;
+                goto done;
+            }
+        } else {
+            strcpy(next_name, "target");
+        }
+        if (symlink(next_name, symlink_chain[chain_index]) < 0) {
+            perror("long symlink chain setup failed");
+            goto done;
+        }
+    }
+    report.candidate_count = 1;
+    snprintf(report.candidates[0].kind,
+             sizeof(report.candidates[0].kind), "opened file");
+    snprintf(report.candidates[0].path,
+             sizeof(report.candidates[0].path), "symlink-root/escape");
+    if (tm_observer_capture_inputs(&report, root, &manifest) == 0) {
+        tm_observed_input_manifest_clear(&manifest);
+        fprintf(stderr, "parent-escaping symlink was accepted\n");
+        goto done;
+    }
+    snprintf(report.candidates[0].path,
+             sizeof(report.candidates[0].path), "symlink-root/absolute");
+    if (tm_observer_capture_inputs(&report, root, &manifest) == 0) {
+        tm_observed_input_manifest_clear(&manifest);
+        fprintf(stderr, "absolute symlink was accepted\n");
+        goto done;
+    }
+    snprintf(report.candidates[0].path,
+             sizeof(report.candidates[0].path), "symlink-root/long-00");
+    if (tm_observer_capture_inputs(&report, root, &manifest) == 0) {
+        tm_observed_input_manifest_clear(&manifest);
+        fprintf(stderr, "over-limit symlink chain was accepted\n");
+        goto done;
+    }
+
     if (tm_snapshot_create(root, snapshot_paths, 1, &snapshot) < 0 ||
         (snapshot_root = tm_snapshot_open_root(snapshot, 0)) < 0 ||
         write_file(child, "changed after snapshot\n") < 0) goto done;
@@ -353,6 +419,11 @@ done:
     unlink(symlink_one);
     unlink(symlink_two);
     unlink(symlink_dir_link);
+    unlink(symlink_escape);
+    unlink(symlink_absolute);
+    for (chain_index = 0;
+         chain_index <= TM_OBSERVED_INPUT_MAX_SYMLINKS; chain_index++)
+        unlink(symlink_chain[chain_index]);
     unlink(symlink_child);
     rmdir(symlink_directory);
     unlink(symlink_target);
