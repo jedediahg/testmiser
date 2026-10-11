@@ -11,11 +11,11 @@ checks the uncached fallback.
 ## Portable reuse gate
 
 `portable-reuse.sh` verifies signed output-bearing reuse in a clean clone,
-input invalidation and state reversion, repeated execution after a failed
-input state without poisoning an unrelated trusted success, stale-output
-replacement, linked worktree reuse from the per-user store, and cross-client
-reuse through the optional filesystem store. It also checks CI metadata
-redaction, strict mode failure when coordination is unavailable, and
+test executable and input invalidation, state reversion, repeated execution
+after a failed input state without poisoning an unrelated trusted success,
+stale-output replacement, linked worktree reuse from the per-user store, and
+cross-client reuse through the optional filesystem store. It also checks CI
+metadata redaction, strict mode failure when coordination is unavailable, and
 exactly-one execution for concurrent cold requests. The probe uses GitLab-like
 and GitHub-like environment variables; this does not exercise either
 provider's actual pipeline configuration.

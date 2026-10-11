@@ -213,6 +213,44 @@ if [[ -s "$work/consumer.out" ]] ||
     exit 1
 fi
 
+# The executable itself is an approved input. A byte change must invalidate
+# the hit even when the test data is unchanged; restoring it should recover A.
+probe_copy=$work/portable-reuse.original
+cp "$work/consumer/build/portable-reuse-probe" "$probe_copy"
+probe_prefix_offset=$(LC_ALL=C grep -abo -m1 'fail:' \
+    "$work/consumer/build/portable-reuse-probe" | cut -d: -f1)
+if [[ ! "$probe_prefix_offset" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' 'Could not locate the portable probe mutation marker.' >&2
+    exit 1
+fi
+printf 'FAIL:' | dd of="$work/consumer/build/portable-reuse-probe" \
+    bs=1 seek="$probe_prefix_offset" conv=notrunc status=none
+if ! run_tm "$work/consumer" "$work/cache-consumer" \
+    >"$work/changed-test.out" 2>"$work/changed-test.err"; then
+    cat "$work/changed-test.err" >&2
+    exit 1
+fi
+if [[ "$(cat "$work/changed-test.out")" != "$id:unchanged-input" ]] ||
+   ! grep -q '^tm: RUN:' "$work/changed-test.err" ||
+   grep -q '^tm: SKIP: trusted result ' "$work/changed-test.err"; then
+    cat "$work/changed-test.err" >&2
+    printf '%s\n' 'Changed test executable reused stale evidence.' >&2
+    exit 1
+fi
+cp "$probe_copy" "$work/consumer/build/portable-reuse-probe"
+chmod 0755 "$work/consumer/build/portable-reuse-probe"
+if ! run_tm "$work/consumer" "$work/cache-consumer" \
+    >"$work/restored-test.out" 2>"$work/restored-test.err"; then
+    cat "$work/restored-test.err" >&2
+    exit 1
+fi
+if [[ -s "$work/restored-test.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/restored-test.err"; then
+    cat "$work/restored-test.err" >&2
+    printf '%s\n' 'Restoring the test executable did not recover trusted evidence.' >&2
+    exit 1
+fi
+
 # A deterministic failure for state B must execute again on the next
 # invocation, while the trusted success for state A remains reusable.
 printf '%s\n' 'fail:broken-state' \
@@ -449,4 +487,4 @@ if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
     exit 1
 fi
 
-printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, failure retry/recovery, state reversion, output restoration, invalidation, and cold-miss coordination passed.'
+printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, test/input invalidation, failure retry/recovery, state reversion, output restoration, and cold-miss coordination passed.'
