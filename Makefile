@@ -43,7 +43,7 @@ test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_
 	./$(BUILD_DIR)/test_trust
 	./$(BUILD_DIR)/test_profile
 	./$(BUILD_DIR)/test_repo
-	./$(BUILD_DIR)/test_lock
+	./$(BUILD_DIR)/test_lock ./$(TARGET)
 	./$(BUILD_DIR)/test_local_store
 	./$(BUILD_DIR)/test_runtime
 	./$(BUILD_DIR)/test_backend

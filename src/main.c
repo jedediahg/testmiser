@@ -1161,6 +1161,7 @@ int main(int argc, char **argv)
         int configured_store_fd = -1;
         int record_ready = 0, published_anywhere = 0;
         struct tm_output_manifest shared_outputs = {0};
+        struct tm_lock repository_results_lock = {-1};
         if (tm_verification_fingerprint(&identity,
                                         verification_fingerprint) == 0 &&
             tm_result_create_with_outputs(&identity, signing_epoch,
@@ -1168,15 +1169,23 @@ int main(int argc, char **argv)
                 &record, &record_length, record_id) == 0)
             record_ready = 1;
         if (record_ready) {
-            if (tm_result_store(repository_fd, record, record_length,
-                                record_id) == 0) {
-                published_anywhere = 1;
-                if (options.explain)
-                    fprintf(stderr, "tm: signed result published: %s\n",
-                            record_id);
+            if (tm_lock_acquire_repository_results(repository_fd,
+                    &repository_results_lock) == 0) {
+                if (tm_result_store(repository_fd, record, record_length,
+                                    record_id) == 0) {
+                    published_anywhere = 1;
+                    if (options.explain)
+                        fprintf(stderr, "tm: signed result published: %s\n",
+                                record_id);
+                } else if (options.explain) {
+                    fprintf(stderr,
+                        "tm: repository result publication failed (%s)\n",
+                        strerror(errno));
+                }
+                tm_lock_release(&repository_results_lock);
             } else if (options.explain) {
                 fprintf(stderr,
-                    "tm: repository result publication failed (%s)\n",
+                    "tm: repository publication lock unavailable (%s)\n",
                     strerror(errno));
             }
             if (tm_local_store_open_default(&shared_store_fd) == 0) {

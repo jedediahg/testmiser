@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "tm/clean.h"
+#include "tm/lock.h"
 #include "tm/repo.h"
 #include "tm/tm.h"
 
@@ -70,6 +71,7 @@ int tm_clean_main(int argc, char **argv)
     const char *requested_root = NULL;
     char *root = NULL;
     int records = 0, root_fd = -1, tm_fd = -1, results_fd = -1;
+    struct tm_lock publication_lock = {-1};
     int index, result = TM_EXIT_INTERNAL_ERROR;
 
     for (index = 2; index < argc; index++) {
@@ -91,6 +93,8 @@ int tm_clean_main(int argc, char **argv)
                    O_NOFOLLOW);
     if (tm_fd < 0 && errno == ENOENT) { result = 0; goto done; }
     if (tm_fd < 0) goto failure;
+    if (tm_lock_acquire_repository_results(root_fd, &publication_lock) < 0)
+        goto failure;
     results_fd = openat(tm_fd, "results", O_RDONLY | O_DIRECTORY | O_CLOEXEC |
                         O_NOFOLLOW);
     if (results_fd < 0 && errno == ENOENT) { result = 0; goto done; }
@@ -102,6 +106,7 @@ int tm_clean_main(int argc, char **argv)
 failure:
     fprintf(stderr, "tm: clean failed: %s\n", strerror(errno));
 done:
+    tm_lock_release(&publication_lock);
     if (results_fd >= 0) close(results_fd);
     if (tm_fd >= 0) close(tm_fd);
     if (root_fd >= 0) close(root_fd);

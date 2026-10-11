@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -36,16 +37,21 @@ static int count_files(const char *directory_path)
     return count;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     char cache[] = "/tmp/tm-lock-test-XXXXXX";
     char link[] = "/tmp/tm-lock-link-XXXXXX";
+    char repository[] = "/tmp/tm-repository-lock-XXXXXX";
     char lock_directory[256] = {0}, unsafe_root[512];
     struct tm_lock held = {-1}, independent = {-1}, rejected = {-1};
     struct tm_lock shared_held = {-1};
+    struct tm_lock repository_held = {-1};
     int ready[2] = {-1, -1}, acquired[2] = {-1, -1};
     int shared_ready[2] = {-1, -1}, shared_acquired[2] = {-1, -1};
+    int repository_ready[2] = {-1, -1}, repository_acquired[2] = {-1, -1};
     int store_fd = -1;
+    int repository_fd = -1;
+    int results_fd = -1;
     pid_t child = -1;
     char *old_xdg_cache = NULL;
     int had_xdg_cache = 0;
@@ -53,7 +59,7 @@ int main(void)
     int had_shared_store = 0;
     int status = 1, stage = 1;
 
-    if (mkdtemp(cache) == NULL ||
+    if (argc != 2 || mkdtemp(cache) == NULL ||
         tm_lock_acquire(cache, "sample", command_digest, profile_digest,
                         context_digest, &held) < 0 ||
         tm_lock_acquire(cache, "sample", other_command_digest, profile_digest,
@@ -199,6 +205,115 @@ int main(void)
         child = -1;
     }
     stage = 8;
+    if (mkdtemp(repository) == NULL ||
+        (repository_fd = open(repository, O_RDONLY | O_DIRECTORY)) < 0 ||
+        tm_lock_acquire_repository_results(repository_fd,
+                                            &repository_held) < 0 ||
+        pipe(repository_ready) < 0 || pipe(repository_acquired) < 0)
+        goto done;
+    child = fork();
+    if (child < 0) goto done;
+    if (child == 0) {
+        struct tm_lock second = {-1};
+        char byte = 'r';
+        close(repository_held.fd);
+        close(repository_ready[0]);
+        close(repository_acquired[0]);
+        if (write(repository_ready[1], &byte, 1) != 1 ||
+            tm_lock_acquire_repository_results(repository_fd, &second) < 0)
+            _exit(2);
+        byte = 'a';
+        if (write(repository_acquired[1], &byte, 1) != 1) _exit(2);
+        tm_lock_release(&second);
+        _exit(0);
+    }
+    close(repository_ready[1]); repository_ready[1] = -1;
+    close(repository_acquired[1]); repository_acquired[1] = -1;
+    {
+        char byte;
+        struct pollfd event = {repository_acquired[0], POLLIN, 0};
+        int polled;
+        if (read(repository_ready[0], &byte, 1) != 1 || byte != 'r')
+            goto done;
+        polled = poll(&event, 1, 100);
+        if (polled != 0) {
+            fprintf(stderr, "repository publication lock became available early\n");
+            goto done;
+        }
+        tm_lock_release(&repository_held);
+        polled = poll(&event, 1, 5000);
+        if (polled != 1 || read(repository_acquired[0], &byte, 1) != 1 ||
+            byte != 'a') {
+            fprintf(stderr, "repository publication lock did not release\n");
+            goto done;
+        }
+    }
+    {
+        int child_status;
+        if (waitpid(child, &child_status, 0) != child ||
+            !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0)
+            goto done;
+        child = -1;
+    }
+    if (tm_lock_acquire_repository_results(repository_fd,
+                                            &repository_held) < 0 ||
+        mkdirat(repository_fd, ".tm/results", 0700) < 0 ||
+        (results_fd = openat(repository_fd, ".tm/results",
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)) < 0)
+        goto done;
+    {
+        int record = openat(results_fd, "held.tm.json",
+            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (record < 0 || close(record) < 0) goto done;
+    }
+    child = fork();
+    if (child < 0) goto done;
+    if (child == 0) {
+        close(repository_held.fd);
+        close(results_fd);
+        close(repository_fd);
+        execl(argv[1], argv[1], "clean", "--root", repository,
+              "--records", (char *)NULL);
+        _exit(127);
+    }
+    {
+        int child_status, waited;
+        struct pollfd delay = {-1, 0, 0};
+        (void)poll(&delay, 0, 100);
+        waited = waitpid(child, &child_status, WNOHANG);
+        if (waited != 0 ||
+            faccessat(results_fd, "held.tm.json", F_OK, 0) < 0) {
+            fprintf(stderr,
+                "tm clean did not wait for repository result publication lock\n");
+            if (waited == child) child = -1;
+            goto done;
+        }
+        tm_lock_release(&repository_held);
+        if (waitpid(child, &child_status, 0) != child ||
+            !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0 ||
+            faccessat(results_fd, "held.tm.json", F_OK, 0) == 0) {
+            fprintf(stderr,
+                "tm clean did not remove records after publication lock release\n");
+            goto done;
+        }
+        child = -1;
+    }
+    close(results_fd);
+    results_fd = -1;
+    if (close(repository_fd) < 0) goto done;
+    repository_fd = -1;
+    {
+        char lock_path[512];
+        if (snprintf(lock_path, sizeof(lock_path),
+                "%s/.tm/.publication.lock", repository) >=
+                (int)sizeof(lock_path) || unlink(lock_path) < 0 ||
+            symlink("/etc/passwd", lock_path) < 0 ||
+            (repository_fd = open(repository, O_RDONLY | O_DIRECTORY)) < 0 ||
+            tm_lock_acquire_repository_results(repository_fd, &rejected) == 0)
+            goto done;
+        tm_lock_release(&rejected);
+    }
+    stage = 9;
     status = 0;
 
 done:
@@ -220,10 +335,16 @@ done:
     if (shared_ready[1] >= 0) close(shared_ready[1]);
     if (shared_acquired[0] >= 0) close(shared_acquired[0]);
     if (shared_acquired[1] >= 0) close(shared_acquired[1]);
+    if (repository_ready[0] >= 0) close(repository_ready[0]);
+    if (repository_ready[1] >= 0) close(repository_ready[1]);
+    if (repository_acquired[0] >= 0) close(repository_acquired[0]);
+    if (repository_acquired[1] >= 0) close(repository_acquired[1]);
     tm_lock_release(&held);
     tm_lock_release(&independent);
     tm_lock_release(&rejected);
     tm_lock_release(&shared_held);
+    tm_lock_release(&repository_held);
+    if (results_fd >= 0) close(results_fd);
     if (store_fd >= 0) close(store_fd);
     if (link[0] != '\0') unlink(link);
     if (cache[0] != '\0') {
@@ -259,6 +380,21 @@ done:
         snprintf(lock_directory, sizeof(lock_directory), "%s/testmiser", cache);
         rmdir(lock_directory);
         rmdir(cache);
+    }
+    if (repository_fd >= 0) close(repository_fd);
+    if (repository[0] != '\0') {
+        char lock_path[512];
+        if (snprintf(lock_path, sizeof(lock_path),
+                "%s/.tm/.publication.lock", repository) <
+            (int)sizeof(lock_path)) unlink(lock_path);
+        snprintf(lock_path, sizeof(lock_path), "%s/.tm/results/held.tm.json",
+                 repository);
+        unlink(lock_path);
+        snprintf(lock_path, sizeof(lock_path), "%s/.tm/results", repository);
+        rmdir(lock_path);
+        snprintf(lock_path, sizeof(lock_path), "%s/.tm", repository);
+        rmdir(lock_path);
+        rmdir(repository);
     }
     if (status != 0)
         fprintf(stderr, "local lock test failed at stage %d: %s\n",

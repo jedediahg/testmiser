@@ -24,4 +24,10 @@ int tm_lock_acquire_store(int store_root_fd, const char *repository_id,
                           const char *context_digest, struct tm_lock *lock);
 void tm_lock_release(struct tm_lock *lock);
 
+/* Serialize publication into one checkout's .tm/results tree with
+ * `tm clean --records`. The lock is opened without following .tm or lock-file
+ * symlinks and is shared by publishers/cleaners using the same repository. */
+int tm_lock_acquire_repository_results(int repository_fd,
+                                      struct tm_lock *lock);
+
 #endif

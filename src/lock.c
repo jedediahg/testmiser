@@ -222,6 +222,54 @@ fail:
     return -1;
 }
 
+int tm_lock_acquire_repository_results(int repository_fd,
+                                      struct tm_lock *lock)
+{
+    struct stat directory_status, lock_status;
+    int metadata = -1, descriptor = -1, saved;
+
+    if (repository_fd < 0 || lock == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    lock->fd = -1;
+    if (mkdirat(repository_fd, ".tm", 0700) < 0 && errno != EEXIST)
+        return -1;
+    metadata = openat(repository_fd, ".tm",
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (metadata < 0) goto fail;
+    if (fstat(metadata, &directory_status) < 0) goto fail;
+    if (!S_ISDIR(directory_status.st_mode) ||
+        directory_status.st_uid != getuid() ||
+        (directory_status.st_mode & 022) != 0) {
+        errno = EACCES;
+        goto fail;
+    }
+    descriptor = openat(metadata, ".publication.lock",
+        O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (descriptor < 0) goto fail;
+    if (fstat(descriptor, &lock_status) < 0) goto fail;
+    if (!S_ISREG(lock_status.st_mode) || lock_status.st_uid != getuid() ||
+        (lock_status.st_mode & 077) != 0 || lock_status.st_nlink != 1) {
+        errno = EACCES;
+        goto fail;
+    }
+    while (flock(descriptor, LOCK_EX) < 0) {
+        if (errno == EINTR) continue;
+        goto fail;
+    }
+    lock->fd = descriptor;
+    close(metadata);
+    return 0;
+
+fail:
+    saved = errno;
+    if (descriptor >= 0) close(descriptor);
+    if (metadata >= 0) close(metadata);
+    errno = saved;
+    return -1;
+}
+
 int tm_lock_acquire_default(const char *repository_id,
                             const char *command_fingerprint,
                             const char *profile_digest,

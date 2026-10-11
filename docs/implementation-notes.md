@@ -56,7 +56,7 @@ On Linux x86-64, the wrapper forwards SIGINT, SIGTERM, SIGHUP, and SIGQUIT to th
 
 The mandatory `--` and exact argv semantics remain. Target additions include approved `--profile`/`--trust-policy`, repeatable `--input`/`--output`, `validate --require-trust`, and scoped `clean` (section 34). `--force` deliberately overrides reuse and participates in failed-attempt/quarantine rules.
 
-`validate` never runs tests or signs records. `clean` preserves checked-in results by default and never discards trust keys or invalidations as disposable cache state. Explain output distinguishes a genuine input change, unavailable evidence/artifacts, untrusted producer, incompatible context, force, and coordination outages.
+`validate` never runs tests or signs records. `clean` preserves checked-in results by default and never discards trust keys or invalidations as disposable cache state. `tm clean --records` serializes with repository-local result publication through `.tm/.publication.lock`. Explain output distinguishes a genuine input change, unavailable evidence/artifacts, untrusted producer, incompatible context, force, and coordination outages.
 
 ## 5. Implementation sequence — portability is a release gate
 
