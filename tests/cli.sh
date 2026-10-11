@@ -515,10 +515,15 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
     exec 9<&-
     grep -q 'inherited or untracked descriptor provenance is not modeled' \
         "$tmp_dir/inherited-fd.err"
-    "$tm_bin" --explain -- "$network_syscall_probe" \
-        2>"$tmp_dir/network-syscalls.err"
-    grep -q 'socket or network operation observed' "$tmp_dir/network-syscalls.err"
-    grep -q 'observer eligibility: blocked' "$tmp_dir/network-syscalls.err"
+    for socket_syscall in 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 \
+        288 299 307; do
+        "$tm_bin" --explain -- "$network_syscall_probe" "$socket_syscall" \
+            2>"$tmp_dir/network-syscall-$socket_syscall.err"
+        grep -q 'socket or network operation observed' \
+            "$tmp_dir/network-syscall-$socket_syscall.err"
+        grep -q 'observer eligibility: blocked' \
+            "$tmp_dir/network-syscall-$socket_syscall.err"
+    done
     "$tm_bin" --explain -- "$execveat_probe" \
         2>"$tmp_dir/execveat.err"
     if grep -q 'unsupported syscall(s):.*322' "$tmp_dir/execveat.err"; then
