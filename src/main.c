@@ -503,7 +503,7 @@ static int find_profile_cache_hit(int repository_fd,
                                   char verification_fingerprint[72],
                                   const char **found_source,
                                   char record_id[72],
-                                  int *trust_rejected)
+                                  struct tm_result_lookup_diagnostics *diagnostics)
 {
     struct tm_snapshot *snapshot = NULL;
     const char **root_paths = NULL;
@@ -512,8 +512,8 @@ static int find_profile_cache_hit(int repository_fd,
     size_t record_length = 0, root_count, index;
     int preflight, found = 1, shared_store_fd = -1;
     int configured_store_fd = -1;
-    int candidate_trust_rejected = 0;
-    if (trust_rejected != NULL) *trust_rejected = 0;
+    struct tm_result_lookup_diagnostics candidate_diagnostics = {0};
+    if (diagnostics != NULL) memset(diagnostics, 0, sizeof(*diagnostics));
     if (found_source != NULL) *found_source = "repository";
     root_count = tm_profile_input_root_count(profile);
     if (root_count > 0) {
@@ -538,20 +538,24 @@ static int find_profile_cache_hit(int repository_fd,
                                      snapshot);
     if (preflight != 1) goto done;
     if (probe_only) {
-        if (trust_rejected != NULL)
+        if (diagnostics != NULL)
             found = tm_result_find_matching_snapshot_record_diagnostic(
                 repository_fd, command_fingerprint, tm_profile_digest(profile),
                 tm_profile_runtime_digest(profile), context_fingerprint,
                 trust_policy, root_paths, root_descriptors, root_count,
                 &record, &record_length, record_id,
-                &candidate_trust_rejected);
+                &candidate_diagnostics);
         else
             found = tm_result_find_matching_snapshot_record(repository_fd,
                 command_fingerprint, tm_profile_digest(profile),
                 tm_profile_runtime_digest(profile), context_fingerprint,
                 trust_policy, root_paths, root_descriptors, root_count,
                 &record, &record_length, record_id);
-        if (candidate_trust_rejected) *trust_rejected = 1;
+        if (diagnostics != NULL) {
+            diagnostics->trust_rejected |= candidate_diagnostics.trust_rejected;
+            diagnostics->inputs_changed |= candidate_diagnostics.inputs_changed;
+            diagnostics->context_changed |= candidate_diagnostics.context_changed;
+        }
     } else
         found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
             repository_fd, repository_fd, repository_fd, command_fingerprint,
@@ -562,22 +566,26 @@ static int find_profile_cache_hit(int repository_fd,
     if (found != 0 && tm_local_store_open_default(&shared_store_fd) == 0) {
         free(record); record = NULL; record_length = 0;
         if (probe_only) {
-            candidate_trust_rejected = 0;
-            if (trust_rejected != NULL)
+            memset(&candidate_diagnostics, 0, sizeof(candidate_diagnostics));
+            if (diagnostics != NULL)
                 found = tm_result_find_matching_snapshot_record_diagnostic(
                     shared_store_fd, command_fingerprint,
                     tm_profile_digest(profile),
                     tm_profile_runtime_digest(profile), context_fingerprint,
                     trust_policy, root_paths, root_descriptors, root_count,
                     &record, &record_length, record_id,
-                    &candidate_trust_rejected);
+                    &candidate_diagnostics);
             else
                 found = tm_result_find_matching_snapshot_record(shared_store_fd,
                     command_fingerprint, tm_profile_digest(profile),
                     tm_profile_runtime_digest(profile), context_fingerprint,
                     trust_policy, root_paths, root_descriptors, root_count,
                     &record, &record_length, record_id);
-            if (candidate_trust_rejected) *trust_rejected = 1;
+            if (diagnostics != NULL) {
+                diagnostics->trust_rejected |= candidate_diagnostics.trust_rejected;
+                diagnostics->inputs_changed |= candidate_diagnostics.inputs_changed;
+                diagnostics->context_changed |= candidate_diagnostics.context_changed;
+            }
         } else
             found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
                 shared_store_fd, repository_fd, shared_store_fd,
@@ -593,15 +601,15 @@ static int find_profile_cache_hit(int repository_fd,
         tm_shared_store_open_configured(&configured_store_fd) == 0) {
         free(record); record = NULL; record_length = 0;
         if (probe_only) {
-            candidate_trust_rejected = 0;
-            if (trust_rejected != NULL)
+            memset(&candidate_diagnostics, 0, sizeof(candidate_diagnostics));
+            if (diagnostics != NULL)
                 found = tm_result_find_matching_snapshot_record_diagnostic(
                     configured_store_fd, command_fingerprint,
                     tm_profile_digest(profile),
                     tm_profile_runtime_digest(profile), context_fingerprint,
                     trust_policy, root_paths, root_descriptors, root_count,
                     &record, &record_length, record_id,
-                    &candidate_trust_rejected);
+                    &candidate_diagnostics);
             else
                 found = tm_result_find_matching_snapshot_record(
                     configured_store_fd, command_fingerprint,
@@ -609,7 +617,11 @@ static int find_profile_cache_hit(int repository_fd,
                     tm_profile_runtime_digest(profile), context_fingerprint,
                     trust_policy, root_paths, root_descriptors, root_count,
                     &record, &record_length, record_id);
-            if (candidate_trust_rejected) *trust_rejected = 1;
+            if (diagnostics != NULL) {
+                diagnostics->trust_rejected |= candidate_diagnostics.trust_rejected;
+                diagnostics->inputs_changed |= candidate_diagnostics.inputs_changed;
+                diagnostics->context_changed |= candidate_diagnostics.context_changed;
+            }
         } else
             found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
                 configured_store_fd, repository_fd, configured_store_fd,
@@ -1150,18 +1162,24 @@ int main(int argc, char **argv)
             else {
                 char probe_fingerprint[72];
                 char probe_id[72];
-                int trust_rejected = 0;
+                struct tm_result_lookup_diagnostics diagnostics = {0};
                 int matching_record = find_profile_cache_hit(repository_fd,
                     profile, runtime_root, repository_root,
                     command_fingerprint, context_fingerprint, trust_policy,
                     options.output_paths, options.output_count, NULL, 0, 1,
-                    probe_fingerprint, NULL, probe_id, &trust_rejected);
+                    probe_fingerprint, NULL, probe_id, &diagnostics);
                 if (matching_record == 0 && options.output_count > 0)
                     fprintf(stderr,
                         "tm: RUN: trusted result matches the stable input snapshot, but required declared output evidence could not be verified or restored\n");
-                else if (trust_rejected)
+                else if (diagnostics.trust_rejected)
                     fprintf(stderr,
                         "tm: RUN: matching result evidence is rejected by the current repository/profile/producer trust policy\n");
+                else if (diagnostics.context_changed)
+                    fprintf(stderr,
+                        "tm: RUN: prior trusted result has the same observed inputs but a different execution context\n");
+                else if (diagnostics.inputs_changed)
+                    fprintf(stderr,
+                        "tm: RUN: prior trusted result has the same execution context but observed inputs changed\n");
                 else
                     fprintf(stderr,
                         "tm: RUN: no trusted result matched the stable input snapshot\n");

@@ -1195,7 +1195,7 @@ static int result_find_matching_inputs(
     const char *const *blocked_fingerprints,
     size_t blocked_count,
     unsigned char **record, size_t *record_length, char record_id[72],
-    int *trust_rejected)
+    struct tm_result_lookup_diagnostics *diagnostics)
 {
     int tmfd = -1, resultsfd = -1, commandfd = -1, duplicate = -1;
     int result = 1, saved;
@@ -1221,7 +1221,7 @@ static int result_find_matching_inputs(
     *record = NULL;
     *record_length = 0;
     record_id[0] = '\0';
-    if (trust_rejected != NULL) *trust_rejected = 0;
+    if (diagnostics != NULL) memset(diagnostics, 0, sizeof(*diagnostics));
     tmfd = open_existing_directory(store_root_fd, ".tm");
     if (tmfd < 0) goto absent_or_error;
     resultsfd = open_existing_directory(tmfd, "results");
@@ -1305,34 +1305,45 @@ static int result_find_matching_inputs(
                        verification_entry->d_name) == 0 &&
                 strcmp(summary.profile_digest, profile_digest) == 0 &&
                 strcmp(summary.runtime_digest, runtime_digest) == 0 &&
-                strcmp(summary.context_digest, context_digest) == 0 &&
                 (name_length = snprintf(expected_name, sizeof(expected_name),
                                          "%s.tm.json", candidate_id + 7)) >= 0 &&
                 (size_t)name_length < sizeof(expected_name) &&
-                strcmp(entry->d_name, expected_name) == 0 &&
-                (snapshot_root_paths == NULL ?
-                    tm_result_verify_inputs_match(candidate, candidate_length,
-                        trust_policy, repository_root_fd, candidate_id) == 0 :
-                    tm_observed_inputs_match_snapshots(summary.inputs,
-                        summary.input_count, snapshot_root_paths,
-                        snapshot_root_descriptors, snapshot_root_count) == 0)) {
+                strcmp(entry->d_name, expected_name) == 0) {
                 if (snapshot_root_paths == NULL) {
-                    candidate_valid = 1;
-                } else if (tm_result_verify_trusted(candidate,
+                    if (strcmp(summary.context_digest, context_digest) == 0 &&
+                        tm_result_verify_inputs_match(candidate,
+                            candidate_length, trust_policy, repository_root_fd,
+                            candidate_id) == 0)
+                        candidate_valid = 1;
+                } else {
+                    int inputs_match = tm_observed_inputs_match_snapshots(
+                        summary.inputs, summary.input_count, snapshot_root_paths,
+                        snapshot_root_descriptors, snapshot_root_count) == 0;
+                    int context_matches =
+                        strcmp(summary.context_digest, context_digest) == 0;
+                    if (tm_result_verify_trusted(candidate,
                         candidate_length, trust_policy,
                         summary.verification_fingerprint, candidate_id) == 0) {
-                    candidate_valid = 1;
-                } else if (trust_rejected != NULL) {
-                    EVP_PKEY *diagnostic_key = NULL;
-                    enum tm_trust_status trust_status =
-                        tm_trust_policy_classify(trust_policy,
-                            summary.repository_id, summary.profile_digest,
-                            summary.key_id, summary.trust_epoch,
-                            summary.semantics_version, &diagnostic_key);
-                    EVP_PKEY_free(diagnostic_key);
-                    if (trust_status != TM_TRUST_APPROVED &&
-                        trust_status != TM_TRUST_POLICY_ERROR)
-                        *trust_rejected = 1;
+                        if (context_matches && inputs_match)
+                            candidate_valid = 1;
+                        else if (diagnostics != NULL) {
+                            if (!context_matches && inputs_match)
+                                diagnostics->context_changed = 1;
+                            else if (context_matches && !inputs_match)
+                                diagnostics->inputs_changed = 1;
+                        }
+                    } else if (diagnostics != NULL && inputs_match) {
+                        EVP_PKEY *diagnostic_key = NULL;
+                        enum tm_trust_status trust_status =
+                            tm_trust_policy_classify(trust_policy,
+                                summary.repository_id, summary.profile_digest,
+                                summary.key_id, summary.trust_epoch,
+                                summary.semantics_version, &diagnostic_key);
+                        EVP_PKEY_free(diagnostic_key);
+                        if (trust_status != TM_TRUST_APPROVED &&
+                            trust_status != TM_TRUST_POLICY_ERROR)
+                            diagnostics->trust_rejected = 1;
+                    }
                 }
             }
             if (candidate_valid && probe_only)
@@ -1438,10 +1449,10 @@ int tm_result_find_matching_snapshot_record_diagnostic(
     const char *context_digest, const struct tm_trust_policy *trust_policy,
     const char *const *root_paths, const int *root_descriptors,
     size_t root_count, unsigned char **record, size_t *record_length,
-    char record_id[72], int *trust_rejected)
+    char record_id[72], struct tm_result_lookup_diagnostics *diagnostics)
 {
     const char *const empty_roots[] = {NULL};
-    if (trust_rejected == NULL || root_count > 10000 ||
+    if (diagnostics == NULL || root_count > 10000 ||
         (root_count > 0 && (root_paths == NULL || root_descriptors == NULL))) {
         errno = EINVAL;
         return -1;
@@ -1450,7 +1461,7 @@ int tm_result_find_matching_snapshot_record_diagnostic(
         root_paths == NULL ? empty_roots : root_paths, root_descriptors,
         root_count, command_fingerprint, profile_digest, runtime_digest,
         context_digest, trust_policy, -1, NULL, 0, 1, NULL, 0, record,
-        record_length, record_id, trust_rejected);
+        record_length, record_id, diagnostics);
 }
 
 int tm_result_find_matching_snapshot_inputs_and_restore(

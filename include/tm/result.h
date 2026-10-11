@@ -36,6 +36,12 @@ struct tm_result_summary {
     size_t output_count;
 };
 
+struct tm_result_lookup_diagnostics {
+    int trust_rejected;
+    int inputs_changed;
+    int context_changed;
+};
+
 /* Build a schema-v3 signed success record (semantics v2) with an empty output
  * manifest. The returned JSON ends with exactly one LF. */
 int tm_result_create(const struct tm_verification_identity *identity,
@@ -99,15 +105,15 @@ int tm_result_find_matching_snapshot_record(
     const char *const *root_paths, const int *root_descriptors,
     size_t root_count, unsigned char **record, size_t *record_length,
     char record_id[72]);
-/* Diagnostic variant: set trust_rejected when an otherwise matching input
- * candidate is rejected by the current repository/profile/key/epoch policy. */
+/* Diagnostic variant: report policy rejection, changed inputs, or changed
+ * context only for structurally valid candidates in the same command/profile. */
 int tm_result_find_matching_snapshot_record_diagnostic(
     int store_root_fd, const char *command_fingerprint,
     const char *profile_digest, const char *runtime_digest,
     const char *context_digest, const struct tm_trust_policy *trust_policy,
     const char *const *root_paths, const int *root_descriptors,
     size_t root_count, unsigned char **record, size_t *record_length,
-    char record_id[72], int *trust_rejected);
+    char record_id[72], struct tm_result_lookup_diagnostics *diagnostics);
 /* Snapshot-input variant that also restores the authenticated output tree
  * before reporting a hit. */
 int tm_result_find_matching_snapshot_inputs_and_restore(

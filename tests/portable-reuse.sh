@@ -356,6 +356,8 @@ if ! run_tm "$work/producer" "$work/cache-producer" "$signing_key" \
 fi
 if [[ "$(cat "$work/declared-changed.out")" != "$id:unchanged-input" ]] ||
    ! grep -q '^tm: RUN:' "$work/declared-changed.err" ||
+   ! grep -q '^tm: RUN: prior trusted result has the same execution context but observed inputs changed$' \
+       "$work/declared-changed.err" ||
    grep -q '^tm: SKIP: trusted result ' "$work/declared-changed.err"; then
     cat "$work/declared-changed.err" >&2
     printf '%s\n' 'Changed declared-only input reused stale evidence.' >&2
@@ -449,6 +451,24 @@ if [[ -s "$work/consumer.out" ]] ||
       -e "$work/consumer/build/reports/stale.txt" ]]; then
     cat "$work/consumer.err" >&2
     printf '%s\n' 'Clean consumer checkout failed to reuse and restore the trusted result.' >&2
+    exit 1
+fi
+
+# Keep the command and observed inputs fixed while changing a captured host
+# limit; this must produce a context-specific miss.
+if ! (
+    ulimit -n 256
+    run_tm "$work/consumer" "$work/cache-consumer"
+) >"$work/context-changed.out" 2>"$work/context-changed.err"; then
+    cat "$work/context-changed.err" >&2
+    exit 1
+fi
+if [[ "$(cat "$work/context-changed.out")" != "$id:unchanged-input" ]] ||
+   ! grep -q '^tm: RUN: prior trusted result has the same observed inputs but a different execution context$' \
+       "$work/context-changed.err" ||
+   grep -q '^tm: SKIP: trusted result ' "$work/context-changed.err"; then
+    cat "$work/context-changed.err" >&2
+    printf '%s\n' 'A different execution context was not explained as a safe miss.' >&2
     exit 1
 fi
 
