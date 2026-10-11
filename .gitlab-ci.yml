@@ -19,12 +19,14 @@ verify:
   variables:
     GIT_DEPTH: "0"
     TM_REQUIRE_PTRACE: "1"
-    TM_TRUST_POLICY_FILE: "$TM_CI_TRUST_POLICY_FILE"
   before_script:
     - apt-get update -qq
     - DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends build-essential ca-certificates git libssl-dev make
   script:
     - |
+      if [ -n "${TM_CI_TRUST_POLICY_FILE:-}" ]; then
+        export TM_TRUST_POLICY_FILE="$TM_CI_TRUST_POLICY_FILE"
+      fi
       base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-${CI_COMMIT_BEFORE_SHA:-}}"
       bash scripts/tm-ci-run-tests.sh "$base" "$CI_COMMIT_SHA"
   rules:
