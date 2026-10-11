@@ -9,6 +9,7 @@ grep -Fq "github.event_name == 'push'" "$workflow"
 grep -Fq 'image: debian:trixie-slim' "$workflow"
 grep -Fq -- '--cap-add=SYS_PTRACE' "$workflow"
 grep -Fq 'options: --cap-add=SYS_PTRACE' "$workflow"
+grep -Fq 'git config --global --add safe.directory "$GITHUB_WORKSPACE"' "$workflow"
 grep -Fq 'Install Trixie test dependencies' "$workflow"
 grep -Fq 'bash build-essential ca-certificates' "$workflow"
 if ! awk '

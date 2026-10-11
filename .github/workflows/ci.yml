@@ -38,6 +38,9 @@ jobs:
           TM_DIFF_HEAD: ${{ github.sha }}
           TM_TRUST_POLICY_JSON: ${{ vars.TM_TRUST_POLICY_JSON }}
         run: |
+          # checkout's safe-directory config is created outside the job
+          # container, so add the mounted workspace to this container's Git config.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           bash scripts/tm-ci-run-tests.sh "$TM_DIFF_BASE" "$TM_DIFF_HEAD"
 
   portable-acceptance:
