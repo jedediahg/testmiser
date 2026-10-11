@@ -18,4 +18,17 @@ awk '
     exit 1
 }
 
-echo 'GitLab profile-change rules checks passed.'
+grep -Fq 'CI_COMMIT_REF_PROTECTED == "true"' "$workflow" || {
+    printf '%s\n' 'GitLab privileged acceptance must require a protected ref.' >&2
+    exit 1
+}
+if awk '
+    /^portable-acceptance:/ { in_acceptance = 1 }
+    in_acceptance && /CI_PIPELINE_SOURCE == "merge_request_event"/ { found = 1 }
+    END { exit !found }
+' "$workflow"; then
+    printf '%s\n' 'GitLab privileged acceptance must not run on merge-request refs.' >&2
+    exit 1
+fi
+
+echo 'GitLab profile-change and protected-runner rules checks passed.'

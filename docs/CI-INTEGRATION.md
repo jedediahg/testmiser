@@ -21,10 +21,14 @@ privileged Debian container as a non-root user. Standard GitHub-hosted runners
 deny the required network namespace, even for that nested container. The job
 uses a dedicated self-hosted runner group whose Docker daemon permits the
 nested namespace and ptrace operations. The GitLab gate uses
-the `linux-bwrap` runner tag for the same reason. Provision only runners that
-pass the portable acceptance gate; a successful repository workflow does not
-prove a separate project's runner has the same namespace, ptrace, filesystem,
-or UID behavior.
+the `linux-bwrap` runner tag for the same reason. Mark that runner protected,
+and reserve the tag for a dedicated disposable host. The job runs only on
+protected branch/tag pipelines after review; merge requests run verification
+on ordinary runners and qualify for portable acceptance after merge. A runner
+tag or job-level rule alone is not a security boundary because a merge request
+can edit `.gitlab-ci.yml`. Provision only runners that pass the portable
+acceptance gate; a successful repository workflow does not prove a separate
+project's runner has the same namespace, ptrace, filesystem, or UID behavior.
 
 For GitHub, create an organization runner group named
 `tm-portable-acceptance`, allow only the `jedediahg/testmiser` repository, and
@@ -62,9 +66,11 @@ then skips source tests for evidence-only commits while still requiring strict
 trusted validation. Configure `TM_CI_TRUST_POLICY_FILE` as a GitLab file-type
 variable containing the operator-managed public consumer trust policy; make it
 available to every pipeline that must validate evidence. Portable acceptance
-uses pinned Docker CLI/daemon images and requires the `linux-bwrap`
+uses pinned Docker CLI/daemon images and requires the protected `linux-bwrap`
 runner to permit privileged Docker-in-Docker, nested user/network namespaces,
-and ptrace. Its Docker executor must mount `/certs/client` for TLS. Ordinary
+and ptrace. Its Docker executor must mount `/certs/client` for TLS. Configure
+it as protected in GitLab runner settings and ensure no unprotected runner
+advertises that tag; this server-side setting is the access control. Ordinary
 shared runners are not suitable for that job.
 
 Keep producers and consumers on a compatible execution context. `tm` includes

@@ -119,7 +119,9 @@ portable-acceptance:
           '
       fi
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # Privileged Docker runs only on server-protected refs. Fork and ordinary
+    # merge requests use the verification job and qualify after a trusted push.
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && ($CI_COMMIT_BRANCH || $CI_COMMIT_TAG)'
       changes: &acceptance_changes
         - Makefile
         - .gitlab-ci.yml
@@ -129,5 +131,3 @@ portable-acceptance:
         - src/**
         - tests/**
         - scripts/**
-    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
-      changes: *acceptance_changes
