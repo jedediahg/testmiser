@@ -11,19 +11,30 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie-slim
+      options: --cap-add=SYS_PTRACE
     outputs:
       results_only: ${{ steps.verify.outputs.results_only }}
       tests_required: ${{ steps.verify.outputs.tests_required }}
     env:
       TM_REQUIRE_PTRACE: "1"
     steps:
+      - name: Install Trixie test dependencies
+        shell: sh
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            --no-install-recommends bash build-essential ca-certificates \
+            git libssl-dev make
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Verify source changes and result evidence
         id: verify
         env:
-          TM_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TM_DIFF_BASE: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
           TM_DIFF_HEAD: ${{ github.sha }}
           TM_TRUST_POLICY_JSON: ${{ vars.TM_TRUST_POLICY_JSON }}
         run: |
@@ -73,7 +84,8 @@ jobs:
               >/etc/sudoers.d/tester
             chmod 0440 /etc/sudoers.d/tester
             sudo -u tester -H git config --global --add safe.directory /repo
-            sudo -u tester -H git config --global --add safe.directory /repo/.git
+            sudo -u tester -H git config --global --add \
+              safe.directory /repo/.git
             sudo -u tester -H git clone --quiet --no-hardlinks --local \
               /repo /home/tester/testmiser
             sudo -u tester -H env \

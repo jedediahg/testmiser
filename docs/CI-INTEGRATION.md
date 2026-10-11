@@ -16,7 +16,11 @@ approved files. If the backend cannot enforce the profile, ordinary runs fall
 back to execution without reuse. A producer invocation with `--signing-key`
 fails closed if the controlled backend cannot start.
 
-The GitHub Actions acceptance job runs Bubblewrap inside a privileged Debian
+The GitHub Actions verification job runs in `debian:trixie-slim` on an Ubuntu
+hosted runner and installs its build tools before checkout. It adds the
+`SYS_PTRACE` capability to support the observer tests; it does not need
+privileged Docker or network namespace creation. The separate
+portable-acceptance job runs Bubblewrap inside a privileged Debian
 Trixie container as a non-root user. Standard GitHub-hosted runners cannot
 create the required network namespace, even inside that container: workflow
 run [`38116857472`](https://github.com/jedediahg/testmiser/actions/runs/38116857472)

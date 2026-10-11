@@ -6,6 +6,28 @@ workflow=$repo_root/.github/workflows/ci.yml
 runbook=$repo_root/docs/CI-INTEGRATION.md
 
 grep -Fq "github.event_name == 'push'" "$workflow"
+grep -Fq 'image: debian:trixie-slim' "$workflow"
+grep -Fq -- '--cap-add=SYS_PTRACE' "$workflow"
+grep -Fq 'options: --cap-add=SYS_PTRACE' "$workflow"
+grep -Fq 'Install Trixie test dependencies' "$workflow"
+grep -Fq 'bash build-essential ca-certificates' "$workflow"
+if ! awk '
+    /Install Trixie test dependencies/ { install = NR }
+    /uses: actions\/checkout@/ && !checkout { checkout = NR }
+    END { exit !(install > 0 && checkout > install) }
+' "$workflow"; then
+    echo 'Trixie dependencies must be installed before checkout.' >&2
+    exit 1
+fi
+if awk '
+    /^  test:$/ { in_test = 1; next }
+    /^  [a-zA-Z0-9_-]+:$/ { in_test = 0 }
+    in_test && /--privileged/ { found = 1 }
+    END { exit !found }
+' "$workflow"; then
+    echo 'The ordinary test job must not use privileged Docker.' >&2
+    exit 1
+fi
 grep -Fq "vars.TM_PORTABLE_ACCEPTANCE_ENABLED == 'true'" "$workflow"
 grep -Fq "needs.test.outputs.tests_required == 'true'" "$workflow"
 grep -Fq 'group: tm-portable-acceptance' "$workflow"
