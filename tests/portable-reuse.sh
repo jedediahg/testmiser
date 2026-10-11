@@ -128,6 +128,26 @@ run_tm() {
     )
 }
 
+# Available mode must preserve normal test execution when the shared store is
+# unreachable, while making the duplicate-work risk explicit.
+fallback_id="$id-available-fallback"
+if ! run_tm "$work/producer" "$work/cache-available-fallback" \
+    '' "$work/missing-available-store" "$fallback_id" available \
+    >"$work/available-fallback.out" 2>"$work/available-fallback.err"; then
+    cat "$work/available-fallback.err" >&2
+    printf '%s\n' 'Available coordination failed to run without the shared store.' >&2
+    exit 1
+fi
+if [[ "$(cat "$work/available-fallback.out")" != "$fallback_id:unchanged-input" ||
+      "$(cat "$work/producer/build/reports/portable-reuse.txt")" != "$fallback_id:unchanged-input" ]] ||
+   ! grep -q 'shared-store invocation lock unavailable; concurrent cold runs may duplicate work' \
+       "$work/available-fallback.err" ||
+   ! grep -q '^tm: RUN:' "$work/available-fallback.err"; then
+    cat "$work/available-fallback.err" >&2
+    printf '%s\n' 'Available coordination did not warn and run with an unavailable shared store.' >&2
+    exit 1
+fi
+
 assert_metadata_redacted() {
     local record_root=$1
     local record
