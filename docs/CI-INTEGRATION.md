@@ -18,9 +18,9 @@ fails closed if the controlled backend cannot start.
 
 The GitHub Actions acceptance job runs Bubblewrap inside a disposable
 privileged Debian container as a non-root user. Standard GitHub-hosted runners
-still deny the required network namespace, even for that nested container, so
-the acceptance job fails there. Set the repository variable
-`TM_PORTABLE_ACCEPTANCE_RUNNER` to an isolated Linux runner label whose Docker
+deny the required network namespace, even for that nested container. The job
+fails before installing its toolchain unless the repository variable
+`TM_PORTABLE_ACCEPTANCE_RUNNER` names an isolated Linux runner whose Docker
 daemon permits the nested namespace and ptrace operations. The GitLab gate uses
 the `linux-bwrap` runner tag for the same reason. Provision only runners that
 pass the portable acceptance gate; a successful repository workflow does not
