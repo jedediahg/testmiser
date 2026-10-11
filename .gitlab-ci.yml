@@ -19,7 +19,6 @@ verify:
   interruptible: true
   variables:
     GIT_DEPTH: "0"
-    TM_REQUIRE_PTRACE: "1"
   before_script:
     - apt-get update -qq
     - DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends build-essential ca-certificates git libssl-dev make

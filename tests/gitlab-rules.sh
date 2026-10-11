@@ -4,6 +4,22 @@ set -euo pipefail
 repo_root=$(git rev-parse --show-toplevel)
 workflow=$repo_root/.gitlab-ci.yml
 
+if ! awk '
+    /^verify:/ { in_verify = 1 }
+    in_verify && /^[^[:space:]][^:]*:/ && $0 !~ /^verify:/ {
+        in_verify = 0
+    }
+    in_verify && /TM_REQUIRE_PTRACE/ { requires_ptrace = 1 }
+    END { exit requires_ptrace }
+' "$workflow"; then
+    printf '%s\n' 'Ordinary GitLab verification must not require ptrace from shared runners.' >&2
+    exit 1
+fi
+grep -Fq 'TM_REQUIRE_PTRACE=1 bash -c' "$workflow" || {
+    printf '%s\n' 'GitLab portable acceptance must require ptrace on its dedicated runner.' >&2
+    exit 1
+}
+
 awk '
     /changes: &verify_changes/ { block = "verify"; next }
     /changes: &acceptance_changes/ { block = "acceptance"; next }

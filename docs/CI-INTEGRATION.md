@@ -31,6 +31,10 @@ not a security boundary because a merge request can edit `.gitlab-ci.yml`.
 Provision only runners that pass the portable
 acceptance gate; a successful repository workflow does not prove a separate
 project's runner has the same namespace, ptrace, filesystem, or UID behavior.
+The ordinary GitLab verification job does not require ptrace: its observer
+exec-boundary integration check reports a skip when the shared runner denies
+tracing. The protected portable-acceptance job sets `TM_REQUIRE_PTRACE=1`, so
+the release gate still fails if the dedicated runner cannot perform tracing.
 
 For GitHub, create an organization runner group named
 `tm-portable-acceptance`, allow only the `jedediahg/testmiser` repository, and
