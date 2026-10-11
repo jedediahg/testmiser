@@ -194,6 +194,16 @@ never downgrade it to a successful no-op. Git does not preserve read-only
 permission bits for checked-in regular files, so restore immutable blob mode
 `0444` before validation; the helper script performs this normalization.
 
+For ordinary GitLab pushes and merge requests, use `rules:changes` to avoid
+creating the test job for unrelated paths. Keep source, headers, tests, build
+scripts, profiles, specification, and CI configuration in the test-relevant
+set; documentation-only paths can omit the job. The repository's
+`.gitlab-ci.yml` is an example. Keep a conservative fallback for tags,
+schedules, manually started pipelines, and new branches: GitLab can treat
+`rules:changes` as true when there is no push diff, and unknown diff bases must
+run tests. Do not broaden the evidence-only exception to source or profile
+changes.
+
 For jobs where overlapping cold runs are unacceptable, set
 `TM_COORDINATION_MODE=strict` and configure a coherent shared filesystem in
 `TM_SHARED_STORE`. In this mode `tm` returns 125 before launching the command
@@ -223,12 +233,17 @@ blobs, unsupported observations, and unavailable sandbox capability never
 cause a skip. Only after those cases pass should the project rely on the job
 for runner savings.
 
-Record total job time, actual test-command duration, trusted-hit rate, and
-reasons for misses for the pilot. A warm hit should avoid test execution, but
-checkout, binary startup, profile preflight, and evidence validation still
-cost time. If misses dominate, widen coverage only by adding real stable inputs
-or an approved runtime; never weaken observation or trust checks to raise the
-hit rate. The upstream acceptance procedure is documented in
+Before and during the pilot, record runner queue wait, whole-job duration,
+actual test-command duration, dependency-install time, trusted-hit rate,
+reasons for misses, and how many test jobs path rules omit. A warm hit avoids
+the test command, but checkout, binary startup, profile preflight, and evidence
+validation still cost time. Compare the critical path and runner wait as well
+as test time; [GitLab's pipeline efficiency guidance](https://docs.gitlab.com/ci/pipelines/pipeline_efficiency/)
+recommends measuring job duration, dependencies, runner availability, and
+setup overhead.
+If misses dominate, widen coverage only by adding real stable inputs or an
+approved runtime; never weaken observation or trust checks to raise the hit
+rate. The upstream acceptance procedure is documented in
 [`tests/README.md`](../tests/README.md); it requires working user/network
 namespaces and ptrace and is a release gate, not an optional local test.
 
