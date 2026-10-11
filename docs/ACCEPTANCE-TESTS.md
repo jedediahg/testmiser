@@ -61,8 +61,9 @@ the same numeric UID as the client. The script creates a private temporary
 subdirectory there.
 
 Unavailable namespaces or ptrace cause a failure, not a skipped pass. GitHub
-uses the `TM_PORTABLE_ACCEPTANCE_RUNNER` repository variable to select a
-compatible isolated runner; GitLab uses the `linux-bwrap` tag. Passing this
-gate proves only its local/filesystem scenarios. Follow
+runs this gate only when `TM_PORTABLE_ACCEPTANCE_ENABLED=true` and requires
+the `tm-portable-acceptance` runner group and label. GitLab uses the
+`linux-bwrap` tag. Passing this gate proves only its local/filesystem
+scenarios. Follow
 [`docs/CI-INTEGRATION.md`](../docs/CI-INTEGRATION.md) to validate an adopting
 project's runner, trust provisioning, and producer/consumer jobs.

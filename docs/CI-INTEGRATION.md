@@ -351,20 +351,24 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
-The full portable reuse acceptance script passed on commit `a41f4af` inside a
-disposable, privileged Debian Trixie container with Bubblewrap and ptrace.
+The full portable reuse acceptance script passed on commit `e59159c` inside a
+disposable, privileged Debian Trixie container with Bubblewrap and ptrace. This
+run also verified AC-25 behavior: a fresh consumer on another branch reused
+signed evidence whose sidecar and blob mtimes were set to January 2000.
 The suite exercises checked-in and linked-worktree reuse, input invalidation,
 failure/quarantine resolution, state reversion, output restoration, and
 cold-miss coordination. It also checks signed checked-in evidence in both
 provider-shaped directions: a GitLab-shaped producer consumed by a
 GitHub-shaped clone, and the reverse. Provider variables are simulated; the
 test does not exercise either provider's artifact service. The container was
-removed automatically after the run. The latest observed GitHub workflow
-passed its ordinary test job but skipped portable acceptance and failed the
-acceptance policy because the dedicated protected runner is not enabled. A
-local container pass does not replace a successful run on that runner or a
-real adopting project's GitLab pipeline. Provision the dedicated runner group
-and enablement variable before relying on the GitHub portable-acceptance gate.
+removed automatically after the run. GitHub Actions run
+[`38116536848`](https://github.com/jedediahg/testmiser/actions/runs/38116536848)
+for `e59159c` passed the ordinary test job, skipped portable acceptance, and
+failed the policy check because this repository has no configured runner or
+enablement variable. A local container pass does not replace a successful run
+on that runner or a real adopting project's GitLab pipeline. Provision the
+dedicated runner group and enablement variable before relying on the GitHub
+portable-acceptance gate.
 
 The repo's CI validates this repository's evidence and runs its own tests; it
 does not prove a separate project's test job is integrated. Provider identity
