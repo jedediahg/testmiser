@@ -762,17 +762,28 @@ int main(void)
              "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 3}
         };
         struct tm_output_manifest manifest = {entries, 2};
+        const char *expected_output_id =
+            "sha256:06b14cd1350c3834f4bebd61a1cf5cf51d9f8cc482273e3a0fd3b2a4b795fdb4";
         unsigned char *output_record = NULL;
         size_t output_length = 0;
         char output_id[72];
         if (tm_result_create_with_outputs(&identity, 3, private_key, &manifest,
                 &output_record, &output_length, output_id) != 0 ||
+            strcmp(output_id, expected_output_id) != 0 ||
             tm_result_verify(output_record, output_length, private_key, &policy,
                              verified_id) != 0 ||
             tm_result_inspect(output_record, output_length, &summary,
                               verified_id) != 0 || summary.output_count != 2 ||
+            strcmp(summary.verification_fingerprint,
+                   policy.expected_verification_fingerprint) != 0 ||
+            strcmp(summary.outputs[0].path, "dist") != 0 ||
+            summary.outputs[0].kind != TM_OUTPUT_DIRECTORY ||
+            summary.outputs[0].mode != 0755 ||
             strcmp(summary.outputs[1].path, "dist/report.txt") != 0 ||
-            summary.outputs[1].size != 3) {
+            summary.outputs[1].kind != TM_OUTPUT_FILE ||
+            summary.outputs[1].mode != 0644 || summary.outputs[1].size != 3 ||
+            strcmp(summary.outputs[1].digest,
+                "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") != 0) {
             free(output_record);
             tm_result_summary_clear(&summary);
             fprintf(stderr, "signed output manifest failed\n");
