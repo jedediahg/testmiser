@@ -27,41 +27,15 @@ jobs:
           TM_DIFF_HEAD: ${{ github.sha }}
           TM_TRUST_POLICY_JSON: ${{ vars.TM_TRUST_POLICY_JSON }}
         run: |
-          results_only=false
-          has_results=false
-          tests_required=true
-          if bash scripts/tm-ci-has-test-changes.sh \
-            "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
-            tests_required=true
-          else
-            diff_status=$?
-            if [[ $diff_status -eq 1 ]]; then
-              tests_required=false
-            else
-              echo "Could not classify test changes (status $diff_status)." >&2
-              exit "$diff_status"
-            fi
-          fi
-          if bash scripts/tm-result-diff.sh any "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
-            has_results=true
-            if bash scripts/tm-result-diff.sh only "$TM_DIFF_BASE" "$TM_DIFF_HEAD"; then
-              results_only=true
-            else
-              diff_status=$?
-              if [[ $diff_status -ne 1 ]]; then
-                echo "Could not classify changed paths (status $diff_status)." >&2
-                exit "$diff_status"
-              fi
-            fi
-          else
-            diff_status=$?
-            if [[ $diff_status -ne 1 ]]; then
-              echo "Could not classify changed paths (status $diff_status)." >&2
-              exit "$diff_status"
-            fi
-          fi
-          echo "results_only=$results_only" >> "$GITHUB_OUTPUT"
-          echo "tests_required=$tests_required" >> "$GITHUB_OUTPUT"
+          classification=$(bash scripts/tm-ci-classify-changes.sh \
+            "$TM_DIFF_BASE" "$TM_DIFF_HEAD")
+          printf '%s\n' "$classification" >> "$GITHUB_OUTPUT"
+          tests_required=$(printf '%s\n' "$classification" |
+            sed -n 's/^tests_required=//p')
+          has_results=$(printf '%s\n' "$classification" |
+            sed -n 's/^has_results=//p')
+          results_only=$(printf '%s\n' "$classification" |
+            sed -n 's/^results_only=//p')
 
           if [[ "$results_only" == true ]]; then
             echo "Result-only change: validating trusted evidence without running unrelated tests."
