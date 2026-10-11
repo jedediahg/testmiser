@@ -504,6 +504,56 @@ static int test_output_lookup(
             fstatat(clonefd, "dist", &status, AT_SYMLINK_NOFOLLOW) == 0 ||
             errno != ENOENT) goto done;
         free(found); found = NULL;
+        {
+            const char *other_context =
+                "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+            struct tm_result_lookup_diagnostics diagnostics = {0};
+            int diagnostic_result =
+                tm_result_find_matching_snapshot_record_diagnostic(sharedfd,
+                    command_fingerprint, output_identity.profile_digest,
+                    output_identity.runtime_digest, other_context, trust,
+                    snapshot_paths, snapshot_roots, 1, &found, &found_length,
+                    record_id, &diagnostics);
+            if (diagnostic_result != 1 || found != NULL ||
+                !diagnostics.context_changed || diagnostics.inputs_changed ||
+                diagnostics.trust_rejected) goto done;
+
+            filefd = openat(clone_testsfd, "a",
+                O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW);
+            if (filefd < 0 || write(filefd, "changed", 7) != 7 ||
+                close(filefd) < 0) { filefd = -1; goto done; }
+            filefd = -1;
+            close(snapshot_rootfd); snapshot_rootfd = -1;
+            tm_snapshot_free(input_snapshot); input_snapshot = NULL;
+            if (tm_snapshot_create(clonefd, snapshot_paths, 1,
+                    &input_snapshot) < 0 ||
+                (snapshot_rootfd = tm_snapshot_open_root_readable(
+                    input_snapshot, 0)) < 0) goto done;
+            snapshot_roots[0] = snapshot_rootfd;
+            memset(&diagnostics, 0, sizeof(diagnostics));
+            diagnostic_result =
+                tm_result_find_matching_snapshot_record_diagnostic(sharedfd,
+                    command_fingerprint, output_identity.profile_digest,
+                    output_identity.runtime_digest,
+                    output_identity.context_digest, trust, snapshot_paths,
+                    snapshot_roots, 1, &found, &found_length, record_id,
+                    &diagnostics);
+            if (diagnostic_result != 1 || found != NULL ||
+                !diagnostics.inputs_changed || diagnostics.context_changed ||
+                diagnostics.trust_rejected) goto done;
+
+            filefd = openat(clone_testsfd, "a",
+                O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW);
+            if (filefd < 0 || close(filefd) < 0) { filefd = -1; goto done; }
+            filefd = -1;
+            close(snapshot_rootfd); snapshot_rootfd = -1;
+            tm_snapshot_free(input_snapshot); input_snapshot = NULL;
+            if (tm_snapshot_create(clonefd, snapshot_paths, 1,
+                    &input_snapshot) < 0 ||
+                (snapshot_rootfd = tm_snapshot_open_root_readable(
+                    input_snapshot, 0)) < 0) goto done;
+            snapshot_roots[0] = snapshot_rootfd;
+        }
         if (tm_result_find_matching_snapshot_inputs_and_restore(sharedfd,
                 clonefd, sharedfd, command_fingerprint,
                 output_identity.profile_digest, output_identity.runtime_digest,
