@@ -62,15 +62,26 @@ fi
 
 for invalid_base in '' 'not-a-commit' \
     '0000000000000000000000000000000000000000'; do
-    if (cd "$repo" && bash "$script" only "$invalid_base" "$profile") ||
-       (cd "$repo" && bash "$script" any "$invalid_base" "$profile"); then
+    if (cd "$repo" && bash "$script" only "$invalid_base" "$profile"); then
         echo "invalid diff base was accepted: $invalid_base" >&2
         exit 1
+    else
+        status=$?
+        if [[ $status -ne 2 ]]; then
+            echo "invalid diff base returned $status, expected 2" >&2
+            exit 1
+        fi
     fi
 done
 if (cd "$repo" && bash "$script" any "$base" not-a-commit); then
     echo "invalid diff head was accepted" >&2
     exit 1
+else
+    status=$?
+    if [[ $status -ne 2 ]]; then
+        echo "invalid diff head returned $status, expected 2" >&2
+        exit 1
+    fi
 fi
 
 mkdir -p "$repo/.tm/results/moved/verification"

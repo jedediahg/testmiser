@@ -44,6 +44,18 @@ test:
         has_results=true
         if bash scripts/tm-result-diff.sh only "$base" "$CI_COMMIT_SHA"; then
           results_only=true
+        else
+          status=$?
+          if [ "$status" -ne 1 ]; then
+            echo "Could not classify changed paths (status $status)." >&2
+            exit "$status"
+          fi
+        fi
+      else
+        status=$?
+        if [ "$status" -ne 1 ]; then
+          echo "Could not classify changed paths (status $status)." >&2
+          exit "$status"
         fi
       fi
       if [ "$results_only" = true ]; then

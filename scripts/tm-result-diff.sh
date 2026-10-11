@@ -5,17 +5,17 @@ mode=${1:-}
 base=${2:-}
 head=${3:-}
 if [[ "$mode" != only && "$mode" != any ]] || [[ -z "$base" || -z "$head" ]]; then
-    exit 1
+    exit 2
 fi
 if [[ "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null ||
    ! git cat-file -e "$head^{commit}" 2>/dev/null; then
-    exit 1
+    exit 2
 fi
 
 diff_file=$(mktemp)
 trap 'rm -f "$diff_file"' EXIT
 if ! git diff --no-renames --name-only -z "$base...$head" -- >"$diff_file"; then
-    exit 1
+    exit 2
 fi
 mapfile -d '' -t changed_files <"$diff_file"
 if ((${#changed_files[@]} == 0)); then
