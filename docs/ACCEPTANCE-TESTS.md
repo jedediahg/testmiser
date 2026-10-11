@@ -21,7 +21,9 @@ reuse through the optional filesystem store. It also checks that `--explain`
 reports each hit's trusted record, verification fingerprint, and store source,
 plus CI metadata
 redaction, strict mode failure when coordination is unavailable, and
-exactly-one execution for concurrent cold requests. The probe uses
+exactly-one execution for concurrent cold requests. That cold-miss test also
+asserts that the CLI reports one `WAIT` before the waiter reuses the owner's
+trusted result. The probe uses
 GitLab-like and GitHub-like environment variables; this does not exercise
 either provider's actual pipeline configuration.
 

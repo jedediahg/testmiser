@@ -134,8 +134,11 @@ TM_RUNTIME_ROOT=/opt/testmiser/runtime \
 Make the pinned executable available on each agent's `PATH`, or replace `tm`
 with its absolute path. Same-user worktrees share `tm`'s private per-user
 cache automatically. They can also consume checked-in `.tm/results` and
-`.tm/blobs`. Run with `--explain` during rollout and inspect `RUN`/`SKIP` and
-the trust/input reason. A successful eligible run can be signed only when
+`.tm/blobs`. Run with `--explain` during rollout and inspect `RUN`, `WAIT`, or
+`SKIP` plus the trust/input reason. `WAIT` means an equivalent invocation
+currently owns the shared or per-user execution slot; `tm` waits, then checks
+for newly published trusted evidence before deciding whether to run. A
+successful eligible run can be signed only when
 the selected profile, runtime, key, and trust approval agree:
 
 ```sh
