@@ -523,7 +523,7 @@ if [[ -s "$work/shared-restored.out" ]] ||
     exit 1
 fi
 
-concurrent_id=$id-concurrent
+concurrent_id=wait-concurrent
 git clone --quiet --no-hardlinks --local "$repo_root" "$work/concurrent"
 git -C "$work/concurrent" config user.name 'tm acceptance test'
 git -C "$work/concurrent" config user.email 'tm-acceptance@localhost'
@@ -537,6 +537,14 @@ run_tm "$work/concurrent" "$work/cache-concurrent-a" \
     "$signing_key" "$shared_store" "$concurrent_id" strict \
     >"$work/concurrent-a.out" 2>"$work/concurrent-a.err" &
 concurrent_a=$!
+for attempt in $(seq 1 200); do
+    [[ -f "$work/concurrent/build/reports/portable-reuse.txt" ]] && break
+    sleep 0.01
+done
+if [[ ! -f "$work/concurrent/build/reports/portable-reuse.txt" ]]; then
+    printf '%s\n' 'Concurrent owner did not reach its output write.' >&2
+    exit 1
+fi
 run_tm "$work/concurrent" "$work/cache-concurrent-b" \
     "$signing_key" "$shared_store" "$concurrent_id" strict \
     >"$work/concurrent-b.out" 2>"$work/concurrent-b.err" &
@@ -563,7 +571,10 @@ for output in "$work/concurrent-a.out" "$work/concurrent-b.out"; do
 done
 skip_count=$( (grep -h '^tm: SKIP: trusted result ' \
     "$work/concurrent-a.err" "$work/concurrent-b.err" || true) | wc -l)
+wait_count=$( (grep -h '^tm: WAIT:' \
+    "$work/concurrent-a.err" "$work/concurrent-b.err" || true) | wc -l)
 if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
+      "$wait_count" -ne 1 ||
       "$(cat "$work/concurrent/build/reports/portable-reuse.txt")" != \
       "$concurrent_id:unchanged-input" ]]; then
     cat "$work/concurrent-a.err" "$work/concurrent-b.err" >&2

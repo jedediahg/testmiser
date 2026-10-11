@@ -107,6 +107,12 @@ int portable_main(long argc, char **argv)
         write_all(1, ":", 1) < 0 || write_all(1, input, used) < 0 ||
         write_all(1, "\n", 1) < 0)
         return 1;
+    /* Keep the concurrent acceptance owner in its execution slot after the
+     * output is visible, so the harness can deterministically start a waiter. */
+    if (starts_with(argv[3], "wait-")) {
+        volatile unsigned long spin;
+        for (spin = 0; spin < 1000000000UL; spin++) { }
+    }
     (void)syscall3(3, destination, 0, 0);
     (void)syscall3(3, source, 0, 0);
     return 0;
