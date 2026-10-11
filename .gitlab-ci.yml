@@ -35,6 +35,7 @@ verify:
         - Makefile
         - .gitlab-ci.yml
         - .github/workflows/**
+        - .tm/profiles/**
         - include/**
         - src/**
         - tests/**
@@ -123,6 +124,7 @@ portable-acceptance:
         - Makefile
         - .gitlab-ci.yml
         - .github/workflows/**
+        - .tm/profiles/**
         - include/**
         - src/**
         - tests/**

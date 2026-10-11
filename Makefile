@@ -27,6 +27,7 @@ test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_
 	bash -n scripts/tm-ci-run-tests.sh
 	bash -n tests/ci-change-classify.sh
 	bash tests/ci-change-classify.sh
+	bash tests/gitlab-rules.sh
 	bash tests/github-runner-policy.sh
 	bash tests/ci-policy.sh
 	bash tests/ci-policy-real.sh
