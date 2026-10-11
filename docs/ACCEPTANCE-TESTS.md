@@ -21,11 +21,11 @@ sign-enabled signal termination without result publication, stale-output
 replacement, linked worktree reuse from the per-user store, and cross-client
 reuse through the optional filesystem store. It also checks that `--explain`
 reports each hit's trusted record, verification fingerprint, and store source,
-plus CI metadata redaction, strict coordination failure and the available-mode
-duplicate-work warning when the shared store is unavailable, and exactly-one
-execution for concurrent cold requests. That cold-miss test also asserts that
-the CLI reports one `WAIT` before the waiter reuses the owner's trusted result.
-The probe uses
+plus revoked-producer lookup rejection and approval restoration, CI metadata
+redaction, strict coordination failure and the available-mode duplicate-work
+warning when the shared store is unavailable, and exactly-one execution for
+concurrent cold requests. That cold-miss test also asserts that the CLI reports
+one `WAIT` before the waiter reuses the owner's trusted result. The probe uses
 GitLab-like and GitHub-like environment variables; this does not exercise
 either provider's actual pipeline configuration.
 

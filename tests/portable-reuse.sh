@@ -451,6 +451,43 @@ if [[ -s "$work/consumer.out" ]] ||
     exit 1
 fi
 
+# Revoking the producer in the consumer's current trust snapshot must turn
+# that same signed candidate into a miss; restoring the policy should recover
+# the unchanged trusted result.
+producer_key_id=$(jq -r '.repositories[0].keys[0].key_id' "$trust_policy")
+jq --arg key "$producer_key_id" \
+    '.repositories[0].revoked_key_ids += [$key]' "$trust_policy" \
+    >"$work/revoked-trust-policy.json"
+chmod 0600 "$work/revoked-trust-policy.json"
+approved_trust_policy=$trust_policy
+trust_policy=$work/revoked-trust-policy.json
+if ! run_tm "$work/consumer" "$work/cache-consumer" \
+    >"$work/revoked-consumer.out" 2>"$work/revoked-consumer.err"; then
+    cat "$work/revoked-consumer.err" >&2
+    exit 1
+fi
+if [[ "$(cat "$work/revoked-consumer.out")" != "$id:unchanged-input" ]] ||
+   ! grep -q '^tm: RUN:' "$work/revoked-consumer.err" ||
+   grep -q '^tm: SKIP: trusted result ' "$work/revoked-consumer.err"; then
+    cat "$work/revoked-consumer.err" >&2
+    printf '%s\n' 'Revoked producer evidence authorized a trusted hit.' >&2
+    exit 1
+fi
+trust_policy=$approved_trust_policy
+if ! run_tm "$work/consumer" "$work/cache-consumer" \
+    >"$work/restored-trust-consumer.out" \
+    2>"$work/restored-trust-consumer.err"; then
+    cat "$work/restored-trust-consumer.err" >&2
+    exit 1
+fi
+if [[ -s "$work/restored-trust-consumer.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' \
+       "$work/restored-trust-consumer.err"; then
+    cat "$work/restored-trust-consumer.err" >&2
+    printf '%s\n' 'Restoring producer approval did not recover the trusted hit.' >&2
+    exit 1
+fi
+
 # The executable itself is an approved input. A byte change must invalidate
 # the hit even when the test data is unchanged; restoring it should recover A.
 probe_copy=$work/portable-reuse.original
