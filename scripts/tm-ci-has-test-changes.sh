@@ -13,7 +13,7 @@ for revision in "$1" "$2"; do
 done
 
 if git diff --quiet "$1" "$2" -- \
-    src include tests scripts docs/spec Makefile \
+    .tm/profiles src include tests scripts docs/spec Makefile \
     .gitlab-ci.yml .github/workflows/ci.yml; then
     exit 1
 else

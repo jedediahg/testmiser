@@ -22,6 +22,7 @@ test:
     - changes:
         - .tm/results/**/*
         - .tm/blobs/**/*
+        - .tm/profiles/**/*
         - src/**/*
         - include/**/*
         - tests/**/*
@@ -62,6 +63,7 @@ portable_acceptance:
   interruptible: true
   rules:
     - changes:
+        - .tm/profiles/**/*
         - src/**/*
         - include/**/*
         - tests/**/*

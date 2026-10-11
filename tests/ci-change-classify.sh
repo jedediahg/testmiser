@@ -9,10 +9,11 @@ mkdir -p "$fixture"
 git -C "$fixture" init --quiet
 git -C "$fixture" config user.name 'tm CI classification test'
 git -C "$fixture" config user.email 'tm-ci-classify@localhost'
-mkdir -p "$fixture/src" "$fixture/docs"
+mkdir -p "$fixture/src" "$fixture/docs" "$fixture/.tm/profiles"
 printf 'int main(void) { return 0; }\n' >"$fixture/src/main.c"
 printf 'guide\n' >"$fixture/docs/guide.md"
-git -C "$fixture" add src/main.c docs/guide.md
+printf '{"profile":1}\n' >"$fixture/.tm/profiles/profile.json"
+git -C "$fixture" add src/main.c docs/guide.md .tm/profiles/profile.json
 git -C "$fixture" commit --quiet -m 'base'
 base=$(git -C "$fixture" rev-parse HEAD)
 
@@ -36,6 +37,15 @@ git -C "$fixture" commit --quiet -am 'source change'
 if ! (cd "$fixture" && bash "$repo_root/scripts/tm-ci-has-test-changes.sh" \
     "$base" HEAD); then
     printf '%s\n' 'Source diff did not require tests.' >&2
+    exit 1
+fi
+
+git -C "$fixture" checkout --quiet "$base"
+printf '{"profile":2}\n' >"$fixture/.tm/profiles/profile.json"
+git -C "$fixture" commit --quiet -am 'profile change'
+if ! (cd "$fixture" && bash "$repo_root/scripts/tm-ci-has-test-changes.sh" \
+    "$base" HEAD); then
+    printf '%s\n' 'Profile-policy diff did not require tests.' >&2
     exit 1
 fi
 
