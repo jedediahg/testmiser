@@ -331,6 +331,17 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
+At `054fabaef8e1feeac4ac9390901cd5ce5feb9762`, the full portable reuse
+acceptance script passed inside a disposable, privileged Debian Bookworm
+container with Bubblewrap and ptrace. The GitHub Actions `test` job also
+passed, but its protected portable-acceptance job was skipped, so the
+acceptance-policy job correctly failed the main-branch run. Review the
+[workflow run](https://github.com/jedediahg/testmiser/actions/runs/38108446586)
+and provision the dedicated runner group and enablement variable before
+relying on that GitHub gate. This local container pass does not replace a
+successful run on the dedicated GitHub runner or a real adopting project's
+GitLab pipeline.
+
 The repo's current CI validates this repository's evidence and runs its own
 tests; that does not prove a separate project's test job is integrated.
 Cross-worktree behavior has an acceptance script, but the full portable gate
