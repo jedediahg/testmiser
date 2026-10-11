@@ -1194,7 +1194,8 @@ static int result_find_matching_inputs(
     size_t output_root_count, int probe_only,
     const char *const *blocked_fingerprints,
     size_t blocked_count,
-    unsigned char **record, size_t *record_length, char record_id[72])
+    unsigned char **record, size_t *record_length, char record_id[72],
+    int *trust_rejected)
 {
     int tmfd = -1, resultsfd = -1, commandfd = -1, duplicate = -1;
     int result = 1, saved;
@@ -1220,6 +1221,7 @@ static int result_find_matching_inputs(
     *record = NULL;
     *record_length = 0;
     record_id[0] = '\0';
+    if (trust_rejected != NULL) *trust_rejected = 0;
     tmfd = open_existing_directory(store_root_fd, ".tm");
     if (tmfd < 0) goto absent_or_error;
     resultsfd = open_existing_directory(tmfd, "results");
@@ -1311,13 +1313,28 @@ static int result_find_matching_inputs(
                 (snapshot_root_paths == NULL ?
                     tm_result_verify_inputs_match(candidate, candidate_length,
                         trust_policy, repository_root_fd, candidate_id) == 0 :
-                    (tm_result_verify_trusted(candidate, candidate_length,
-                        trust_policy, summary.verification_fingerprint,
-                        candidate_id) == 0 &&
-                     tm_observed_inputs_match_snapshots(summary.inputs,
+                    tm_observed_inputs_match_snapshots(summary.inputs,
                         summary.input_count, snapshot_root_paths,
-                        snapshot_root_descriptors, snapshot_root_count) == 0)))
-                candidate_valid = 1;
+                        snapshot_root_descriptors, snapshot_root_count) == 0)) {
+                if (snapshot_root_paths == NULL) {
+                    candidate_valid = 1;
+                } else if (tm_result_verify_trusted(candidate,
+                        candidate_length, trust_policy,
+                        summary.verification_fingerprint, candidate_id) == 0) {
+                    candidate_valid = 1;
+                } else if (trust_rejected != NULL) {
+                    EVP_PKEY *diagnostic_key = NULL;
+                    enum tm_trust_status trust_status =
+                        tm_trust_policy_classify(trust_policy,
+                            summary.repository_id, summary.profile_digest,
+                            summary.key_id, summary.trust_epoch,
+                            summary.semantics_version, &diagnostic_key);
+                    EVP_PKEY_free(diagnostic_key);
+                    if (trust_status != TM_TRUST_APPROVED &&
+                        trust_status != TM_TRUST_POLICY_ERROR)
+                        *trust_rejected = 1;
+                }
+            }
             if (candidate_valid && probe_only)
                 matches = 1;
             else if (candidate_valid && summary.output_count == 0)
@@ -1368,7 +1385,8 @@ int tm_result_find_matching_inputs(
     return result_find_matching_inputs(store_root_fd, repository_root_fd,
         NULL, NULL, 0, command_fingerprint, profile_digest, runtime_digest,
         context_digest,
-        trust_policy, -1, NULL, 0, 0, NULL, 0, record, record_length, record_id);
+        trust_policy, -1, NULL, 0, 0, NULL, 0, record, record_length, record_id,
+        NULL);
 }
 
 int tm_result_find_matching_snapshot_inputs(
@@ -1390,7 +1408,7 @@ int tm_result_find_matching_snapshot_inputs(
         root_paths == NULL ? empty_roots : root_paths,
         root_descriptors, root_count, command_fingerprint, profile_digest,
         runtime_digest, context_digest, trust_policy, -1, NULL, 0, 0, NULL, 0, record,
-        record_length, record_id);
+        record_length, record_id, NULL);
 }
 
 int tm_result_find_matching_snapshot_record(
@@ -1411,7 +1429,28 @@ int tm_result_find_matching_snapshot_record(
         root_paths == NULL ? empty_roots : root_paths, root_descriptors,
         root_count, command_fingerprint, profile_digest, runtime_digest,
         context_digest, trust_policy, -1, NULL, 0, 1, NULL, 0, record,
-        record_length, record_id);
+        record_length, record_id, NULL);
+}
+
+int tm_result_find_matching_snapshot_record_diagnostic(
+    int store_root_fd, const char *command_fingerprint,
+    const char *profile_digest, const char *runtime_digest,
+    const char *context_digest, const struct tm_trust_policy *trust_policy,
+    const char *const *root_paths, const int *root_descriptors,
+    size_t root_count, unsigned char **record, size_t *record_length,
+    char record_id[72], int *trust_rejected)
+{
+    const char *const empty_roots[] = {NULL};
+    if (trust_rejected == NULL || root_count > 10000 ||
+        (root_count > 0 && (root_paths == NULL || root_descriptors == NULL))) {
+        errno = EINVAL;
+        return -1;
+    }
+    return result_find_matching_inputs(store_root_fd, -1,
+        root_paths == NULL ? empty_roots : root_paths, root_descriptors,
+        root_count, command_fingerprint, profile_digest, runtime_digest,
+        context_digest, trust_policy, -1, NULL, 0, 1, NULL, 0, record,
+        record_length, record_id, trust_rejected);
 }
 
 int tm_result_find_matching_snapshot_inputs_and_restore(
@@ -1437,7 +1476,7 @@ int tm_result_find_matching_snapshot_inputs_and_restore(
         snapshot_root_descriptors, snapshot_root_count, command_fingerprint,
         profile_digest, runtime_digest, context_digest, trust_policy,
         blob_store_root_fd, output_roots, output_root_count, 0, NULL, 0, record,
-        record_length, record_id);
+        record_length, record_id, NULL);
 }
 
 int tm_result_find_matching_snapshot_inputs_and_restore_blocked(
@@ -1465,7 +1504,8 @@ int tm_result_find_matching_snapshot_inputs_and_restore_blocked(
         snapshot_root_descriptors, snapshot_root_count, command_fingerprint,
         profile_digest, runtime_digest, context_digest, trust_policy,
         blob_store_root_fd, output_roots, output_root_count, 0,
-        blocked_fingerprints, blocked_count, record, record_length, record_id);
+        blocked_fingerprints, blocked_count, record, record_length, record_id,
+        NULL);
 }
 
 int tm_result_find_matching_inputs_and_restore(
@@ -1480,7 +1520,7 @@ int tm_result_find_matching_inputs_and_restore(
         NULL, NULL, 0, command_fingerprint, profile_digest, runtime_digest,
         context_digest,
         trust_policy, blob_store_root_fd, output_roots, output_root_count, 0, NULL, 0,
-        record, record_length, record_id);
+        record, record_length, record_id, NULL);
 }
 
 int tm_result_find_and_restore(

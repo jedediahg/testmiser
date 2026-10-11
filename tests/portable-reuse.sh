@@ -511,6 +511,8 @@ if ! run_tm "$work/consumer" "$work/cache-consumer" \
 fi
 if [[ "$(cat "$work/revoked-consumer.out")" != "$id:unchanged-input" ]] ||
    ! grep -q '^tm: RUN:' "$work/revoked-consumer.err" ||
+   ! grep -q '^tm: RUN: matching result evidence is rejected by the current repository/profile/producer trust policy$' \
+       "$work/revoked-consumer.err" ||
    grep -q '^tm: SKIP: trusted result ' "$work/revoked-consumer.err"; then
     cat "$work/revoked-consumer.err" >&2
     printf '%s\n' 'Revoked producer evidence authorized a trusted hit.' >&2

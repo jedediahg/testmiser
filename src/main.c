@@ -502,7 +502,8 @@ static int find_profile_cache_hit(int repository_fd,
                                   int probe_only,
                                   char verification_fingerprint[72],
                                   const char **found_source,
-                                  char record_id[72])
+                                  char record_id[72],
+                                  int *trust_rejected)
 {
     struct tm_snapshot *snapshot = NULL;
     const char **root_paths = NULL;
@@ -511,6 +512,8 @@ static int find_profile_cache_hit(int repository_fd,
     size_t record_length = 0, root_count, index;
     int preflight, found = 1, shared_store_fd = -1;
     int configured_store_fd = -1;
+    int candidate_trust_rejected = 0;
+    if (trust_rejected != NULL) *trust_rejected = 0;
     if (found_source != NULL) *found_source = "repository";
     root_count = tm_profile_input_root_count(profile);
     if (root_count > 0) {
@@ -534,13 +537,22 @@ static int find_profile_cache_hit(int repository_fd,
     preflight = tm_backend_preflight(profile, runtime_root, repository_root,
                                      snapshot);
     if (preflight != 1) goto done;
-    if (probe_only)
-        found = tm_result_find_matching_snapshot_record(repository_fd,
-            command_fingerprint, tm_profile_digest(profile),
-            tm_profile_runtime_digest(profile), context_fingerprint,
-            trust_policy, root_paths, root_descriptors, root_count,
-            &record, &record_length, record_id);
-    else
+    if (probe_only) {
+        if (trust_rejected != NULL)
+            found = tm_result_find_matching_snapshot_record_diagnostic(
+                repository_fd, command_fingerprint, tm_profile_digest(profile),
+                tm_profile_runtime_digest(profile), context_fingerprint,
+                trust_policy, root_paths, root_descriptors, root_count,
+                &record, &record_length, record_id,
+                &candidate_trust_rejected);
+        else
+            found = tm_result_find_matching_snapshot_record(repository_fd,
+                command_fingerprint, tm_profile_digest(profile),
+                tm_profile_runtime_digest(profile), context_fingerprint,
+                trust_policy, root_paths, root_descriptors, root_count,
+                &record, &record_length, record_id);
+        if (candidate_trust_rejected) *trust_rejected = 1;
+    } else
         found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
             repository_fd, repository_fd, repository_fd, command_fingerprint,
             tm_profile_digest(profile), tm_profile_runtime_digest(profile),
@@ -549,13 +561,24 @@ static int find_profile_cache_hit(int repository_fd,
             blocked_count, &record, &record_length, record_id);
     if (found != 0 && tm_local_store_open_default(&shared_store_fd) == 0) {
         free(record); record = NULL; record_length = 0;
-        if (probe_only)
-            found = tm_result_find_matching_snapshot_record(shared_store_fd,
-                command_fingerprint, tm_profile_digest(profile),
-                tm_profile_runtime_digest(profile), context_fingerprint,
-                trust_policy, root_paths, root_descriptors, root_count,
-                &record, &record_length, record_id);
-        else
+        if (probe_only) {
+            candidate_trust_rejected = 0;
+            if (trust_rejected != NULL)
+                found = tm_result_find_matching_snapshot_record_diagnostic(
+                    shared_store_fd, command_fingerprint,
+                    tm_profile_digest(profile),
+                    tm_profile_runtime_digest(profile), context_fingerprint,
+                    trust_policy, root_paths, root_descriptors, root_count,
+                    &record, &record_length, record_id,
+                    &candidate_trust_rejected);
+            else
+                found = tm_result_find_matching_snapshot_record(shared_store_fd,
+                    command_fingerprint, tm_profile_digest(profile),
+                    tm_profile_runtime_digest(profile), context_fingerprint,
+                    trust_policy, root_paths, root_descriptors, root_count,
+                    &record, &record_length, record_id);
+            if (candidate_trust_rejected) *trust_rejected = 1;
+        } else
             found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
                 shared_store_fd, repository_fd, shared_store_fd,
                 command_fingerprint, tm_profile_digest(profile),
@@ -569,13 +592,25 @@ static int find_profile_cache_hit(int repository_fd,
     if (found != 0 &&
         tm_shared_store_open_configured(&configured_store_fd) == 0) {
         free(record); record = NULL; record_length = 0;
-        if (probe_only)
-            found = tm_result_find_matching_snapshot_record(configured_store_fd,
-                command_fingerprint, tm_profile_digest(profile),
-                tm_profile_runtime_digest(profile), context_fingerprint,
-                trust_policy, root_paths, root_descriptors, root_count,
-                &record, &record_length, record_id);
-        else
+        if (probe_only) {
+            candidate_trust_rejected = 0;
+            if (trust_rejected != NULL)
+                found = tm_result_find_matching_snapshot_record_diagnostic(
+                    configured_store_fd, command_fingerprint,
+                    tm_profile_digest(profile),
+                    tm_profile_runtime_digest(profile), context_fingerprint,
+                    trust_policy, root_paths, root_descriptors, root_count,
+                    &record, &record_length, record_id,
+                    &candidate_trust_rejected);
+            else
+                found = tm_result_find_matching_snapshot_record(
+                    configured_store_fd, command_fingerprint,
+                    tm_profile_digest(profile),
+                    tm_profile_runtime_digest(profile), context_fingerprint,
+                    trust_policy, root_paths, root_descriptors, root_count,
+                    &record, &record_length, record_id);
+            if (candidate_trust_rejected) *trust_rejected = 1;
+        } else
             found = tm_result_find_matching_snapshot_inputs_and_restore_blocked(
                 configured_store_fd, repository_fd, configured_store_fd,
                 command_fingerprint, tm_profile_digest(profile),
@@ -1074,7 +1109,7 @@ int main(int argc, char **argv)
                 trust_policy, options.output_paths, options.output_count,
                 NULL, 0, 1, prior_forced_fingerprint,
                 &prior_forced_source,
-                prior_record_id) == 0) {
+                prior_record_id, NULL) == 0) {
             prior_forced_success = 1;
             if (options.explain)
                 fprintf(stderr, "tm: forced run is checking trusted prior result %s (source=%s)\n",
@@ -1099,7 +1134,7 @@ int main(int argc, char **argv)
                 attempt_state.blocked_count,
                 0, candidate_verification_fingerprint,
                 &candidate_source,
-                candidate_id) == 0) {
+                candidate_id, NULL) == 0) {
             cache_hit = 1;
             result = 0;
             if (options.explain)
@@ -1115,14 +1150,18 @@ int main(int argc, char **argv)
             else {
                 char probe_fingerprint[72];
                 char probe_id[72];
+                int trust_rejected = 0;
                 int matching_record = find_profile_cache_hit(repository_fd,
                     profile, runtime_root, repository_root,
                     command_fingerprint, context_fingerprint, trust_policy,
                     options.output_paths, options.output_count, NULL, 0, 1,
-                    probe_fingerprint, NULL, probe_id);
+                    probe_fingerprint, NULL, probe_id, &trust_rejected);
                 if (matching_record == 0 && options.output_count > 0)
                     fprintf(stderr,
                         "tm: RUN: trusted result matches the stable input snapshot, but required declared output evidence could not be verified or restored\n");
+                else if (trust_rejected)
+                    fprintf(stderr,
+                        "tm: RUN: matching result evidence is rejected by the current repository/profile/producer trust policy\n");
                 else
                     fprintf(stderr,
                         "tm: RUN: no trusted result matched the stable input snapshot\n");
