@@ -58,6 +58,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Require the isolated acceptance runner
+        env:
+          TM_PORTABLE_ACCEPTANCE_RUNNER: ${{ vars.TM_PORTABLE_ACCEPTANCE_RUNNER }}
+        run: |
+          if [[ -z "$TM_PORTABLE_ACCEPTANCE_RUNNER" ]]; then
+            echo "::error::Set the TM_PORTABLE_ACCEPTANCE_RUNNER repository variable to an isolated runner with nested user/network namespaces and ptrace."
+            exit 1
+          fi
       - name: Verify signed cross-worktree reuse
         env:
           TM_ACCEPTANCE_SHARED_STORE: ${{ vars.TM_ACCEPTANCE_SHARED_STORE }}
