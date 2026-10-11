@@ -45,6 +45,8 @@ int main(void)
         "build/tm-observer-mprotect-input", NULL};
     char *private_mprotect_command[] = {"./build/mprotect_probe",
         "build/tm-observer-mprotect-input", "private", NULL};
+    char *mixed_mprotect_command[] = {"./build/mprotect_probe",
+        "build/tm-observer-mprotect-input", "mixed", NULL};
     char *vdso_command[] = {"./build/vdso_clock_probe", NULL, NULL};
     static const char *const vdso_clock_apis[] = {
         "clock_gettime", "clock_getres", "gettimeofday", "time"
@@ -298,7 +300,7 @@ int main(void)
             if (mprotect_input_path[0] != '\0') (void)unlink(mprotect_input_path);
             return 1;
         }
-        if (ftruncate(descriptor, 4096) < 0) {
+        if (ftruncate(descriptor, 8192) < 0) {
             close(descriptor);
             fprintf(stderr, "could not size mprotect observation fixture\n");
             (void)unlink(mprotect_input_path);
@@ -340,6 +342,17 @@ int main(void)
             (void)unlink(mprotect_input_path);
             return 1;
         }
+    }
+    if (tm_observe_and_run_with_fds(mixed_mprotect_command, 0, NULL,
+            repository, NULL, 0, 0, 0, NULL, 0, NULL, 0,
+            &mprotect_report) != 0 ||
+        (mprotect_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_MUTATION) == 0) {
+        fprintf(stderr,
+            "observer accepted mprotect across private and shared VMAs (reasons=0x%08x)\n",
+            mprotect_report.ineligibility_reasons);
+        (void)unlink(mprotect_input_path);
+        return 1;
     }
     (void)unlink(mprotect_input_path);
     {
