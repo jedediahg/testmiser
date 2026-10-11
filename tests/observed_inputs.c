@@ -36,6 +36,7 @@ int main(void)
     char symlink_child[512] = {0}, symlink_dir_link[512] = {0};
     char symlink_escape[512] = {0}, symlink_absolute[512] = {0};
     char symlink_chain[TM_OBSERVED_INPUT_MAX_SYMLINKS + 1][512] = {{0}};
+    char exact_symlink_chain[TM_OBSERVED_INPUT_MAX_SYMLINKS][512] = {{0}};
     struct tm_observer_report report = {0};
     struct tm_observed_input_manifest manifest = {0};
     struct tm_snapshot *snapshot = NULL, *changed_snapshot = NULL;
@@ -276,9 +277,45 @@ int main(void)
             goto done;
         }
     }
+    for (chain_index = 0;
+         chain_index < TM_OBSERVED_INPUT_MAX_SYMLINKS; chain_index++) {
+        char link_name[64], next_name[64];
+        int length = snprintf(link_name, sizeof(link_name), "exact-%02zu",
+                              chain_index);
+        if (length < 0 || (size_t)length >= sizeof(link_name) ||
+            snprintf(exact_symlink_chain[chain_index],
+                     sizeof(exact_symlink_chain[chain_index]), "%s/%s",
+                     symlink_root, link_name) >=
+                (int)sizeof(exact_symlink_chain[chain_index])) {
+            errno = ENAMETOOLONG;
+            goto done;
+        }
+        if (chain_index + 1 < TM_OBSERVED_INPUT_MAX_SYMLINKS) {
+            length = snprintf(next_name, sizeof(next_name), "exact-%02zu",
+                              chain_index + 1);
+            if (length < 0 || (size_t)length >= sizeof(next_name)) {
+                errno = ENAMETOOLONG;
+                goto done;
+            }
+        } else {
+            strcpy(next_name, "target");
+        }
+        if (symlink(next_name, exact_symlink_chain[chain_index]) < 0) {
+            perror("maximum-length symlink chain setup failed");
+            goto done;
+        }
+    }
     report.candidate_count = 1;
     snprintf(report.candidates[0].kind,
              sizeof(report.candidates[0].kind), "opened file");
+    snprintf(report.candidates[0].path,
+             sizeof(report.candidates[0].path), "symlink-root/exact-00");
+    if (tm_observer_capture_inputs(&report, root, &manifest) < 0 ||
+        manifest.count != TM_OBSERVED_INPUT_MAX_SYMLINKS + 1) {
+        fprintf(stderr, "maximum supported symlink chain was not captured\n");
+        goto done;
+    }
+    tm_observed_input_manifest_clear(&manifest);
     snprintf(report.candidates[0].path,
              sizeof(report.candidates[0].path), "symlink-root/escape");
     if (tm_observer_capture_inputs(&report, root, &manifest) == 0) {
@@ -424,6 +461,9 @@ done:
     for (chain_index = 0;
          chain_index <= TM_OBSERVED_INPUT_MAX_SYMLINKS; chain_index++)
         unlink(symlink_chain[chain_index]);
+    for (chain_index = 0;
+         chain_index < TM_OBSERVED_INPUT_MAX_SYMLINKS; chain_index++)
+        unlink(exact_symlink_chain[chain_index]);
     unlink(symlink_child);
     rmdir(symlink_directory);
     unlink(symlink_target);
