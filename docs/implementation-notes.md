@@ -16,6 +16,8 @@ The observer models direct `readlink` path probes alongside `readlinkat`: succes
 
 The observer rejects PID/TID, user/group identity, affinity, and resource-limit observations until those values are included in an enforced verification context; the current profile backend does not normalize them. Direct probes cover `getpid`, `getppid`, `gettid`, `getuid`, `set_tid_address`, and `prlimit64`.
 
+A diagnostic trace of Debian Bookworm's dynamically linked `/bin/true` remains ineligible: loader metadata probes, host-context observations, and unsupported startup syscalls (`arch_prctl` and `rseq`) are all reported. This confirms that the current reusable workload subset is narrower than ordinary dynamically linked test executables. Do not whitelist loader syscalls in isolation; metadata and execution-context views also need to be normalized and enforced before this workload class can be reused.
+
 Bubblewrap launcher and preflight children close all inherited descriptors above standard input/output/error with `close_range`, falling back to `/proc/self/fd` enumeration and the open-file limit. A backend integration test covers a non-close-on-exec descriptor above 65,535 when the host limit allows it.
 
 The `bubblewrap-linux-x86_64-v1` backend contract fixes the child umask at `022`; profile schema v1 does not permit a per-profile umask. The separately versioned v2 contract also explicitly creates a user namespace and runs with namespace UID/GID 0. Resource limits, CPU affinity, and kernel/CPU differences remain exact context inputs and can restrict cross-host hits; stable profile input snapshots and local trusted lookup are implemented.
