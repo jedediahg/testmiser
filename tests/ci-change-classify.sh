@@ -61,6 +61,11 @@ classification=$(cd "$fixture" && bash "$classify" "$results_only" "$mixed")
 grep -Fxq 'tests_required=true' <<<"$classification"
 grep -Fxq 'has_results=true' <<<"$classification"
 grep -Fxq 'results_only=false' <<<"$classification"
+classification=$(cd "$fixture" && bash "$classify" \
+    '0000000000000000000000000000000000000000' "$mixed")
+grep -Fxq 'tests_required=true' <<<"$classification"
+grep -Fxq 'has_results=true' <<<"$classification"
+grep -Fxq 'results_only=false' <<<"$classification"
 
 printf 'int main(void) { return 1; }\n' >"$fixture/src/main.c"
 git -C "$fixture" commit --quiet -am 'source change'

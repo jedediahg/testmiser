@@ -60,8 +60,7 @@ if (cd "$repo" && bash "$script" only "$mixed" "$profile") ||
     exit 1
 fi
 
-for invalid_base in '' 'not-a-commit' \
-    '0000000000000000000000000000000000000000'; do
+for invalid_base in '' 'not-a-commit'; do
     if (cd "$repo" && bash "$script" only "$invalid_base" "$profile"); then
         echo "invalid diff base was accepted: $invalid_base" >&2
         exit 1
@@ -73,6 +72,11 @@ for invalid_base in '' 'not-a-commit' \
         fi
     fi
 done
+if ! (cd "$repo" && bash "$script" any \
+    '0000000000000000000000000000000000000000' "$results"); then
+    echo "all-zero first-push base did not classify the full tree" >&2
+    exit 1
+fi
 if (cd "$repo" && bash "$script" any "$base" not-a-commit); then
     echo "invalid diff head was accepted" >&2
     exit 1

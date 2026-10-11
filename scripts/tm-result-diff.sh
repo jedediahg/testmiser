@@ -7,14 +7,22 @@ head=${3:-}
 if [[ "$mode" != only && "$mode" != any ]] || [[ -z "$base" || -z "$head" ]]; then
     exit 2
 fi
-if [[ "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null ||
-   ! git cat-file -e "$head^{commit}" 2>/dev/null; then
+if ! git cat-file -e "$head^{commit}" 2>/dev/null; then
     exit 2
 fi
 
 diff_file=$(mktemp)
 trap 'rm -f "$diff_file"' EXIT
-if ! git diff --no-renames --name-only -z "$base...$head" -- >"$diff_file"; then
+if [[ "$base" =~ ^0+$ ]]; then
+    base=$(git hash-object -t tree -w --stdin </dev/null) || exit 2
+    diff_args=("$base" "$head")
+else
+    if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+        exit 2
+    fi
+    diff_args=("$base...$head")
+fi
+if ! git diff --no-renames --name-only -z "${diff_args[@]}" -- >"$diff_file"; then
     exit 2
 fi
 mapfile -d '' -t changed_files <"$diff_file"
