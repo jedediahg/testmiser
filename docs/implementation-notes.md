@@ -107,11 +107,16 @@ Acceptance criteria AC-13 through AC-25 remain release requirements for
 provenance, privacy, output restoration, canonical identities, cross-provider
 reuse, coordination, and no implicit repeat policy. The portable acceptance
 harness covers checked-in clean-clone reuse, linked-worktree per-user reuse,
-mounted-store reuse/invalidation, output restoration, and shared-store cold
-miss coordination. The repository has GitLab CI and GitHub Actions workflow
-definitions, but local acceptance does not prove that either provider has
-successfully run the gate or exchanged evidence with the other. GitLab-to-
-GitHub interoperability, lease/fencing behavior, and partition safety remain
+mounted-store reuse/invalidation, test executable and input invalidation,
+output restoration, retry after failed inputs, sign-enabled signal termination
+without result publication, and shared-store cold-miss coordination. A failed
+state for input B preserves a prior trusted success for input A. Incomplete
+signal observation conservatively creates a command/context-wide local block;
+the signal test isolates that state to avoid masking the prior success under
+test. The repository has GitLab CI and GitHub Actions workflow definitions,
+but local acceptance does not prove that either provider has successfully run
+the gate or exchanged evidence with the other. GitLab-to-GitHub
+interoperability, lease/fencing behavior, and partition safety remain
 unproven; run the gate on target isolated runners before declaring beta
 readiness.
 
