@@ -179,6 +179,47 @@ fi
 assert_metadata_redacted "$work/producer/.tm/results" \
     "$work/producer" "$work/gitlab-host-home" \
     gitlab-producer-job gitlab-producer-pipeline gitlab-test-token
+
+# A sign-enabled signal termination must never publish reusable success.
+printf '%s\n' 'signal:terminated' \
+    >"$work/producer/build/portable-input.txt"
+signal_records_before=$(find "$work/producer/.tm/results" -type f \
+    -name '*.tm.json' | wc -l)
+for attempt in 1 2; do
+    set +e
+    run_tm "$work/producer" "$work/cache-signal" "$signing_key" \
+        >"$work/signaled-$attempt.out" 2>"$work/signaled-$attempt.err"
+    signaled_status=$?
+    set -e
+    if [[ "$signaled_status" -ne 143 || -s "$work/signaled-$attempt.out" ]] ||
+       ! grep -q '^tm: RUN:' "$work/signaled-$attempt.err" ||
+       grep -q '^tm: SKIP: trusted result ' "$work/signaled-$attempt.err"; then
+        cat "$work/signaled-$attempt.err" >&2
+        printf 'Signal-terminated run %s was reused or returned status %s.\n' \
+            "$attempt" "$signaled_status" >&2
+        exit 1
+    fi
+done
+signal_records_after=$(find "$work/producer/.tm/results" -type f \
+    -name '*.tm.json' | wc -l)
+if [[ "$signal_records_after" -ne "$signal_records_before" ]]; then
+    printf '%s\n' 'Signal-terminated command published a result sidecar.' >&2
+    exit 1
+fi
+printf '%s\n' 'unchanged-input' \
+    >"$work/producer/build/portable-input.txt"
+if ! run_tm "$work/producer" "$work/cache-producer" "$signing_key" \
+    >"$work/signal-recovery.out" 2>"$work/signal-recovery.err"; then
+    cat "$work/signal-recovery.err" >&2
+    exit 1
+fi
+if [[ -s "$work/signal-recovery.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/signal-recovery.err"; then
+    cat "$work/signal-recovery.err" >&2
+    printf '%s\n' 'Signal termination blocked the prior trusted success.' >&2
+    exit 1
+fi
+
 git -C "$work/producer" add -f .tm/results .tm/blobs \
     build/portable-input.txt build/portable-reuse-probe
 git -C "$work/producer" commit --quiet -m 'Add portable reuse acceptance evidence'
@@ -487,4 +528,4 @@ if [[ "$run_count" -ne 1 || "$skip_count" -ne 1 ||
     exit 1
 fi
 
-printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, test/input invalidation, failure retry/recovery, state reversion, output restoration, and cold-miss coordination passed.'
+printf '%s\n' 'Checked-in/linked-worktree/shared-store reuse, test/input invalidation, failed/signal run recovery, state reversion, output restoration, and cold-miss coordination passed.'

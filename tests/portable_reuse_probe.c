@@ -79,6 +79,12 @@ int portable_main(long argc, char **argv)
     /* The portable acceptance fixture uses a distinct input state to model
      * a deterministic test failure and verify retry/quarantine behavior. */
     if (starts_with(input, "fail:")) return 23;
+    if (starts_with(input, "signal:")) {
+        long process_id = syscall3(39, 0, 0, 0); /* getpid */
+        if (process_id <= 0) return 1;
+        (void)syscall3(62, process_id, 15, 0); /* kill(getpid(), SIGTERM) */
+        return 1;
+    }
 
     destination = syscall3(2, (long)argv[2], 1 | 0100 | 01000 | 02000000 |
                            0400000, 0644);
