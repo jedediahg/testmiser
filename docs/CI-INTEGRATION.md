@@ -357,13 +357,12 @@ The suite exercises checked-in and linked-worktree reuse, input invalidation,
 failure/quarantine resolution, state reversion, output restoration, and
 cold-miss coordination. The container was removed automatically after the
 run. GitHub Actions run
-[`38114451119`](https://github.com/jedediahg/testmiser/actions/runs/38114451119)
-for `a952f7f` succeeded: its documentation-only classifier skipped source
-tests, the acceptance policy passed, and portable acceptance was skipped
-because the dedicated protected runner is not enabled. A local container pass
-does not replace a successful run on that runner or a real adopting project's
-GitLab pipeline. Provision the dedicated runner group and enablement variable
-before relying on the GitHub portable-acceptance gate.
+[`38114601880`](https://github.com/jedediahg/testmiser/actions/runs/38114601880)
+for `6809889` passed the test job, skipped portable acceptance, and failed
+the acceptance policy because the dedicated protected runner is not enabled.
+A local container pass does not replace a successful run on that runner or a
+real adopting project's GitLab pipeline. Provision the dedicated runner group
+and enablement variable before relying on the GitHub portable-acceptance gate.
 
 The repo's CI validates this repository's evidence and runs its own tests; it
 does not prove a separate project's test job is integrated. Provider identity
