@@ -233,6 +233,9 @@ int tm_attempt_state_finish(struct tm_attempt_state *state,
 {
     char name[80];
     if (state == NULL || state->directory_fd < 0 ||
+        (outcome != TM_ATTEMPT_RUN_ONLY && outcome != TM_ATTEMPT_FAILED &&
+         outcome != TM_ATTEMPT_QUARANTINED &&
+         outcome != TM_ATTEMPT_ELIGIBLE_SUCCESS) ||
         (verification_fingerprint != NULL &&
          !valid_digest(verification_fingerprint)) ||
         (outcome == TM_ATTEMPT_ELIGIBLE_SUCCESS &&

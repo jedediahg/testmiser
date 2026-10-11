@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,25 @@ int main(void)
     {
         const char *other_command =
             "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        if (tm_attempt_state_open_default("attempt-test", other_command,
+                profile, context, &state) < 0 ||
+            tm_attempt_state_begin(&state) < 0) goto done;
+        errno = 0;
+        if (tm_attempt_state_finish(&state,
+                (enum tm_attempt_outcome)99, a) == 0 || errno != EINVAL) {
+            fprintf(stderr, "invalid attempt outcome was accepted\n");
+            goto done;
+        }
+        tm_attempt_state_clear(&state);
+        if (tm_attempt_state_open_default("attempt-test", other_command,
+                profile, context, &state) < 0 || !state.stale_running ||
+            !state.blocked_all || !tm_attempt_state_blocks(&state, a)) {
+            fprintf(stderr, "invalid outcome cleared the durable running marker\n");
+            goto done;
+        }
+        if (tm_attempt_state_resolve(&state, NULL) < 0) goto done;
+        tm_attempt_state_clear(&state);
+
         if (tm_attempt_state_open_default("attempt-test", other_command,
                 profile, context, &state) < 0 ||
             tm_attempt_state_begin(&state) < 0) goto done;
