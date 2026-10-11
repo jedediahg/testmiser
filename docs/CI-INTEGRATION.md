@@ -351,16 +351,19 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
-The full portable reuse acceptance script passed on commit `2df4054` inside a
-disposable, privileged Debian Bookworm container with Bubblewrap and ptrace.
+The full portable reuse acceptance script passed with the current fixture
+coverage on commit `6b01637` inside a disposable, privileged Debian Bookworm
+container with Bubblewrap and ptrace.
 The suite exercises checked-in and linked-worktree reuse, input invalidation,
 failure/quarantine resolution, state reversion, output restoration, and
-cold-miss coordination. The container was removed automatically after the
-run. GitHub Actions run
-[`38114601880`](https://github.com/jedediahg/testmiser/actions/runs/38114601880)
-for `6809889` passed the test job, skipped portable acceptance, and failed
-the acceptance policy because the dedicated protected runner is not enabled.
-A local container pass does not replace a successful run on that runner or a
+cold-miss coordination. It also checks signed checked-in evidence in both
+provider-shaped directions: a GitLab-shaped producer consumed by a
+GitHub-shaped clone, and the reverse. Provider variables are simulated; the
+test does not exercise either provider's artifact service. The container was
+removed automatically after the run. The latest observed GitHub workflow
+passed its ordinary test job but skipped portable acceptance and failed the
+acceptance policy because the dedicated protected runner is not enabled. A
+local container pass does not replace a successful run on that runner or a
 real adopting project's GitLab pipeline. Provision the dedicated runner group
 and enablement variable before relying on the GitHub portable-acceptance gate.
 
