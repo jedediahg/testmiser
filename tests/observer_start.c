@@ -36,7 +36,10 @@ int main(void)
         "build/tm-observer-failed-input", "23", NULL};
     char *mprotect_command[] = {"./build/mprotect_probe",
         "build/tm-observer-mprotect-input", NULL};
-    char *vdso_command[] = {"./build/vdso_clock_probe", NULL};
+    char *vdso_command[] = {"./build/vdso_clock_probe", NULL, NULL};
+    static const char *const vdso_clock_apis[] = {
+        "clock_gettime", "clock_getres", "gettimeofday", "time"
+    };
     char *getcwd_command[] = {"./build/getcwd_probe", NULL};
     char *metadata_command[] = {"./build/metadata_probe", "Makefile", NULL};
     char *descriptor_command[] = {"./build/descriptor_dup_probe", "Makefile", NULL};
@@ -79,16 +82,22 @@ int main(void)
             result, report.candidate_count, report.ineligibility_reasons);
         return 1;
     }
-    result = tm_observe_and_run(vdso_command, 0, NULL, repository,
-                                &vdso_report);
-    if (result != 0 ||
-        (vdso_report.ineligibility_reasons &
-         TM_OBSERVER_INELIGIBLE_UNSUPPORTED) == 0 ||
-        tm_observer_report_allows_reuse(&vdso_report)) {
-        fprintf(stderr,
-            "observer did not expose vDSO clock use as an unsupported syscall (result=%d, reasons=0x%08x)\n",
-            result, vdso_report.ineligibility_reasons);
-        return 1;
+    for (index = 0; index < sizeof(vdso_clock_apis) /
+                            sizeof(vdso_clock_apis[0]); index++) {
+        memset(&vdso_report, 0, sizeof(vdso_report));
+        vdso_command[1] = (char *)vdso_clock_apis[index];
+        result = tm_observe_and_run(vdso_command, 0, NULL, repository,
+                                    &vdso_report);
+        if (result != 0 ||
+            (vdso_report.ineligibility_reasons &
+             TM_OBSERVER_INELIGIBLE_UNSUPPORTED) == 0 ||
+            tm_observer_report_allows_reuse(&vdso_report)) {
+            fprintf(stderr,
+                "observer did not reject vDSO clock API %s (result=%d, reasons=0x%08x)\n",
+                vdso_clock_apis[index], result,
+                vdso_report.ineligibility_reasons);
+            return 1;
+        }
     }
     if (getcwd(repository, sizeof(repository)) == NULL ||
         tm_observe_and_run(getcwd_command, 0, NULL, repository,
