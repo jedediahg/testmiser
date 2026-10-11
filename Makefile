@@ -7,12 +7,19 @@ LDLIBS ?= -lcrypto
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/tm
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+DESTDIR ?=
 SOURCES := src/main.c src/backend.c src/observer.c src/observer_report.c src/observed_inputs.c src/digest.c src/attestation.c src/key.c src/identity.c src/context.c src/input.c src/verification.c src/json.c src/result.c src/outputs.c src/trust.c src/validate.c src/profile.c src/repo.c src/clean.c src/lock.c src/local_store.c src/runtime.c src/snapshot.c src/attempt.c
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 
-.PHONY: all analyze test clean
+.PHONY: all analyze test install clean
 
 all: $(TARGET)
+
+install: $(TARGET)
+	install -d "$(DESTDIR)$(BINDIR)"
+	install -m 0755 "$(TARGET)" "$(DESTDIR)$(BINDIR)/tm"
 
 analyze:
 	$(MAKE) BUILD_DIR=$(BUILD_DIR)/analyzer clean
@@ -29,6 +36,7 @@ test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_
 	bash tests/ci-change-classify.sh
 	bash tests/gitlab-rules.sh
 	bash tests/github-runner-policy.sh
+	bash tests/install.sh
 	bash tests/ci-policy.sh
 	bash tests/ci-policy-real.sh
 	bash tests/portable-ci-gate.sh

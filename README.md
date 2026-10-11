@@ -18,8 +18,13 @@ Requirements: a C11 compiler and GNU Make on Linux.
 make          # build build/tm
 make test     # run command-line integration checks
 make analyze  # compile the application with GCC's static analyzer
+make install PREFIX=/usr/local  # install tm into PREFIX/bin (requires permission)
 make clean    # remove generated build files
 ```
+
+For package staging, set `DESTDIR` without changing the installed path, for
+example `make install PREFIX=/usr DESTDIR=/tmp/tm-package` installs at
+`/tmp/tm-package/usr/bin/tm`.
 
 The analyzer build is isolated under `build/analyzer/`, so it does not replace
 the tested optimized binary or rebuild test probes with analyzer flags.
