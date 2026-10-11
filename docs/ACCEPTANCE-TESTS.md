@@ -25,10 +25,14 @@ either provider's actual pipeline configuration.
 Run the self-contained wrapper from the repository root on Linux x86-64:
 
 ```sh
-make clean test
-TM_REQUIRE_PTRACE=1 make analyze
+TM_REQUIRE_PTRACE=1 make clean test
+make analyze
 bash tests/portable-reuse-ci.sh
 ```
+
+The required-ptrace setting applies to `make test`, which runs the observer
+integration checks. `make analyze` runs the compiler's static analyzer and does
+not execute those tests.
 
 The wrapper needs Bubblewrap, BusyBox static, `jq`, `sudo`, a C toolchain,
 OpenSSL development headers, and Git. Its host must permit user, IPC, PID,
