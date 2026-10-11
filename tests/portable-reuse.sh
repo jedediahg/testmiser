@@ -452,6 +452,48 @@ if [[ -s "$work/consumer.out" ]] ||
     exit 1
 fi
 
+# A trusted input match with a missing required output blob must explain the
+# artifact miss, then execute the command instead of returning a false hit.
+consumer_record=$(find "$work/consumer/.tm/results" -type f \
+    -name '*.tm.json' -print -quit)
+consumer_blob_digest=$(jq -r \
+    '[.payload.outputs[]? | select(.kind == "file") | .sha256][0] // empty' \
+    "$consumer_record")
+if [[ -z "$consumer_record" || -z "$consumer_blob_digest" ]]; then
+    printf '%s\n' 'Could not identify the accepted result output blob.' >&2
+    exit 1
+fi
+consumer_blob="$work/consumer/.tm/blobs/sha256/${consumer_blob_digest#sha256:}"
+consumer_blob_backup=$work/consumer-output-blob.backup
+if [[ ! -f "$consumer_blob" ]]; then
+    printf 'Expected output blob is missing before the test: %s\n' \
+        "$consumer_blob" >&2
+    exit 1
+fi
+cp "$consumer_blob" "$consumer_blob_backup"
+chmod 0644 "$consumer_blob"
+printf '%s\n' 'corrupt-output-blob' >"$consumer_blob"
+chmod 0444 "$consumer_blob"
+if ! run_tm "$work/consumer" "$work/cache-missing-output" \
+    >"$work/missing-output.out" 2>"$work/missing-output.err"; then
+    chmod 0644 "$consumer_blob"
+    cp "$consumer_blob_backup" "$consumer_blob"
+    chmod 0444 "$consumer_blob"
+    cat "$work/missing-output.err" >&2
+    exit 1
+fi
+chmod 0644 "$consumer_blob"
+cp "$consumer_blob_backup" "$consumer_blob"
+chmod 0444 "$consumer_blob"
+if [[ "$(cat "$work/missing-output.out")" != "$id:unchanged-input" ]] ||
+   ! grep -q '^tm: RUN: trusted result matches the stable input snapshot, but required declared output evidence could not be verified or restored$' \
+       "$work/missing-output.err" ||
+   grep -q '^tm: SKIP: trusted result ' "$work/missing-output.err"; then
+    cat "$work/missing-output.err" >&2
+    printf '%s\n' 'Missing required output evidence was not explained or safely rerun.' >&2
+    exit 1
+fi
+
 # Revoking the producer in the consumer's current trust snapshot must turn
 # that same signed candidate into a miss; restoring the policy should recover
 # the unchanged trusted result.

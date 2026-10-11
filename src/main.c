@@ -1112,9 +1112,21 @@ int main(int argc, char **argv)
             if (quarantined > 0)
                 fprintf(stderr,
                     "tm: RUN: prior trusted results in this command/profile/context remain quarantined after a forced contradiction; explicit operator resolution is required\n");
-            else
-                fprintf(stderr,
-                    "tm: RUN: no trusted result matched the stable input snapshot\n");
+            else {
+                char probe_fingerprint[72];
+                char probe_id[72];
+                int matching_record = find_profile_cache_hit(repository_fd,
+                    profile, runtime_root, repository_root,
+                    command_fingerprint, context_fingerprint, trust_policy,
+                    options.output_paths, options.output_count, NULL, 0, 1,
+                    probe_fingerprint, NULL, probe_id);
+                if (matching_record == 0 && options.output_count > 0)
+                    fprintf(stderr,
+                        "tm: RUN: trusted result matches the stable input snapshot, but required declared output evidence could not be verified or restored\n");
+                else
+                    fprintf(stderr,
+                        "tm: RUN: no trusted result matched the stable input snapshot\n");
+            }
         }
     }
     if (!cache_hit) {
