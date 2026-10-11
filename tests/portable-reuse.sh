@@ -209,6 +209,14 @@ if [[ "$(cat "$work/producer.out")" != "$id:unchanged-input" ||
     exit 1
 fi
 grep -q '^tm: RUN:' "$work/producer.err"
+grep -q 'controlled profile observation active; reuse requires complete observation and trusted evidence' \
+    "$work/producer.err"
+if grep -q 'observer prototype; cache reuse is disabled' \
+    "$work/producer.err"; then
+    cat "$work/producer.err" >&2
+    printf '%s\n' 'Controlled profile run was incorrectly reported as non-reusable.' >&2
+    exit 1
+fi
 if [[ ! -d "$work/producer/.tm/results" ]]; then
     cat "$work/producer.err" >&2
 fi

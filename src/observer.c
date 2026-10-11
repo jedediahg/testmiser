@@ -1315,8 +1315,13 @@ static void syscall_stop(struct task_state *task)
 
 static void report_reasons(void)
 {
-    fprintf(stderr,
+    if (observer.controlled_runtime) {
+        fprintf(stderr,
+            "tm: RUN: controlled profile observation active; reuse requires complete observation and trusted evidence\n");
+    } else {
+        fprintf(stderr,
             "tm: RUN: observer prototype; cache reuse is disabled\n");
+    }
     if (observer.saw_network) {
         fprintf(stderr, "tm: reuse rejected: socket or network operation observed\n");
     }
