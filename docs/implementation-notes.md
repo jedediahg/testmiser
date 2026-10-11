@@ -10,6 +10,8 @@ The x86-64 observer allows `mprotect(PROT_WRITE)` only when the entire range is 
 
 The CLI reports version `0.1`; newly produced signed sidecars use schema version 3 with signed `tm_version` producer metadata and retain verification semantics version 2. The x86-64 observer accepts pathname-based `execveat` calls with zero flags, records the executable path on successful exec, and treats `AT_EMPTY_PATH` or other flagged forms as unsupported.
 
+Golden-vector coverage now pins command and context fingerprints, verification identities for file, directory, positive/negative existence, and symlink inputs, signed Ed25519 payloads, output manifests, and record IDs. The verification tests also confirm that different producer keys leave the verification identity unchanged; this covers AC-20's local canonical-identity checks but does not replace cross-provider acceptance.
+
 The observer treats `getcwd` as covered by the command's working-directory identity and tracked `chdir`/`fchdir` transitions. A statically linked probe guards against reclassifying this syscall as unmodeled filesystem metadata.
 
 At traced exec boundaries inside the observed command, the x86-64 observer clears `AT_SYSINFO_EHDR` and `AT_SYSINFO` from the child's initial auxiliary vector. Standard libc vDSO clock calls then fall back to syscalls, which remain unsupported and prevent reuse. A static probe verifies this for `clock_gettime`, `clock_getres`, `gettimeofday`, and `time`. This does not detect direct CPU-counter reads or establish determinism; the approved profile assertion remains required.
