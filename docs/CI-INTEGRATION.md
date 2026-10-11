@@ -171,7 +171,16 @@ tm --root . --profile .tm/profiles/portable-linux.json \
 ```
 
 Review and commit only the generated `.tm/results/**` and `.tm/blobs/**`
-evidence needed by the project. Never commit private keys. CI can trust a
+evidence needed by the project. Since `.tm/` is ignored by default, force-stage
+only those evidence paths; do not add the entire directory:
+
+```sh
+git add -f .tm/results
+if [ -d .tm/blobs ]; then git add -f .tm/blobs; fi
+git diff --cached --stat
+```
+
+Never commit private keys, local attempt state, or trust policy. CI can trust a
 developer-produced record only after an operator approves that developer's
 public key and profile. Concurrent local worktrees are tested against the same
 per-user cache; edits to declared inputs during a run cause validation to
