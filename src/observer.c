@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <dirent.h>
+#include <elf.h>
 #include <fcntl.h>
 #include <sched.h>
 #include <signal.h>
@@ -1056,6 +1057,61 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     }
 }
 
+#if defined(__linux__) && defined(__x86_64__)
+static int tracee_read_word(pid_t pid, uintptr_t address,
+                            unsigned long *value)
+{
+    long result;
+    errno = 0;
+    result = ptrace(PTRACE_PEEKDATA, pid, (void *)address, NULL);
+    if (result == -1 && errno != 0) return -1;
+    *value = (unsigned long)result;
+    return 0;
+}
+
+static int disable_tracee_vdso(pid_t pid)
+{
+    struct user_regs_struct registers;
+    uintptr_t cursor;
+    unsigned long argument_count, pointer, type, value;
+    size_t index;
+
+    if (ptrace(PTRACE_GETREGS, pid, NULL, &registers) < 0) return -1;
+    cursor = (uintptr_t)registers.rsp;
+    if (tracee_read_word(pid, cursor, &argument_count) < 0 ||
+        argument_count > 131072UL ||
+        cursor > UINTPTR_MAX - 2 * sizeof(unsigned long) ||
+        argument_count > (UINTPTR_MAX - cursor -
+            2 * sizeof(unsigned long)) / sizeof(unsigned long))
+        return -1;
+    cursor += (argument_count + 1) * sizeof(unsigned long);
+    if (tracee_read_word(pid, cursor, &pointer) < 0 || pointer != 0)
+        return -1;
+    cursor += sizeof(unsigned long);
+
+    for (index = 0; index < 131072; index++) {
+        if (tracee_read_word(pid, cursor, &pointer) < 0) return -1;
+        cursor += sizeof(unsigned long);
+        if (pointer == 0) break;
+    }
+    if (index == 131072) return -1;
+
+    for (index = 0; index < 256; index++) {
+        if (tracee_read_word(pid, cursor, &type) < 0 ||
+            tracee_read_word(pid, cursor + sizeof(unsigned long), &value) < 0)
+            return -1;
+        if (type == AT_NULL) return 0;
+        if (type == AT_SYSINFO_EHDR || type == AT_SYSINFO) {
+            if (value != 0 && ptrace(PTRACE_POKEDATA, pid,
+                    (void *)(cursor + sizeof(unsigned long)), NULL) < 0)
+                return -1;
+        }
+        cursor += 2 * sizeof(unsigned long);
+    }
+    return -1;
+}
+#endif
+
 static void syscall_stop(struct task_state *task)
 {
     struct user_regs_struct registers;
@@ -1593,6 +1649,11 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                        task->pending_path[0] != '\0') {
                 candidate_path("executable", task->pending_path);
             }
+#if defined(__linux__) && defined(__x86_64__)
+            if (observer.observation_started && task->in_execution_tree &&
+                disable_tracee_vdso(pid) < 0)
+                mark_observer_failure();
+#endif
             forget_cloexec_descriptors(task);
         }
         if (stop_signal == (SIGTRAP | 0x80)) {

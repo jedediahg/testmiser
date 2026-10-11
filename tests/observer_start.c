@@ -20,6 +20,7 @@ int main(void)
     struct tm_observer_report traversal_report = {0};
     struct tm_observer_report failed_report = {0};
     struct tm_observer_report mprotect_report = {0};
+    struct tm_observer_report vdso_report = {0};
     struct tm_observer_report getcwd_report = {0};
     struct tm_observer_report metadata_report = {0};
     struct tm_observer_report descriptor_report = {0};
@@ -35,6 +36,7 @@ int main(void)
         "build/tm-observer-failed-input", "23", NULL};
     char *mprotect_command[] = {"./build/mprotect_probe",
         "build/tm-observer-mprotect-input", NULL};
+    char *vdso_command[] = {"./build/vdso_clock_probe", NULL};
     char *getcwd_command[] = {"./build/getcwd_probe", NULL};
     char *metadata_command[] = {"./build/metadata_probe", "Makefile", NULL};
     char *descriptor_command[] = {"./build/descriptor_dup_probe", "Makefile", NULL};
@@ -75,6 +77,17 @@ int main(void)
         fprintf(stderr,
             "observer did not start at the requested executable (result=%d, candidates=%zu, reasons=0x%08x)\n",
             result, report.candidate_count, report.ineligibility_reasons);
+        return 1;
+    }
+    result = tm_observe_and_run(vdso_command, 0, NULL, repository,
+                                &vdso_report);
+    if (result != 0 ||
+        (vdso_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_UNSUPPORTED) == 0 ||
+        tm_observer_report_allows_reuse(&vdso_report)) {
+        fprintf(stderr,
+            "observer did not expose vDSO clock use as an unsupported syscall (result=%d, reasons=0x%08x)\n",
+            result, vdso_report.ineligibility_reasons);
         return 1;
     }
     if (getcwd(repository, sizeof(repository)) == NULL ||

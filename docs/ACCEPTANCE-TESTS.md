@@ -4,7 +4,8 @@
 exit propagation and a short-lived descendant. With ptrace permission it also
 checks network and mutation rejection. Unit checks cover SHA-256, Ed25519,
 fingerprints, bounded JSON/JCS, signed records, trust policy, output manifests,
-and observer behavior. Run the ordinary suite with `make test`; OpenSSL EVP
+and observer behavior, including forcing libc vDSO clock reads through the
+unsupported-syscall path. Run the ordinary suite with `make test`; OpenSSL EVP
 development files are required. When ptrace is unavailable, the CLI suite
 checks the uncached fallback.
 

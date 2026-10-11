@@ -10,6 +10,8 @@ The CLI reports version `0.1`; newly produced signed sidecars use schema version
 
 The observer treats `getcwd` as covered by the command's working-directory identity and tracked `chdir`/`fchdir` transitions. A statically linked probe guards against reclassifying this syscall as unmodeled filesystem metadata.
 
+At traced exec boundaries inside the observed command, the x86-64 observer clears `AT_SYSINFO_EHDR` and `AT_SYSINFO` from the child's initial auxiliary vector. Standard libc vDSO clock calls then fall back to syscalls, which remain unsupported and prevent reuse. A static probe verifies that `clock_gettime` cannot pass observation through the vDSO. This does not detect direct CPU-counter reads or establish determinism; the approved profile assertion remains required.
+
 The observer models direct `readlink` path probes alongside `readlinkat`: successful calls contribute symlink candidates, `ENOENT`/`ENOTDIR` contribute absence candidates, and other errors block eligibility.
 
 The observer rejects PID/TID, user/group identity, affinity, and resource-limit observations until those values are included in an enforced verification context; the current profile backend does not normalize them. Direct probes cover `getpid`, `getppid`, `gettid`, `getuid`, `set_tid_address`, and `prlimit64`.
