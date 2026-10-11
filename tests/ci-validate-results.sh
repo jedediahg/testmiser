@@ -48,6 +48,22 @@ grep -Fxq -- "$policy_file" "$work/file-args"
 grep -Fxq -- '--require-trust' "$work/file-args"
 test "$(stat -c '%a' "$work/.tm/blobs/sha256/example")" = 444
 
+external_blobs=$work/external-blobs
+mkdir -p "$external_blobs"
+printf external >"$external_blobs/example"
+chmod 0644 "$external_blobs/example"
+mv "$work/.tm/blobs/sha256" "$work/.tm/blobs/sha256.saved"
+ln -s "$external_blobs" "$work/.tm/blobs/sha256"
+(
+    cd "$work"
+    PATH="$work/bin:$PATH" \
+    TM_VALIDATE_TEST_ARGS="$work/symlink-args" \
+        scripts/tm-ci-validate-results.sh
+)
+test "$(stat -c '%a' "$external_blobs/example")" = 644
+rm "$work/.tm/blobs/sha256"
+mv "$work/.tm/blobs/sha256.saved" "$work/.tm/blobs/sha256"
+
 json_policy='{"schema_version":1,"repositories":[]}'
 (
     cd "$work"
