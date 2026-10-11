@@ -43,6 +43,8 @@ int main(void)
         "build/tm-observer-failed-input", "23", NULL};
     char *mprotect_command[] = {"./build/mprotect_probe",
         "build/tm-observer-mprotect-input", NULL};
+    char *private_mprotect_command[] = {"./build/mprotect_probe",
+        "build/tm-observer-mprotect-input", "private", NULL};
     char *vdso_command[] = {"./build/vdso_clock_probe", NULL, NULL};
     static const char *const vdso_clock_apis[] = {
         "clock_gettime", "clock_getres", "gettimeofday", "time"
@@ -315,6 +317,29 @@ int main(void)
         fprintf(stderr, "observer accepted writable mprotect on a shared mapping\n");
         (void)unlink(mprotect_input_path);
         return 1;
+    }
+    if (tm_observe_and_run_with_fds(private_mprotect_command, 0, NULL,
+            repository, NULL, 0, 0, 0, NULL, 0, NULL, 0,
+            &mprotect_report) != 0 ||
+        (mprotect_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_MUTATION) != 0) {
+        fprintf(stderr,
+            "observer rejected a private copy-on-write mprotect mapping (reasons=0x%08x)\n",
+            mprotect_report.ineligibility_reasons);
+        (void)unlink(mprotect_input_path);
+        return 1;
+    }
+    {
+        unsigned char first_byte;
+        int descriptor = open(mprotect_input_path, O_RDONLY | O_CLOEXEC);
+        if (descriptor < 0 || read(descriptor, &first_byte, 1) != 1 ||
+            close(descriptor) < 0 || first_byte != 0) {
+            fprintf(stderr,
+                "private mprotect changed its source file\n");
+            if (descriptor >= 0) (void)close(descriptor);
+            (void)unlink(mprotect_input_path);
+            return 1;
+        }
     }
     (void)unlink(mprotect_input_path);
     {

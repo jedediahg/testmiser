@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <elf.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdint.h>
@@ -854,6 +855,51 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     }
 }
 
+/* A writable private mapping uses copy-on-write and cannot mutate its source.
+ * Read the stopped tracee's VMA map rather than guessing from mmap history;
+ * unknown, shared, gapped, or concurrently mutable address spaces fail closed. */
+static int tracee_range_is_private(pid_t pid, unsigned long address,
+                                   unsigned long length)
+{
+    char maps_path[64];
+    char *line = NULL;
+    size_t line_capacity = 0, line_count = 0;
+    unsigned long range_end, cursor;
+    FILE *maps;
+    int covered = 0;
+
+    if (observer.live_tasks != 1 || length == 0 ||
+        length > ULONG_MAX - address ||
+        snprintf(maps_path, sizeof(maps_path), "/proc/%ld/maps", (long)pid) >=
+            (int)sizeof(maps_path))
+        return 0;
+    range_end = address + length;
+    cursor = address;
+    maps = fopen(maps_path, "r");
+    if (maps == NULL) return 0;
+    while (getline(&line, &line_capacity, maps) >= 0) {
+        unsigned long map_start, map_end;
+        char permissions[8] = {0};
+        int parsed;
+
+        if (++line_count > 131072) break;
+        parsed = sscanf(line, "%lx-%lx %7s", &map_start, &map_end,
+                        permissions);
+        if (parsed != 3 || map_start >= map_end || strlen(permissions) < 4)
+            break;
+        if (map_end <= cursor) continue;
+        if (map_start > cursor || permissions[3] != 'p') break;
+        cursor = map_end < range_end ? map_end : range_end;
+        if (cursor == range_end) {
+            covered = 1;
+            break;
+        }
+    }
+    free(line);
+    (void)fclose(maps);
+    return covered;
+}
+
 static void classify_syscall(long number, const struct user_regs_struct *regs,
                              int entering, struct task_state *task)
 {
@@ -1005,8 +1051,9 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
                 observer.saw_external_descriptor = 1;
         }
         return;
-    case 10: /* mprotect: mapping provenance is not tracked across upgrades */
-        if (((int)regs->rdx & PROT_WRITE) != 0)
+    case 10: /* mprotect */
+        if (((int)regs->rdx & PROT_WRITE) != 0 &&
+            !tracee_range_is_private(task->pid, regs->rdi, regs->rsi))
             observer.saw_mutation = 1;
         return;
     case 202: /* futex: thread synchronization */

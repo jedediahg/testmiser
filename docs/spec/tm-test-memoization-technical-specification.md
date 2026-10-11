@@ -387,7 +387,7 @@ Coverage includes:
 - writes, truncation, rename, unlink, links, directory creation, permission changes, and writable mappings for mutation detection;
 - socket creation/use and all process creation/exec paths.
 
-`mprotect` requests that add `PROT_WRITE` MUST mark the invocation non-reusable until mapping provenance is tracked across protection upgrades. A read-only shared mapping can otherwise become a writable shared mapping without another `mmap` event.
+Before permitting an `mprotect` request that adds `PROT_WRITE`, the observer MUST establish that the entire affected range is continuously covered by private VMAs in the stopped tracee's `/proc/<pid>/maps`, with no concurrently traced task able to change that address space. Private copy-on-write writes do not change their source object. Shared, unmapped, gapped, concurrently mutable, or unreadable ranges MUST remain non-reusable; a read-only shared mapping can otherwise become a writable shared mapping without another `mmap` event.
 
 `io_uring`, unmodeled ioctls, mount/root/namespace changes, external shared memory/IPC, descriptor passing, device access, and any other unmodeled input channel make the execution non-reusable. Inherited descriptors other than controlled stdin/stdout/stderr are unsupported in 0.1. Input from a terminal, pipe, or uncontrolled stdin forces RUN; use `/dev/null` for eligible commands. Stdout/stderr writes are permitted; replay is governed by the output contract in section 38.
 
