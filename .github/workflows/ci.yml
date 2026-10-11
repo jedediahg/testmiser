@@ -31,23 +31,16 @@ jobs:
 
   portable-acceptance:
     needs: test
-    if: >-
-      needs.test.outputs.tests_required == 'true' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ vars.TM_PORTABLE_ACCEPTANCE_RUNNER || 'ubuntu-24.04' }}
+    # This job uses privileged Docker. Keep it to trusted default-branch pushes;
+    # the runner group must independently restrict access to this workflow on main.
+    if: github.event_name == 'push' && needs.test.outputs.tests_required == 'true'
+    runs-on:
+      group: tm-portable-acceptance
+      labels: tm-portable-acceptance
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Require the isolated acceptance runner
-        env:
-          TM_PORTABLE_ACCEPTANCE_RUNNER: ${{ vars.TM_PORTABLE_ACCEPTANCE_RUNNER }}
-        run: |
-          if [[ -z "$TM_PORTABLE_ACCEPTANCE_RUNNER" ]]; then
-            echo "::error::Set the TM_PORTABLE_ACCEPTANCE_RUNNER repository variable to an isolated runner with nested user/network namespaces and ptrace."
-            exit 1
-          fi
       - name: Verify signed cross-worktree reuse
         env:
           TM_ACCEPTANCE_SHARED_STORE: ${{ vars.TM_ACCEPTANCE_SHARED_STORE }}

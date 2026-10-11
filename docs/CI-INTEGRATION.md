@@ -19,32 +19,34 @@ fails closed if the controlled backend cannot start.
 The GitHub Actions acceptance job runs Bubblewrap inside a disposable
 privileged Debian container as a non-root user. Standard GitHub-hosted runners
 deny the required network namespace, even for that nested container. The job
-fails before installing its toolchain unless the repository variable
-`TM_PORTABLE_ACCEPTANCE_RUNNER` names an isolated Linux runner whose Docker
-daemon permits the nested namespace and ptrace operations. The GitLab gate uses
+uses a dedicated self-hosted runner group whose Docker daemon permits the
+nested namespace and ptrace operations. The GitLab gate uses
 the `linux-bwrap` runner tag for the same reason. Provision only runners that
 pass the portable acceptance gate; a successful repository workflow does not
 prove a separate project's runner has the same namespace, ptrace, filesystem,
 or UID behavior.
 
-For GitHub, register a dedicated self-hosted runner with the unique label
-`tm-portable-acceptance`, then set the repository Actions variable to that
-single label:
+For GitHub, create an organization runner group named
+`tm-portable-acceptance`, allow only the `jedediahg/testmiser` repository, and
+restrict workflow access to
+`jedediahg/testmiser/.github/workflows/ci.yml@refs/heads/main`. Register a
+dedicated self-hosted runner in that group with the label
+`tm-portable-acceptance`:
 
 ```sh
 ./config.sh --url https://github.com/jedediahg/testmiser \
   --token "$RUNNER_TOKEN" --labels tm-portable-acceptance --ephemeral
-gh variable set TM_PORTABLE_ACCEPTANCE_RUNNER \
-  --repo jedediahg/testmiser --body tm-portable-acceptance
 ```
 
-The workflow skips the privileged acceptance job for pull requests from forks;
-it still runs the check for same-repository pull requests and qualifying pushes.
-Use a one-job ephemeral runner and destroy or reimage its VM after the job.
-`--ephemeral` deregisters the runner after one job but does not wipe its host.
-Do not expose secrets, deployment credentials, or internal network access to
-this runner. A persistent runner that executes fork pull-request code can be
-compromised through the privileged Docker job.
+The privileged acceptance job runs only on pushes to `main`; pull requests run
+the hosted test job and must pass acceptance after merge. The runner-group
+restriction is a security boundary: the job-level event condition is useful for
+scheduling but is not sufficient because pull requests can change workflow
+files. Use a one-job ephemeral runner and destroy or reimage its VM after the
+job. `--ephemeral` deregisters the runner after one job but does not wipe its
+host. Do not expose secrets, deployment credentials, or internal network access
+to this runner. Do not attach this runner to the default or any unrestricted
+group.
 
 The repository's `.gitlab-ci.yml` routes `verify` and `portable-acceptance`
 to separate stages. Workflow rules prevent duplicate branch pipelines when a
