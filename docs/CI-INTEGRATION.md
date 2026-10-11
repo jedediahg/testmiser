@@ -351,9 +351,8 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
-The full portable reuse acceptance script passed with the current fixture
-coverage on commit `6b01637` inside a disposable, privileged Debian Bookworm
-container with Bubblewrap and ptrace.
+The full portable reuse acceptance script passed on commit `83a978b` inside a
+disposable, privileged Debian Bookworm container with Bubblewrap and ptrace.
 The suite exercises checked-in and linked-worktree reuse, input invalidation,
 failure/quarantine resolution, state reversion, output restoration, and
 cold-miss coordination. It also checks signed checked-in evidence in both
