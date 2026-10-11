@@ -65,11 +65,13 @@ to this runner. Do not attach this runner to the default or any unrestricted
 group.
 
 The repository's `.gitlab-ci.yml` routes verification, portable acceptance,
-and a final acceptance-policy check to ordered stages. The policy recomputes
-whether a source change requires acceptance, validates a dotenv success result
-from the acceptance job, and fails if a protected source change
-skipped that job. It also rejects an unprotected default branch or release
-tag. Workflow rules prevent duplicate branch pipelines when a
+and final policy checks to ordered stages. A lightweight protected-ref job
+uses no checkout to reject an unprotected default branch or release tag. The
+history-based acceptance policy runs only for non-merge-request source changes;
+it recomputes whether those changes require acceptance and validates the dotenv
+success result from the acceptance job. This keeps documentation-only and
+merge-request pipelines from installing Git and fetching full history just to
+check acceptance routing. Workflow rules prevent duplicate branch pipelines when a
 merge request is open. The verification job starts only for source, test,
 build, specification, CI, or `.tm` evidence changes; its shared classifier
 then skips source tests for evidence-only commits while still requiring strict
