@@ -16,6 +16,7 @@ int main(void)
     char *command[] = {"/bin/sh", "-c", "exec /bin/true", NULL};
     struct tm_observer_report report = {0};
     struct tm_observer_report controlled_report = {0};
+    struct tm_observer_report identity_report = {0};
     struct tm_observer_report null_device_report = {0};
     struct tm_observer_report device_report = {0};
     struct tm_observer_report output_report = {0};
@@ -50,6 +51,7 @@ int main(void)
     char *metadata_command[] = {"./build/metadata_probe", "Makefile", NULL};
     char *descriptor_command[] = {"./build/descriptor_dup_probe", "Makefile", NULL};
     char *directory_command[] = {"./build/directory_probe", NULL, NULL};
+    char *identity_command[] = {"./build/context_probe", "identity", NULL};
     size_t index, executable_count = 0;
     int result;
     if (syscall(SYS_close_range, 3U, ~0U, 0U) < 0) {
@@ -107,6 +109,17 @@ int main(void)
         fprintf(stderr,
             "observer did not model controlled /dev/null access (reasons=0x%08x)\n",
             null_device_report.ineligibility_reasons);
+        return 1;
+    }
+    if (tm_observe_and_run_with_fds_identity(identity_command, 0, NULL,
+            repository, NULL, 0, 0, 0, NULL, 1, 1, NULL, 0,
+            &identity_report) != 0 ||
+        (identity_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_CONTEXT) == 0 ||
+        tm_observer_report_allows_reuse(&identity_report)) {
+        fprintf(stderr,
+            "observer accepted nonzero identity results under normalized identity (reasons=0x%08x)\n",
+            identity_report.ineligibility_reasons);
         return 1;
     }
     if (tm_observe_and_run_with_fds(device_command, 0, NULL, repository,

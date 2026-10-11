@@ -47,7 +47,8 @@ runtime_digest=$("$tm_bin" runtime digest "$runtime")
 printf '{"schema_version":1,"repository_id":"testmiser-portable-ci",'\
 '"backend_contract":"bubblewrap-linux-x86_64-v2",'\
 '"runtime_digest":"%s","workspace_path":"/workspace",'\
-'"deterministic":true,"privacy_class":"public","environment":{},'\
+'"deterministic":true,"privacy_class":"public",'\
+'"environment":{"TM_ACCEPTANCE_IDENTITY_NORMALIZED":"1"},'\
 '"input_roots":["build/portable-input.txt","build/portable-reuse-probe"],'\
 '"output_roots":["build/reports"],"scratch_roots":["/tmp"]}\n' \
     "$runtime_digest" >"$profile"

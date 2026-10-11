@@ -54,14 +54,24 @@ int portable_main(long argc, char **argv)
     size_t used = 0, index;
     char **environment;
     long source, destination, result;
+    int normalized_identity = 0;
 
     if (argc != 4) return 2;
     environment = argv + argc + 1;
     for (; *environment != 0; environment++) {
+        if (starts_with(*environment,
+                        "TM_ACCEPTANCE_IDENTITY_NORMALIZED=1"))
+            normalized_identity = 1;
         for (index = 0; index < sizeof(forbidden) / sizeof(forbidden[0]);
              index++)
             if (starts_with(*environment, forbidden[index])) return 3;
     }
+    if (normalized_identity &&
+        (syscall3(102, 0, 0, 0) != 0 || /* getuid */
+         syscall3(104, 0, 0, 0) != 0 || /* getgid */
+         syscall3(107, 0, 0, 0) != 0 || /* geteuid */
+         syscall3(108, 0, 0, 0) != 0))  /* getegid */
+        return 4;
 
     source = syscall3(2, (long)argv[1], 0, 0);
     if (source < 0) return 1;

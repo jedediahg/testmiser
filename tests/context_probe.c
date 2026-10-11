@@ -8,6 +8,13 @@
 int main(int argc, char **argv)
 {
     if (argc != 2) return 2;
+    if (strcmp(argv[1], "identity") == 0) {
+        (void)syscall(SYS_getuid);
+        (void)syscall(SYS_geteuid);
+        (void)syscall(SYS_getgid);
+        (void)syscall(SYS_getegid);
+        return 0;
+    }
     if (strcmp(argv[1], "getpid") == 0)
         return syscall(SYS_getpid) > 0 ? 0 : 1;
     if (strcmp(argv[1], "getppid") == 0)

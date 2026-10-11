@@ -111,6 +111,7 @@ struct observer_state {
     int explain;
     const char *repository_root;
     int controlled_runtime;
+    int normalized_identity;
     const char *const *output_roots;
     size_t output_root_count;
     const char *start_after_exec;
@@ -1026,6 +1027,8 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 104: /* getgid */
     case 107: /* geteuid */
     case 108: /* getegid */
+        if (!observer.normalized_identity) observer.saw_context = 1;
+        return;
     case 110: /* getppid */
     case 111: /* getpgrp */
     case 115: /* getgroups */
@@ -1157,6 +1160,11 @@ static void syscall_stop(struct task_state *task)
     task->syscall_entry = 0;
     if (!observer.observation_started || !task->in_execution_tree) return;
     long result = (long)registers.rax;
+    if (observer.normalized_identity &&
+        (task->syscall_number == 102 || task->syscall_number == 104 ||
+         task->syscall_number == 107 || task->syscall_number == 108) &&
+        result != 0)
+        observer.saw_context = 1;
     if (task->syscall_number == 3) {
         if (result < 0) mark_unmodeled_error();
         forget_descriptor(task, task->pending_descriptor);
@@ -1504,7 +1512,7 @@ static int target_executable_matches(const char *target, const char *observed)
 static int trace_child(pid_t child, int explain, const char *repository_root,
                        int inherited_descriptors,
                        const char *start_after_exec,
-                       int controlled_runtime,
+                       int controlled_runtime, int normalized_identity,
                        const char *const *output_roots,
                        size_t output_root_count,
                        struct tm_observer_report *report)
@@ -1521,6 +1529,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     observer.explain = explain;
     observer.repository_root = repository_root;
     observer.controlled_runtime = controlled_runtime;
+    observer.normalized_identity = normalized_identity;
     observer.output_roots = output_roots;
     observer.output_root_count = output_root_count;
     observer.start_after_exec = start_after_exec;
@@ -1744,7 +1753,7 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
     return TM_EXIT_INTERNAL_ERROR;
 }
 
-int tm_observe_and_run_with_fds(char **command, int explain,
+int tm_observe_and_run_with_fds_identity(char **command, int explain,
                                 char *const environment[],
                                 const char *repository_root,
                                 const int *preserved_fds,
@@ -1752,6 +1761,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 int null_stdin, int set_umask_022,
                                 const char *start_after_exec,
                                 int controlled_runtime,
+                                int normalized_identity,
                                 const char *const *output_roots,
                                 size_t output_root_count,
                                 struct tm_observer_report *report)
@@ -1801,10 +1811,29 @@ int tm_observe_and_run_with_fds(char **command, int explain,
     }
     result = trace_child(child, explain, repository_root,
                          inherited_descriptors, start_after_exec,
-                         controlled_runtime, output_roots, output_root_count,
+                         controlled_runtime, normalized_identity,
+                         output_roots, output_root_count,
                          report);
     restore_signal_handlers(previous);
     return result;
+}
+
+int tm_observe_and_run_with_fds(char **command, int explain,
+                                char *const environment[],
+                                const char *repository_root,
+                                const int *preserved_fds,
+                                size_t preserved_fd_count,
+                                int null_stdin, int set_umask_022,
+                                const char *start_after_exec,
+                                int controlled_runtime,
+                                const char *const *output_roots,
+                                size_t output_root_count,
+                                struct tm_observer_report *report)
+{
+    return tm_observe_and_run_with_fds_identity(command, explain, environment,
+        repository_root, preserved_fds, preserved_fd_count, null_stdin,
+        set_umask_022, start_after_exec, controlled_runtime, 0, output_roots,
+        output_root_count, report);
 }
 
 int tm_observe_and_run(char **command, int explain, char *const environment[],
@@ -1850,7 +1879,7 @@ int tm_observe_and_run(char **command, int explain, char *const environment[],
 
 #else
 
-int tm_observe_and_run_with_fds(char **command, int explain,
+int tm_observe_and_run_with_fds_identity(char **command, int explain,
                                 char *const environment[],
                                 const char *repository_root,
                                 const int *preserved_fds,
@@ -1858,6 +1887,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 int null_stdin, int set_umask_022,
                                 const char *start_after_exec,
                                 int controlled_runtime,
+                                int normalized_identity,
                                 const char *const *output_roots,
                                 size_t output_root_count,
                                 struct tm_observer_report *report)
@@ -1871,6 +1901,7 @@ int tm_observe_and_run_with_fds(char **command, int explain,
     (void)set_umask_022;
     (void)start_after_exec;
     (void)controlled_runtime;
+    (void)normalized_identity;
     (void)output_roots;
     (void)output_root_count;
     if (report != NULL) memset(report, 0, sizeof(*report));
@@ -1899,6 +1930,24 @@ int tm_observe_and_run_with_fds(char **command, int explain,
     }
     return WIFSIGNALED(status) ? 128 + WTERMSIG(status) :
                                 TM_EXIT_INTERNAL_ERROR;
+}
+
+int tm_observe_and_run_with_fds(char **command, int explain,
+                                char *const environment[],
+                                const char *repository_root,
+                                const int *preserved_fds,
+                                size_t preserved_fd_count,
+                                int null_stdin, int set_umask_022,
+                                const char *start_after_exec,
+                                int controlled_runtime,
+                                const char *const *output_roots,
+                                size_t output_root_count,
+                                struct tm_observer_report *report)
+{
+    return tm_observe_and_run_with_fds_identity(command, explain, environment,
+        repository_root, preserved_fds, preserved_fd_count, null_stdin,
+        set_umask_022, start_after_exec, controlled_runtime, 0, output_roots,
+        output_root_count, report);
 }
 
 int tm_observe_and_run(char **command, int explain, char *const environment[],

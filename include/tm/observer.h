@@ -59,5 +59,18 @@ int tm_observe_and_run_with_fds(char **command, int explain,
                                 const char *const *output_roots,
                                 size_t output_root_count,
                                 struct tm_observer_report *report);
+/* Extended form for backends that enforce namespace UID/GID zero. */
+int tm_observe_and_run_with_fds_identity(char **command, int explain,
+                                char *const environment[],
+                                const char *repository_root,
+                                const int *preserved_fds,
+                                size_t preserved_fd_count,
+                                int null_stdin, int set_umask_022,
+                                const char *start_after_exec,
+                                int controlled_runtime,
+                                int normalized_identity,
+                                const char *const *output_roots,
+                                size_t output_root_count,
+                                struct tm_observer_report *report);
 
 #endif

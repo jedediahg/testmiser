@@ -949,6 +949,8 @@ static int run_bubblewrap(const struct argument_vector *arguments,
                           char **command, const char *working_directory,
                           const char *const *output_roots,
                           size_t output_root_count,
+                          int controlled_runtime,
+                          int normalized_identity,
                           int *command_result)
 {
     const char *target = command[0];
@@ -965,15 +967,10 @@ static int run_bubblewrap(const struct argument_vector *arguments,
             target = relative_target;
         }
     }
-    *command_result = tm_observe_and_run_with_fds(
+    *command_result = tm_observe_and_run_with_fds_identity(
         arguments->items, explain, NULL, GUEST_WORKSPACE,
         arguments->preserved_fds, arguments->preserved_fd_count, 1, 1,
-        target,
-#ifdef TM_TEST_BWRAP
-        0,
-#else
-        1,
-#endif
+        target, controlled_runtime, normalized_identity,
         output_roots, output_root_count, report);
     free(relative_target);
     return 1;
@@ -997,11 +994,19 @@ int tm_backend_run(const struct tm_profile *profile,
     int output_stage_fd = -1;
     size_t input_count, index;
     int repository_fd = -1, built, result = 0;
+    int controlled_runtime = 1;
+    int normalized_identity = 0;
 
     if (profile == NULL || runtime_root == NULL || repository_root == NULL ||
         command == NULL || command[0] == NULL || command_result == NULL ||
         report == NULL || observed_inputs == NULL || output_manifest == NULL)
         return 0;
+#ifndef TM_TEST_BWRAP
+    normalized_identity = strcmp(tm_profile_backend_contract(profile),
+                                  "bubblewrap-linux-x86_64-v2") == 0;
+#else
+    controlled_runtime = 0;
+#endif
     memset(observed_inputs, 0, sizeof(*observed_inputs));
     tm_output_manifest_clear(output_manifest);
     if (output_root_count > 0 &&
@@ -1067,7 +1072,9 @@ int tm_backend_run(const struct tm_profile *profile,
             "tm: RUN: Bubblewrap restricted input roots and read-only workspace/runtime views active; lookup remains disabled\n");
     result = run_bubblewrap(&arguments, explain, report, command,
                             working_directory, output_roots,
-                            output_root_count, command_result);
+                            output_root_count, controlled_runtime,
+                            normalized_identity,
+                            command_result);
     if (result > 0 && *command_result == 0 && output_root_count > 0) {
         repository_fd = open_directory_without_symlinks(repository_root);
         if (repository_fd < 0) {
