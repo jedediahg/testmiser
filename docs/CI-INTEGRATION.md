@@ -17,17 +17,16 @@ back to execution without reuse. A producer invocation with `--signing-key`
 fails closed if the controlled backend cannot start.
 
 The GitHub Actions acceptance job runs Bubblewrap inside a privileged Debian
-Trixie container as a non-root user on a fresh `ubuntu-24.04` hosted VM. It is
-limited to pushes to `main`; pull requests never run privileged acceptance.
-The acceptance checkout sets `persist-credentials: false`, so no checkout
-token is stored in the workspace mounted into that container. GitHub
-provisions a fresh VM per hosted job and decommissions it
-when the job finishes ([hosted runner lifecycle](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners),
-[workflow containers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container)).
-The required policy check fails a main-branch source change if acceptance is
-skipped or fails. Passing this job qualifies only its hosted-worker setup; it
-does not prove a separate project's runner has equivalent namespace, ptrace,
-filesystem, or UID behavior.
+Trixie container as a non-root user. Standard GitHub-hosted runners cannot
+create the required network namespace, even inside that container: workflow
+run [`38116857472`](https://github.com/jedediahg/testmiser/actions/runs/38116857472)
+failed at `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. The
+job therefore requires a dedicated self-hosted runner whose Docker daemon
+permits nested namespaces and ptrace. It runs only on pushes to `main`; pull
+requests do not run privileged acceptance. Checkout sets
+`persist-credentials: false`, so no checkout token is stored in the mounted
+workspace. The policy check fails a main-branch source change if acceptance is
+skipped or fails.
 
 The GitLab gate uses the protected `linux-bwrap` runner tag. Mark that runner
 protected and reserve the tag for a dedicated disposable host. The gate runs
@@ -41,6 +40,32 @@ require ptrace: its observer
 exec-boundary integration check reports a skip when the shared runner denies
 tracing. The protected portable-acceptance job sets `TM_REQUIRE_PTRACE=1`, so
 the release gate still fails if the dedicated runner cannot perform tracing.
+
+For GitHub, create an organization runner group named
+`tm-portable-acceptance`, allow only the `jedediahg/testmiser` repository, and
+restrict workflow access to
+`jedediahg/testmiser/.github/workflows/ci.yml@refs/heads/main`. Register a
+dedicated self-hosted runner in that group with the label
+`tm-portable-acceptance`:
+
+```sh
+./config.sh --url https://github.com/jedediahg/testmiser \
+  --token "$RUNNER_TOKEN" --labels tm-portable-acceptance --ephemeral
+gh variable set TM_PORTABLE_ACCEPTANCE_ENABLED \
+  --repo jedediahg/testmiser --body true
+```
+
+The privileged acceptance job is skipped until the variable is set to `true`.
+GitHub treats a conditionally skipped job as successful, so the separate
+`portable-acceptance-policy` check fails a main-branch source-change run unless
+the privileged job actually succeeds. Merge requests run ordinary tests and
+qualify for portable acceptance after merge. The runner-group restriction is
+the security boundary; the job-level event condition only schedules work
+because pull requests can edit workflow files. Use a one-job ephemeral runner
+and destroy or reimage its VM after the job;
+`--ephemeral` deregisters it but does not wipe the host. Do not expose secrets,
+deployment credentials, or internal network access to this runner, and do not
+attach it to a default or unrestricted group.
 
 The repository's `.gitlab-ci.yml` routes verification, portable acceptance,
 and final policy checks to ordered stages. A lightweight protected-ref job
@@ -336,13 +361,14 @@ provider-shaped directions: a GitLab-shaped producer consumed by a
 GitHub-shaped clone, and the reverse. Provider variables are simulated; the
 test does not exercise either provider's artifact service. The container was
 removed automatically after the run. GitHub Actions run
-[`38116536848`](https://github.com/jedediahg/testmiser/actions/runs/38116536848)
-for `e59159c` passed the ordinary test job, skipped portable acceptance, and
-failed the policy check because this repository has no configured runner or
-enablement variable. A local container pass does not replace a successful run
-on that runner or a real adopting project's GitLab pipeline. Provision the
-dedicated runner group and enablement variable before relying on the GitHub
-portable-acceptance gate.
+[`38116857472`](https://github.com/jedediahg/testmiser/actions/runs/38116857472)
+for `7693c8f` passed the ordinary test job, then confirmed that the hosted VM
+cannot create the required network namespace (`Failed RTM_NEWADDR:
+Operation not permitted`) even in privileged Docker. The workflow was returned
+to the protected self-hosted runner requirement. Provision its runner group
+and enablement variable before relying on GitHub portable acceptance. Local
+container success does not replace a successful run on that protected runner
+or a real adopting project's GitLab pipeline.
 
 The repo's CI validates this repository's evidence and runs its own tests; it
 does not prove a separate project's test job is integrated. Provider identity

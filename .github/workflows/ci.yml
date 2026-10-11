@@ -31,12 +31,15 @@ jobs:
 
   portable-acceptance:
     needs: test
-    # Privileged Docker runs only on GitHub's fresh hosted VM after trusted
-    # default-branch pushes. Pull requests never execute this job.
+    # Privileged Docker requires an isolated self-hosted runner with namespace
+    # and ptrace support. Keep it to trusted default-branch pushes.
     if: >-
       github.event_name == 'push' &&
+      vars.TM_PORTABLE_ACCEPTANCE_ENABLED == 'true' &&
       needs.test.outputs.tests_required == 'true'
-    runs-on: ubuntu-24.04
+    runs-on:
+      group: tm-portable-acceptance
+      labels: tm-portable-acceptance
     steps:
       - uses: actions/checkout@v7
         with:

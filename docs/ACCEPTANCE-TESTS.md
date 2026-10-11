@@ -61,9 +61,9 @@ the same numeric UID as the client. The script creates a private temporary
 subdirectory there.
 
 Unavailable namespaces or ptrace cause a failure, not a skipped pass. GitHub
-runs this gate on a fresh `ubuntu-24.04` hosted VM with privileged Docker and a
-Debian Trixie test container, for pushes to `main` only. GitLab uses its
-protected `linux-bwrap` runner tag. Passing this gate proves only its
-local/filesystem scenarios. Follow
+runs this gate in a privileged Debian Trixie container on the protected
+`tm-portable-acceptance` self-hosted runner group, for pushes to `main` only.
+GitLab uses its protected `linux-bwrap` runner tag. Passing this gate proves
+only its local/filesystem scenarios. Follow
 [`docs/CI-INTEGRATION.md`](../docs/CI-INTEGRATION.md) to validate an adopting
 project's runner, trust provisioning, and producer/consumer jobs.
