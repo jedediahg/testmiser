@@ -46,9 +46,13 @@ gh variable set TM_PORTABLE_ACCEPTANCE_ENABLED \
 
 The privileged acceptance job is skipped until the variable is set to `true`,
 then runs only on pushes to `main`; pull requests run the hosted test job and
-must pass acceptance after merge. Keep the variable unset until the runner
-group and runner are configured. Before beta rollout, require the acceptance
-check on `main` so a skipped or failed acceptance cannot qualify a release.
+qualify for portable acceptance after merge. GitHub treats a conditionally
+skipped job as successful, so the separate `portable-acceptance-policy` check
+fails a main-branch source-change run unless the privileged acceptance job
+actually succeeds. It passes on pull requests because privileged acceptance
+is deliberately deferred until after merge. Keep the variable unset until the
+runner group and runner are configured; do not qualify a main-branch source
+commit or beta release while this policy check is failing.
 The runner-group
 restriction is a security boundary: the job-level event condition is useful for
 scheduling but is not sufficient because pull requests can change workflow

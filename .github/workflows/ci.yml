@@ -80,3 +80,19 @@ jobs:
               TM_REQUIRE_PTRACE=1 bash -c \
               "cd /home/tester/testmiser && bash tests/portable-reuse-ci.sh"
           '
+
+  portable-acceptance-policy:
+    needs: [test, portable-acceptance]
+    # A conditionally skipped job is reported as successful by GitHub. Keep an
+    # unconditional policy check so a main-branch code change cannot look
+    # acceptance-qualified while the privileged gate is disabled or missing.
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require portable acceptance for main-branch code changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          TESTS_REQUIRED: ${{ needs.test.outputs.tests_required }}
+          ACCEPTANCE_RESULT: ${{ needs.portable-acceptance.result }}
+        run: bash scripts/tm-github-acceptance-policy.sh
