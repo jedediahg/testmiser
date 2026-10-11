@@ -194,7 +194,7 @@ An application CI job can reuse committed evidence only when it invokes the
 same command through `tm` with a matching approved profile, runtime, and
 public trust policy. See the [CI integration runbook](docs/CI-INTEGRATION.md)
 for rollout steps with local worktrees and GitLab runners, and the [portable
-acceptance test](tests/README.md) for the producer/consumer test setup.
+acceptance test](docs/ACCEPTANCE-TESTS.md) for the producer/consumer test setup.
 
 The current development host cannot complete Bubblewrap network namespace
 setup, and cross-provider portability has not been demonstrated. CI also runs

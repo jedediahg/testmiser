@@ -244,7 +244,7 @@ setup overhead.
 If misses dominate, widen coverage only by adding real stable inputs or an
 approved runtime; never weaken observation or trust checks to raise the hit
 rate. The upstream acceptance procedure is documented in
-[`tests/README.md`](../tests/README.md); it requires working user/network
+[`acceptance test guide`](ACCEPTANCE-TESTS.md); it requires working user/network
 namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
