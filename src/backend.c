@@ -790,6 +790,7 @@ static int build_arguments(struct argument_vector *arguments,
     if (
         push_pair(arguments, "--tmpfs", GUEST_WORKSPACE) < 0 ||
         push_pair(arguments, "--tmpfs", GUEST_METADATA) < 0 ||
+        push_pair(arguments, "--tmpfs", "/dev") < 0 ||
         push_argument(arguments, "--dev-bind") < 0 ||
         push_argument(arguments, "/dev/null") < 0 ||
         push_argument(arguments, "/dev/null") < 0)

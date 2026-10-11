@@ -550,7 +550,10 @@ static void candidate_path(const char *kind, const char *path)
 
     if (path_is_declared_output(path)) return;
     relative_path = tm_repo_relative_path(observer.repository_root, path);
-    if (relative_path == NULL && observer.controlled_runtime) {
+    if (relative_path == NULL && observer.controlled_runtime &&
+        strcmp(path, "/dev/null") != 0 &&
+        strncmp(path, "/dev/", sizeof("/dev/") - 1) != 0 &&
+        strcmp(path, "/dev") != 0) {
         /* The profile backend exposes only its digest-verified runtime,
          * empty tmpfs scratch roots, and the /dev/null exception outside the
          * repository workspace. Those accesses are covered by that view. */

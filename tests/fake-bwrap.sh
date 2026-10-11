@@ -24,6 +24,8 @@ whole_workspace_bind=no
 workspace_overlay=no
 readonly_runtime=no
 hidden_metadata=no
+dev_tmpfs=no
+dev_null_bind=no
 clean_environment=no
 user_namespace=no
 namespace_uid=no
@@ -114,7 +116,15 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
             if [ "$#" -lt 2 ]; then exit 90; fi
             if [ "$2" = /workspace ]; then workspace_tmpfs=yes; fi
             if [ "$2" = /workspace/.tm ]; then hidden_metadata=yes; fi
+            if [ "$2" = /dev ]; then dev_tmpfs=yes; fi
             shift
+            ;;
+        --dev-bind)
+            test "$#" -ge 3 || fail 'incomplete device bind'
+            test "$2" = /dev/null && test "$3" = /dev/null ||
+                fail 'unexpected device bind'
+            dev_null_bind=yes
+            shift 2
             ;;
         --dir)
             if [ "$2" = /workspace/build ]; then workspace_build_dir=yes; fi
@@ -147,6 +157,8 @@ test "$whole_workspace_bind" = no || fail 'entire checkout is exposed'
 test "$workspace_overlay" = no || fail 'writable workspace overlay is present'
 test "$readonly_runtime" = yes || fail 'read-only runtime fd bind'
 test "$hidden_metadata" = yes || fail 'hidden metadata tmpfs'
+test "$dev_tmpfs" = yes || fail '/dev tmpfs is missing'
+test "$dev_null_bind" = yes || fail 'only /dev/null should be exposed'
 test "$clean_environment" = yes || fail '--clearenv'
 test "$(umask)" = 0022 || fail 'profile umask is not 022'
 shift

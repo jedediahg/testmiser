@@ -16,6 +16,7 @@ int main(void)
     char *command[] = {"/bin/sh", "-c", "exec /bin/true", NULL};
     struct tm_observer_report report = {0};
     struct tm_observer_report controlled_report = {0};
+    struct tm_observer_report device_report = {0};
     struct tm_observer_report output_report = {0};
     struct tm_observer_report traversal_report = {0};
     struct tm_observer_report failed_report = {0};
@@ -30,6 +31,7 @@ int main(void)
     char mprotect_input_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
     char *output_command[] = {"./build/output_probe", NULL};
+    char *device_command[] = {"./build/device_probe", NULL};
     char *traversal_command[] = {"/bin/sh", "-c",
         "printf escape > build/tm-observer-output-test/../tm-observer-output-escape", NULL};
     char *failed_command[] = {"./build/failing_read_probe",
@@ -80,6 +82,16 @@ int main(void)
         fprintf(stderr,
             "observer did not start at the requested executable (result=%d, candidates=%zu, reasons=0x%08x)\n",
             result, report.candidate_count, report.ineligibility_reasons);
+        return 1;
+    }
+    if (tm_observe_and_run_with_fds(device_command, 0, NULL, repository,
+            NULL, 0, 0, 0, NULL, 1, NULL, 0, &device_report) != 0 ||
+        (device_report.ineligibility_reasons &
+         TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT) == 0 ||
+        tm_observer_report_allows_reuse(&device_report)) {
+        fprintf(stderr,
+            "observer accepted /dev/urandom access in a controlled runtime (reasons=0x%08x)\n",
+            device_report.ineligibility_reasons);
         return 1;
     }
     for (index = 0; index < sizeof(vdso_clock_apis) /
