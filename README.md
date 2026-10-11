@@ -31,6 +31,9 @@ the tested optimized binary or rebuild test probes with analyzer flags.
 
 Build requires a C11 compiler, GNU Make, and OpenSSL development
 headers/libraries (EVP, `-lcrypto`).
+The installed executable dynamically links OpenSSL 3 (`libcrypto.so.3`); its
+runtime image must provide that shared library. For Debian Bookworm, this is
+provided by `libssl3`.
 
 `tm --version` reports `tm 0.1`. Signed result sidecars use schema version 3
 and carry the producing `tm_version`; verification semantics remain version 2.

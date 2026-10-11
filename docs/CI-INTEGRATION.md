@@ -118,8 +118,11 @@ need signature and input validation.
    # Staged binary: /path/to/staging/testmiser/usr/bin/tm
    ```
 
-   Provision that same reviewed build for local agents and the compatible CI
-   runner pool. Create the team's profile/runtime through an operator-owned
+   The staged executable dynamically links OpenSSL 3 (`libcrypto.so.3`), so
+   include the matching runtime library in the project image (Debian Bookworm:
+   `libssl3`) and verify the binary starts in that image. Provision that same
+   reviewed build for local agents and the compatible CI runner pool. Create
+   the team's profile/runtime through an operator-owned
    process. The profile must declare the canonical workspace, public
    environment, all permitted input/output roots, scratch roots, runtime
    digest, backend contract, and deterministic behavior. Profile and runtime
