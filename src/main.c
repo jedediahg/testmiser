@@ -177,6 +177,22 @@ static void free_environment(char **environment)
     free(environment);
 }
 
+static void explain_observer_ineligibility(unsigned int reasons)
+{
+    unsigned int bit;
+
+    for (bit = 0; bit < sizeof(reasons) * 8U; bit++) {
+        unsigned int reason = 1U << bit;
+        const char *description;
+
+        if ((reasons & reason) == 0) continue;
+        description = tm_observer_ineligibility_description(reason);
+        fprintf(stderr, "tm: observer blocked: %s\n",
+                description == NULL ? "unknown ineligibility reason" :
+                                      description);
+    }
+}
+
 static int output_manifests_equal(const struct tm_output_manifest *left,
                                   const struct tm_output_manifest *right)
 {
@@ -1222,6 +1238,8 @@ int main(int argc, char **argv)
             observer_gate ? "clear" : "blocked",
             observer_report.observation_complete ? "complete" : "incomplete",
             observer_report.stable_input_view ? "yes" : "no",
+            observer_report.ineligibility_reasons);
+        explain_observer_ineligibility(
             observer_report.ineligibility_reasons);
     }
     if (options.explain && !cache_hit)

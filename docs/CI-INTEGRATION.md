@@ -163,6 +163,9 @@ cache automatically. They can also consume checked-in `.tm/results` and
 `SKIP` plus the trust/input reason. `WAIT` means an equivalent invocation
 currently owns the shared or per-user execution slot; `tm` waits, then checks
 for newly published trusted evidence before deciding whether to run. A
+`RUN` may also list observer blockers such as network activity, unsupported
+metadata, or native directory ordering; keep those commands uncached until the
+profile/backend can account for the observation. A
 successful eligible run can be signed only when
 the selected profile, runtime, key, and trust approval agree:
 

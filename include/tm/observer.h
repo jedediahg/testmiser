@@ -40,6 +40,8 @@ struct tm_observer_report {
 /* True only when syscall observation completed and found no unsupported or
  * nondeterministic effects. This is necessary, but not sufficient, for reuse. */
 int tm_observer_report_allows_reuse(const struct tm_observer_report *report);
+/* Return a stable user-facing description for one ineligibility bit. */
+const char *tm_observer_ineligibility_description(unsigned int reason);
 
 int tm_observe_and_run(char **command, int explain, char *const environment[],
                        const char *repository_root,
