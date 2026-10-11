@@ -16,6 +16,7 @@ int main(void)
     char *command[] = {"/bin/sh", "-c", "exec /bin/true", NULL};
     struct tm_observer_report report = {0};
     struct tm_observer_report controlled_report = {0};
+    struct tm_observer_report null_device_report = {0};
     struct tm_observer_report device_report = {0};
     struct tm_observer_report output_report = {0};
     struct tm_observer_report traversal_report = {0};
@@ -25,13 +26,15 @@ int main(void)
     struct tm_observer_report getcwd_report = {0};
     struct tm_observer_report metadata_report = {0};
     struct tm_observer_report descriptor_report = {0};
-    char repository[4096], output_path[4200] = {0};
+    char repository[4096], device_executable[4200] = {0};
+    char output_path[4200] = {0};
     char escape_path[4200] = {0};
     char failed_input_path[4200] = {0};
     char mprotect_input_path[4200] = {0};
     const char *output_roots[] = {"build/tm-observer-output-test"};
     char *output_command[] = {"./build/output_probe", NULL};
-    char *device_command[] = {"./build/device_probe", NULL};
+    char *null_device_command[] = {"./build/device_probe", "null", NULL};
+    char *device_command[] = {"./build/device_probe", "random", NULL};
     char *traversal_command[] = {"/bin/sh", "-c",
         "printf escape > build/tm-observer-output-test/../tm-observer-output-escape", NULL};
     char *failed_command[] = {"./build/failing_read_probe",
@@ -53,6 +56,12 @@ int main(void)
     }
     if (getcwd(repository, sizeof(repository)) == NULL) {
         fprintf(stderr, "could not determine observer test repository\n");
+        return 1;
+    }
+    if (snprintf(device_executable, sizeof(device_executable),
+                 "%s/./build/device_probe", repository) >=
+        (int)sizeof(device_executable)) {
+        fprintf(stderr, "could not construct device probe path\n");
         return 1;
     }
     result = tm_observe_and_run_with_fds(command, 0, NULL, "/workspace",
@@ -84,8 +93,22 @@ int main(void)
             result, report.candidate_count, report.ineligibility_reasons);
         return 1;
     }
+    if (tm_observe_and_run_with_fds(null_device_command, 0, NULL,
+            repository, NULL, 0, 1, 0, device_executable, 1, NULL, 0,
+            &null_device_report) != 0 ||
+        (null_device_report.ineligibility_reasons &
+         (TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT |
+          TM_OBSERVER_INELIGIBLE_DESCRIPTOR |
+          TM_OBSERVER_INELIGIBLE_MUTATION)) != 0 ||
+        !tm_observer_report_allows_reuse(&null_device_report)) {
+        fprintf(stderr,
+            "observer did not model controlled /dev/null access (reasons=0x%08x)\n",
+            null_device_report.ineligibility_reasons);
+        return 1;
+    }
     if (tm_observe_and_run_with_fds(device_command, 0, NULL, repository,
-            NULL, 0, 0, 0, NULL, 1, NULL, 0, &device_report) != 0 ||
+            NULL, 0, 0, 0, device_executable, 1, NULL, 0,
+            &device_report) != 0 ||
         (device_report.ineligibility_reasons &
          TM_OBSERVER_INELIGIBLE_EXTERNAL_INPUT) == 0 ||
         tm_observer_report_allows_reuse(&device_report)) {

@@ -121,9 +121,10 @@ $(BUILD_DIR)/vdso_clock_probe: tests/vdso_clock_probe.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -static -o $@ $<
 
-$(BUILD_DIR)/device_probe: tests/device_probe.c
+$(BUILD_DIR)/device_probe: tests/device_probe.c tests/device_probe_start.S
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -static -o $@ $<
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -static -nostdlib -fno-pie \
+		-fno-stack-protector -fno-builtin -no-pie -Wl,-e,_start -o $@ $^
 
 $(BUILD_DIR)/output_probe: tests/output_probe.c
 	@mkdir -p $(BUILD_DIR)

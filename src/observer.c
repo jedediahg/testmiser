@@ -550,15 +550,18 @@ static void candidate_path(const char *kind, const char *path)
 
     if (path_is_declared_output(path)) return;
     relative_path = tm_repo_relative_path(observer.repository_root, path);
-    if (relative_path == NULL && observer.controlled_runtime &&
-        strcmp(path, "/dev/null") != 0 &&
-        strncmp(path, "/dev/", sizeof("/dev/") - 1) != 0 &&
-        strcmp(path, "/dev") != 0) {
-        /* The profile backend exposes only its digest-verified runtime,
-         * empty tmpfs scratch roots, and the /dev/null exception outside the
-         * repository workspace. Those accesses are covered by that view. */
-        free(relative_path);
-        return;
+    if (relative_path == NULL && observer.controlled_runtime) {
+        if (strcmp(path, "/dev/null") == 0) {
+            free(relative_path);
+            return;
+        }
+        if (strncmp(path, "/dev/", sizeof("/dev/") - 1) != 0 &&
+            strcmp(path, "/dev") != 0) {
+            /* The profile backend exposes only its digest-verified runtime
+             * and empty tmpfs scratch roots outside the repository. */
+            free(relative_path);
+            return;
+        }
     }
     if (relative_path == NULL) observer.saw_external_path = 1;
     display_path = relative_path == NULL ? "<external>" : relative_path;
@@ -808,8 +811,7 @@ static void note_syscall(long number, const struct user_regs_struct *registers,
     }
     case 3: /* close */
         task->pending_descriptor = (int)registers->rdi;
-        if (task->pending_descriptor < 3 ||
-            tracked_descriptor(task, task->pending_descriptor) == NULL)
+        if (tracked_descriptor(task, task->pending_descriptor) == NULL)
             observer.saw_external_descriptor = 1;
         return;
     case 32: /* dup */
@@ -915,6 +917,10 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
         if ((number == 1 || number == 20) &&
             (descriptor == STDOUT_FILENO || descriptor == STDERR_FILENO))
             return;
+        if (number == 1 || number == 18 || number == 20) {
+            const char *path = tracked_descriptor(task, (int)descriptor);
+            if (path != NULL && strcmp(path, "/dev/null") == 0) return;
+        }
         if (!descriptor_is_declared_output(task, (int)descriptor))
             observer.saw_mutation = 1;
         return;
@@ -947,7 +953,7 @@ static void classify_syscall(long number, const struct user_regs_struct *regs,
     case 17: /* pread64 */
     case 19: /* readv */
         if (entering) {
-            const char *path = descriptor < 3 ? NULL :
+            const char *path = descriptor < 0 ? NULL :
                 tracked_descriptor(task, (int)descriptor);
             if (path != NULL &&
                 descriptor_is_directory(task, (int)descriptor)) {
@@ -1227,7 +1233,8 @@ static void syscall_stop(struct task_state *task)
             } else if ((task->flags & O_PATH) != 0 &&
                        !path_is_declared_output(task->pending_path)) {
                 observer.saw_metadata = 1;
-            } else if (!path_is_declared_output(task->pending_path)) {
+            } else if (strcmp(task->pending_path, "/dev/null") != 0 &&
+                       !path_is_declared_output(task->pending_path)) {
                 observer.saw_mutation = 1;
             }
         } else if (result == -ENOENT || result == -ENOTDIR) {
@@ -1646,6 +1653,10 @@ static int trace_child(pid_t child, int explain, const char *repository_root,
                     observer.observation_started = 1;
                     task->in_execution_tree = 1;
                     candidate_path("executable", task->pending_path);
+                    if (observer.controlled_runtime &&
+                        remember_descriptor(task, STDIN_FILENO, O_RDONLY,
+                                            0, "/dev/null") < 0)
+                        mark_observer_failure();
                 }
             } else if ((task->syscall_number == 59 ||
                         task->syscall_number == 322) &&
