@@ -344,12 +344,13 @@ namespaces and ptrace and is a release gate, not an optional local test.
 
 ## Current beta limits
 
-At `822cb17`, the full portable reuse acceptance script passed inside a
+At `95e205e`, the full portable reuse acceptance script passed inside a
 disposable, privileged Debian Bookworm container with Bubblewrap and ptrace.
-The suite now checks that an unavailable shared store has two distinct
-outcomes: strict mode refuses to launch, while available mode runs and warns
-that duplicate cold work is possible. GitHub Actions run
-[`38109745517`](https://github.com/jedediahg/testmiser/actions/runs/38109745517)
+The suite exercises quarantine persistence after forced same-fingerprint
+failure, explicit operator resolution, revoked-producer lookup rejection and
+approval restoration, and unavailable-store behavior in strict and available
+modes. GitHub Actions run
+[`38110762464`](https://github.com/jedediahg/testmiser/actions/runs/38110762464)
 passed its `test` job, skipped `portable-acceptance`, and failed the
 acceptance-policy job because the dedicated protected runner is not enabled.
 This local pass does not replace a successful run on that runner or a real
