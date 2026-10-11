@@ -8,19 +8,27 @@
 int main(int argc, char **argv)
 {
     int descriptor, result;
-    int private_mapping, mixed_mapping;
+    int private_mapping, mixed_mapping, gap_mapping;
     void *mapping;
     if (argc < 2 || argc > 3) return 2;
     private_mapping = argc == 3 && strcmp(argv[2], "private") == 0;
     mixed_mapping = argc == 3 && strcmp(argv[2], "mixed") == 0;
-    if (argc == 3 && !private_mapping && !mixed_mapping) return 2;
+    gap_mapping = argc == 3 && strcmp(argv[2], "gap") == 0;
+    if (argc == 3 && !private_mapping && !mixed_mapping && !gap_mapping)
+        return 2;
     descriptor = open(argv[1], O_RDONLY | O_CLOEXEC);
     if (descriptor < 0) return 1;
     mapping = mmap(NULL, mixed_mapping ? 8192 : 4096, PROT_READ,
-                   (private_mapping || mixed_mapping) ? MAP_PRIVATE :
-                                                        MAP_SHARED,
+                   (private_mapping || mixed_mapping || gap_mapping) ?
+                       MAP_PRIVATE : MAP_SHARED,
                    descriptor, 0);
     if (mapping == MAP_FAILED) { close(descriptor); return 3; }
+    if (gap_mapping) {
+        if (munmap(mapping, 4096) < 0) { close(descriptor); return 8; }
+        result = mprotect(mapping, 4096, PROT_READ | PROT_WRITE);
+        close(descriptor);
+        return result < 0 ? 0 : 9;
+    }
     if (mixed_mapping &&
         mmap((char *)mapping + 4096, 4096, PROT_READ,
              MAP_SHARED | MAP_FIXED, descriptor, 0) !=
