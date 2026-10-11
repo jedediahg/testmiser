@@ -89,6 +89,7 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v7
       - name: Require portable acceptance for main-branch code changes
         env:
           EVENT_NAME: ${{ github.event_name }}
