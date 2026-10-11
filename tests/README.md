@@ -1,75 +1,52 @@
-# Tests
+# Acceptance Tests
 
 `cli.sh` contains POSIX-shell integration checks for the wrapper, including
 exit propagation and a short-lived descendant. With ptrace permission it also
-checks network and mutation rejection. Unit checks cover SHA-256, Ed25519
-vectors/tamper rejection, command and verification fingerprints, bounded
-JSON/JCS behavior, signed output-free record creation/inspection/trust
-verification, protected trust-policy loading/authorization, output manifests,
-and independent Ed25519 producers. The result vectors require two different
-approved keys to produce distinct record IDs for the same verification ID and
-both records to pass trust verification. The ptrace observer test uses a
-read-only shared mapping to ensure an attempted `mprotect(PROT_WRITE)` upgrade
-is rejected independently of writable file-open detection. Run all checks with
-`make test`;
-OpenSSL EVP development files are required. When ptrace is unavailable, the
-CLI suite checks the uncached fallback.
+checks network and mutation rejection. Unit checks cover SHA-256, Ed25519,
+fingerprints, bounded JSON/JCS, signed records, trust policy, output manifests,
+and observer behavior. Run the ordinary suite with `make test`; OpenSSL EVP
+development files are required. When ptrace is unavailable, the CLI suite
+checks the uncached fallback.
 
-`portable-reuse.sh` is an opt-in acceptance test for a compatible Linux host.
-It signs an output-bearing run in a temporary producer clone, commits the
-result sidecar, blobs, static probe, and input fixture, then clones that commit
-with a separate empty per-user cache. The unchanged consumer must skip,
-replace stale files under `build/reports`, and restore the signed output. After
-changing `build/portable-input.txt`, it must execute and produce updated
-output, then restore the original input and require reuse of its retained
-record. A linked worktree with checked-in evidence removed must also skip from
-the producer's per-user cache, exercising same-user agent worktrees. The test
-repeats producer/consumer reuse, invalidation, and state reversion with
-`TM_SHARED_STORE`, then launches two equivalent cold requests concurrently
-with strict coordination and requires exactly one execution plus a waiter hit.
-Set `TM_ACCEPTANCE_SHARED_STORE` to an
-existing absolute directory to test a mounted store; the script creates and
-removes a unique private subdirectory there. By default it creates a private
-temporary store. The gate also checks that `TM_COORDINATION_MODE=strict`
-refuses to launch when the shared execution slot is unavailable. It tests
-GitLab-like producer to GitHub-like consumer reuse and the reverse direction
-through the mounted store. The fixture fails if CI IDs, workspace paths, or
-tokens reach the test process or appear in signed result metadata.
-For a common CI store, configure the GitHub repository variable and GitLab CI
-variable with this name and mount the same protected directory on both runner
-pools. Provision a deterministic public profile that permits
-`build/portable-input.txt` and `build/portable-reuse-probe` as inputs and
-`build/reports` as output, its matching protected trust policy, a matching
-runtime, and an authorized producer key. Build the static probe and run:
+## Portable reuse gate
+
+`portable-reuse.sh` verifies signed output-bearing reuse in a clean clone,
+input invalidation and state reversion, stale-output replacement, linked
+worktree reuse from the per-user store, and cross-client reuse through the
+optional filesystem store. It also checks CI metadata redaction, strict mode
+failure when coordination is unavailable, and exactly-one execution for
+concurrent cold requests. The probe uses GitLab-like and GitHub-like
+environment variables; this does not exercise either provider's actual
+pipeline configuration.
+
+Run the self-contained wrapper from the repository root on Linux x86-64:
 
 ```sh
-make build/tm
-make build/portable-reuse-probe
-TM_ACCEPTANCE_PROFILE=/absolute/path/profile.json \
-TM_ACCEPTANCE_TRUST_POLICY=/absolute/path/policy.json \
-TM_ACCEPTANCE_RUNTIME_ROOT=/absolute/path/runtime \
-TM_ACCEPTANCE_SIGNING_KEY=/absolute/path/producer.pem \
-  tests/portable-reuse.sh
+make clean test
+TM_REQUIRE_PTRACE=1 make analyze
+bash tests/portable-reuse-ci.sh
 ```
 
-The script needs working Bubblewrap user/network namespaces and ptrace. It
-fails if the producer is ineligible or the consumer executes instead of
-reusing. GitHub Actions treats unavailable namespaces as a failure; set the
-repository variable `TM_PORTABLE_ACCEPTANCE_RUNNER` to a runner label that can
-create the required namespaces when the hosted runner cannot. GitLab runs the
-same gate on a shell runner tagged `linux-bwrap`. Since these jobs install
-packages with `sudo` and execute repository code, any self-hosted runner must
-be isolated and disposable, without persistent credentials or shared writable
-state. The GitLab worker also needs passwordless `sudo` and Bubblewrap
-user/network namespace support. The CI entrypoint always fails when those
-namespaces are unavailable; a host variable cannot downgrade the release gate
-to a warning. For local diagnosis, run the Bubblewrap preflight directly:
+The wrapper needs Bubblewrap, BusyBox static, `jq`, `sudo`, a C toolchain,
+OpenSSL development headers, and Git. Its host must permit user, IPC, PID,
+network, UTS, cgroup, and mount namespaces plus ptrace. It builds a temporary
+runtime/profile/key/policy and invokes the full reuse test. Run as an
+unprivileged user on an isolated, disposable runner; the wrapper uses `sudo`
+to create and remove a root-owned read-only runtime, and removes temporary
+credentials on exit. `TM_ACCEPTANCE_KEEP_WORK=1` retains diagnostic files and
+requires manual cleanup.
 
-```sh
-bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net \
-  --unshare-uts --unshare-cgroup --uid 0 --gid 0 --ro-bind / / \
-  -- /usr/bin/true
-```
+To use a provisioned fixture directly, set absolute paths in
+`TM_ACCEPTANCE_PROFILE`, `TM_ACCEPTANCE_TRUST_POLICY`,
+`TM_ACCEPTANCE_RUNTIME_ROOT`, `TM_ACCEPTANCE_SIGNING_KEY`, and `TM_BIN`, then
+run `tests/portable-reuse.sh`. Optional `TM_ACCEPTANCE_SHARED_STORE` must be an
+existing private directory on a filesystem with coherent `flock`, owned by
+the same numeric UID as the client. The script creates a private temporary
+subdirectory there.
 
-The private key is generated inside the acceptance job and used only for the
-producer; the consumer receives only the profile and public trust policy.
+Unavailable namespaces or ptrace cause a failure, not a skipped pass. GitHub
+uses the `TM_PORTABLE_ACCEPTANCE_RUNNER` repository variable to select a
+compatible isolated runner; GitLab uses the `linux-bwrap` tag. Passing this
+gate proves only its local/filesystem scenarios. Follow
+[`docs/CI-INTEGRATION.md`](../docs/CI-INTEGRATION.md) to validate an adopting
+project's runner, trust provisioning, and producer/consumer jobs.
