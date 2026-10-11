@@ -22,6 +22,8 @@ int tm_backend_preflight(const struct tm_profile *profile,
  * local backend setup failed before launch. */
 int tm_backend_run(const struct tm_profile *profile,
                    const char *runtime_root, const char *repository_root,
+                   const char *const *declared_inputs,
+                   size_t declared_input_count,
                    const char *const *output_roots, size_t output_root_count,
                    char **command, int explain,
                    struct tm_observer_report *report,

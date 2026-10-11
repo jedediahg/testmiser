@@ -51,12 +51,12 @@ prevent reuse. Directory membership can be fingerprinted, but commands that
 enumerate directories are currently ineligible because the sandbox does not
 normalize the order visible to the test process.
 
-Repeatable `--input PATH` declarations capture stable regular-file contents
-or, for a directory, sorted immediate-child names and kinds. Directories do
-not recursively attest file contents, so those files need their own
-declarations. Absent paths are tracked as explicit nonexistence states and
-rechecked after execution; creating one during the command is reported as a
-change. Special files are rejected without blocking.
+Repeatable `--input PATH` declarations add extra dependencies to the command
+identity and signed input manifest, including when the command does not open
+them. Use regular repository files; the controlled backend captures them from
+its pinned input snapshot and rechecks the host path after execution. Missing,
+directory, or special-file declarations prevent publication. Directory and
+absence dependencies discovered by the observer are recorded when eligible.
 
 Repeatable `--output PATH` declarations accept canonical, non-overlapping
 repository-relative roots; malformed declarations fail before launch. The

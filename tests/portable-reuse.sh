@@ -66,6 +66,7 @@ mkdir -p "$work/producer/build"
 cp "$probe" "$work/producer/build/portable-reuse-probe"
 chmod 0755 "$work/producer/build/portable-reuse-probe"
 printf '%s\n' 'unchanged-input' >"$work/producer/build/portable-input.txt"
+printf '%s\n' 'declared-input-a' >"$work/producer/build/declared-only.txt"
 mkdir -p "$work/producer/build/reports"
 
 # Strict mode must fail before launching when the shared execution slot cannot
@@ -120,6 +121,7 @@ run_tm() {
             TM_RUNTIME_ROOT="$runtime_root" \
             "$tm_bin" --root . --profile "$profile" \
             --trust-policy "$trust_policy" "${key_option[@]}" \
+            --input build/declared-only.txt \
             --output build/reports --explain -- \
             ./build/portable-reuse-probe build/portable-input.txt \
             build/reports/portable-reuse.txt "$run_id"
@@ -180,6 +182,35 @@ assert_metadata_redacted "$work/producer/.tm/results" \
     "$work/producer" "$work/gitlab-host-home" \
     gitlab-producer-job gitlab-producer-pipeline gitlab-test-token
 
+# A declared input participates even when the command never opens it.
+printf '%s\n' 'declared-input-b' \
+    >"$work/producer/build/declared-only.txt"
+if ! run_tm "$work/producer" "$work/cache-producer" "$signing_key" \
+    >"$work/declared-changed.out" 2>"$work/declared-changed.err"; then
+    cat "$work/declared-changed.err" >&2
+    exit 1
+fi
+if [[ "$(cat "$work/declared-changed.out")" != "$id:unchanged-input" ]] ||
+   ! grep -q '^tm: RUN:' "$work/declared-changed.err" ||
+   grep -q '^tm: SKIP: trusted result ' "$work/declared-changed.err"; then
+    cat "$work/declared-changed.err" >&2
+    printf '%s\n' 'Changed declared-only input reused stale evidence.' >&2
+    exit 1
+fi
+printf '%s\n' 'declared-input-a' \
+    >"$work/producer/build/declared-only.txt"
+if ! run_tm "$work/producer" "$work/cache-producer" \
+    >"$work/declared-restored.out" 2>"$work/declared-restored.err"; then
+    cat "$work/declared-restored.err" >&2
+    exit 1
+fi
+if [[ -s "$work/declared-restored.out" ]] ||
+   ! grep -q '^tm: SKIP: trusted result ' "$work/declared-restored.err"; then
+    cat "$work/declared-restored.err" >&2
+    printf '%s\n' 'Restoring a declared-only input did not recover its result.' >&2
+    exit 1
+fi
+
 # A sign-enabled signal termination must never publish reusable success.
 printf '%s\n' 'signal:terminated' \
     >"$work/producer/build/portable-input.txt"
@@ -221,7 +252,8 @@ if [[ -s "$work/signal-recovery.out" ]] ||
 fi
 
 git -C "$work/producer" add -f .tm/results .tm/blobs \
-    build/portable-input.txt build/portable-reuse-probe
+    build/portable-input.txt build/declared-only.txt \
+    build/portable-reuse-probe
 git -C "$work/producer" commit --quiet -m 'Add portable reuse acceptance evidence'
 
 git clone --quiet --no-hardlinks --local "$work/producer" "$work/consumer"
@@ -386,6 +418,8 @@ cp "$probe" "$work/shared-producer/build/portable-reuse-probe"
 chmod 0755 "$work/shared-producer/build/portable-reuse-probe"
 printf '%s\n' 'unchanged-input' \
     >"$work/shared-producer/build/portable-input.txt"
+printf '%s\n' 'declared-input-a' \
+    >"$work/shared-producer/build/declared-only.txt"
 if ! (
     unset CI_JOB_ID CI_PIPELINE_ID CI_PROJECT_DIR CI_JOB_TOKEN
     export GITHUB_RUN_ID=github-producer-run
@@ -415,7 +449,8 @@ assert_metadata_redacted "$work/shared-producer/.tm/results" \
     "$work/shared-producer" "$work/github-producer-host-home" \
     github-producer-run github-producer-token
 git -C "$work/shared-producer" add -f \
-    build/portable-input.txt build/portable-reuse-probe
+    build/portable-input.txt build/declared-only.txt \
+    build/portable-reuse-probe
 git -C "$work/shared-producer" commit --quiet -m \
     'Add shared-store acceptance fixture'
 git clone --quiet --no-hardlinks --local "$work/shared-producer" "$work/shared-consumer"
@@ -490,6 +525,8 @@ mkdir -p "$work/concurrent/build/reports"
 cp "$probe" "$work/concurrent/build/portable-reuse-probe"
 chmod 0755 "$work/concurrent/build/portable-reuse-probe"
 printf '%s\n' 'unchanged-input' >"$work/concurrent/build/portable-input.txt"
+printf '%s\n' 'declared-input-a' \
+    >"$work/concurrent/build/declared-only.txt"
 run_tm "$work/concurrent" "$work/cache-concurrent-a" \
     "$signing_key" "$shared_store" "$concurrent_id" strict \
     >"$work/concurrent-a.out" 2>"$work/concurrent-a.err" &

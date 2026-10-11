@@ -12,7 +12,8 @@ checks the uncached fallback.
 ## Portable reuse gate
 
 `portable-reuse.sh` verifies signed output-bearing reuse in a clean clone,
-test executable and input invalidation, state reversion, repeated execution
+declared-only input invalidation and state reversion, test executable
+invalidation, repeated execution
 after a failed input state while preserving an unrelated trusted success,
 sign-enabled signal termination without result publication, stale-output
 replacement, linked worktree reuse from the per-user store, and cross-client

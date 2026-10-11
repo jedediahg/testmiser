@@ -1040,7 +1040,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "tm: force requested; command will execute\n");
     if (attempt_state_ready && attempt_state.blocked_all && options.explain)
         fprintf(stderr, "tm: RUN: local incomplete or interrupted attempt blocks reuse for this command/context\n");
-    if (options.force && attempt_state_ready && options.input_count == 0 &&
+    if (options.force && attempt_state_ready &&
         profile != NULL && command_fingerprint[0] != '\0') {
         char prior_record_id[72];
         if (find_profile_cache_hit(repository_fd, profile, runtime_root,
@@ -1062,7 +1062,6 @@ int main(int argc, char **argv)
         !attempt_state.blocked_all && profile != NULL &&
         tm_profile_is_deterministic(profile) &&
         strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
-        options.input_count == 0 &&
         reusable_context && command_fingerprint[0] != '\0' &&
         repository_fd >= 0 && trust_policy != NULL && runtime_root != NULL) {
         char candidate_id[72];
@@ -1097,6 +1096,7 @@ int main(int argc, char **argv)
         }
         backend_used = profile != NULL && runtime_root != NULL ?
             tm_backend_run(profile, runtime_root, repository_root,
+                options.input_paths, options.input_count,
                 options.output_paths, options.output_count,
                 &argv[options.command_index], options.explain,
                 &observer_report, &observed_inputs, &output_manifest,
@@ -1144,8 +1144,7 @@ int main(int argc, char **argv)
         tm_profile_is_deterministic(profile) &&
         strcmp(tm_profile_privacy_class(profile), "public") == 0 &&
         backend_used > 0 && reusable_context &&
-        unavailable_input_count == 0 &&
-        explicit_input_count == 0 && explicit_inputs_unchanged &&
+        unavailable_input_count == 0 && explicit_inputs_unchanged &&
         tm_observer_report_allows_reuse(&observer_report)) {
         struct tm_verification_identity identity = {
             tm_profile_repository_id(profile), command_fingerprint,
@@ -1255,8 +1254,7 @@ int main(int argc, char **argv)
         const char *verification_fingerprint = NULL;
         char computed_fingerprint[72];
         int exact = backend_used > 0 && reusable_context &&
-            unavailable_input_count == 0 && explicit_input_count == 0 &&
-            explicit_inputs_unchanged &&
+            unavailable_input_count == 0 && explicit_inputs_unchanged &&
             tm_observer_report_allows_reuse(&observer_report);
         if (exact) {
             struct tm_verification_identity identity = {

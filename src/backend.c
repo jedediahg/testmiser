@@ -976,8 +976,44 @@ static int run_bubblewrap(const struct argument_vector *arguments,
     return 1;
 }
 
+static int append_declared_input_candidates(
+    struct tm_observer_report *report,
+    const char *const *declared_inputs, size_t declared_input_count)
+{
+    size_t index;
+    if (report == NULL ||
+        report->candidate_count > TM_OBSERVER_MAX_CANDIDATES ||
+        (declared_input_count > 0 && declared_inputs == NULL) ||
+        declared_input_count > TM_OBSERVER_MAX_CANDIDATES -
+            report->candidate_count) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    for (index = 0; index < declared_input_count; index++) {
+        struct tm_observer_candidate *candidate =
+            &report->candidates[report->candidate_count];
+        int path_length;
+        if (declared_inputs[index] == NULL) {
+            errno = EINVAL;
+            return -1;
+        }
+        path_length = snprintf(candidate->path, sizeof(candidate->path),
+                               "%s", declared_inputs[index]);
+        if (path_length < 0 || (size_t)path_length >= sizeof(candidate->path)) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        (void)snprintf(candidate->kind, sizeof(candidate->kind), "opened file");
+        candidate->external = 0;
+        report->candidate_count++;
+    }
+    return 0;
+}
+
 int tm_backend_run(const struct tm_profile *profile,
                    const char *runtime_root, const char *repository_root,
+                   const char *const *declared_inputs,
+                   size_t declared_input_count,
                    const char *const *output_roots, size_t output_root_count,
                    char **command, int explain,
                    struct tm_observer_report *report,
@@ -1104,6 +1140,16 @@ int tm_backend_run(const struct tm_profile *profile,
         }
     }
     if (result > 0 && tm_observer_report_allows_reuse(report)) {
+        if (append_declared_input_candidates(report, declared_inputs,
+                declared_input_count) < 0) {
+            report->ineligibility_reasons |= TM_OBSERVER_INELIGIBLE_UNSUPPORTED;
+            report->stable_input_view = 0;
+            if (explain)
+                fprintf(stderr,
+                    "tm: reuse rejected: declared inputs could not be added to the pinned manifest (%s)\n",
+                    strerror(errno));
+            goto done;
+        }
         int *readable_roots = input_count == 0 ? NULL :
             calloc(input_count, sizeof(*readable_roots));
         int capture_result = input_count == 0 ?

@@ -197,7 +197,8 @@ int main(void)
         preflight_repository_fd = -1;
     }
 
-    if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
+    if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0,
+                       NULL, 0, command,
                        0, &observer_report, &observed_inputs,
                        &outputs,
                        &command_result) != 1 ||
@@ -265,7 +266,7 @@ int main(void)
             dup2(fileno(diagnostics), STDERR_FILENO) >= 0) {
             command_result = -1;
             backend_result = tm_backend_run(profile, runtime_path,
-                repository_root, NULL, 0, command, 1, &observer_report,
+                repository_root, NULL, 0, NULL, 0, command, 1, &observer_report,
                 &observed_inputs, &outputs, &command_result);
             fflush(stderr);
         }
@@ -299,7 +300,8 @@ int main(void)
     profile = NULL;
     if (tm_profile_load(profile_path, &profile) < 0) goto done;
     command_result = -1;
-    if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0, command,
+    if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0,
+                       NULL, 0, command,
                        0, NULL, NULL, NULL, &command_result) != 0 ||
         command_result != -1) {
         fprintf(stderr, "backend accepted a symlinked profile input root\n");
@@ -336,8 +338,8 @@ int main(void)
         (void)unlink(output_file);
         (void)rmdir(output_path);
         command_result = -1;
-        if (tm_backend_run(profile, runtime_path, repository_root, output_roots,
-                1, output_command, 0, &observer_report, &observed_inputs,
+        if (tm_backend_run(profile, runtime_path, repository_root, NULL, 0,
+                output_roots, 1, output_command, 0, &observer_report, &observed_inputs,
                 &outputs, &command_result) != 1 || command_result != 0 ||
             outputs.count != 2 || access(output_file, F_OK) < 0) {
             fprintf(stderr,

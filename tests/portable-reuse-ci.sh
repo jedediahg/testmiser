@@ -44,14 +44,16 @@ sudo install -o root -g root -m 0666 /dev/null "$runtime/dev/null"
 sudo chmod -R a-w "$runtime"
 
 runtime_digest=$("$tm_bin" runtime digest "$runtime")
-printf '{"schema_version":1,"repository_id":"testmiser-portable-ci",'\
-'"backend_contract":"bubblewrap-linux-x86_64-v2",'\
-'"runtime_digest":"%s","workspace_path":"/workspace",'\
-'"deterministic":true,"privacy_class":"public",'\
-'"environment":{"TM_ACCEPTANCE_IDENTITY_NORMALIZED":"1"},'\
-'"input_roots":["build/portable-input.txt","build/portable-reuse-probe"],'\
-'"output_roots":["build/reports"],"scratch_roots":["/tmp"]}\n' \
-    "$runtime_digest" >"$profile"
+cat >"$profile" <<EOF
+{"schema_version":1,"repository_id":"testmiser-portable-ci",
+"backend_contract":"bubblewrap-linux-x86_64-v2",
+"runtime_digest":"$runtime_digest","workspace_path":"/workspace",
+"deterministic":true,"privacy_class":"public",
+"environment":{"TM_ACCEPTANCE_IDENTITY_NORMALIZED":"1"},
+"input_roots":["build/declared-only.txt","build/portable-input.txt",
+"build/portable-reuse-probe"],"output_roots":["build/reports"],
+"scratch_roots":["/tmp"]}
+EOF
 chmod 0600 "$profile"
 "$tm_bin" key generate "$private_key" >"$key_json"
 profile_digest=$("$tm_bin" profile digest "$profile" | awk '{print $NF}')
