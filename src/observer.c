@@ -1332,7 +1332,8 @@ static void report_reasons(void)
         fprintf(stderr, "tm: reuse rejected: filesystem metadata observation is not modeled\n");
     }
     if (observer.saw_directory) {
-        fprintf(stderr, "tm: reuse rejected: directory membership is not modeled\n");
+        fprintf(stderr,
+            "tm: reuse rejected: directory enumeration uses native filesystem ordering\n");
     }
     if (observer.saw_external_descriptor) {
         fprintf(stderr, "tm: reuse rejected: inherited or untracked descriptor provenance is not modeled\n");

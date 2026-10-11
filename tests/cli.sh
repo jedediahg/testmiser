@@ -622,6 +622,8 @@ if grep -q 'observer prototype' "$tmp_dir/explain.err"; then
     "$tm_bin" --explain -- "$cwd_probe" list 2>"$tmp_dir/directory-list.err"
     grep -q 'observed input candidate: directory listing: docs' \
         "$tmp_dir/directory-list.err"
+    grep -q 'reuse rejected: directory enumeration uses native filesystem ordering' \
+        "$tmp_dir/directory-list.err"
     grep -q 'observer blocked: directory enumeration uses native ordering' \
         "$tmp_dir/directory-list.err"
     grep -q 'stable-view=no' "$tmp_dir/directory-list.err"
