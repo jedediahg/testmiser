@@ -146,6 +146,14 @@ fall back to running the full test suite and validating all available
 evidence; never ignore the classification error. Mixed source/evidence
 changes run the ordinary test job and validate evidence too.
 
+The repository's GitLab and GitHub workflows call the shared
+`scripts/tm-ci-run-tests.sh` policy runner. Its regression test verifies that
+result-only changes skip test execution but still require strict trust
+validation, mixed changes run tests and validate evidence, and validation
+failure fails the job. Adopting projects can vendor this policy runner and
+replace its `make clean test` and `make analyze` commands with their normal
+verification commands.
+
 In an adopting project, vendor or adapt the reviewed result-diff helper and
 use logic like this in the test job. `tm-result-diff.sh` exits successfully
 only when the Git diff is limited to the two evidence trees:

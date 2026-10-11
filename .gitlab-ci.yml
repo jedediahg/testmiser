@@ -38,27 +38,7 @@ test:
     - |
       set -eu
       base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-${CI_COMMIT_BEFORE_SHA:-}}"
-      classification=$(bash scripts/tm-ci-classify-changes.sh \
-        "$base" "$CI_COMMIT_SHA")
-      tests_required=$(printf '%s\n' "$classification" |
-        sed -n 's/^tests_required=//p')
-      has_results=$(printf '%s\n' "$classification" |
-        sed -n 's/^has_results=//p')
-      results_only=$(printf '%s\n' "$classification" |
-        sed -n 's/^results_only=//p')
-      if [ "$results_only" = true ]; then
-        echo "Result-only change; skipping unrelated application tests."
-      elif [ "$tests_required" = true ]; then
-        TM_REQUIRE_PTRACE=1 make clean test
-        TM_REQUIRE_PTRACE=1 make analyze
-      else
-        echo "No test-relevant source changes."
-      fi
-      if [ "$has_results" = true ]; then
-        bash scripts/tm-ci-validate-results.sh
-      else
-        echo "No result sidecars changed."
-      fi
+      bash scripts/tm-ci-run-tests.sh "$base" "$CI_COMMIT_SHA"
 
 portable_acceptance:
   stage: test

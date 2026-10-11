@@ -24,8 +24,10 @@ test: $(TARGET) $(BUILD_DIR)/openat2_probe $(BUILD_DIR)/open_mode_probe $(BUILD_
 	bash -n tests/portable-reuse-ci.sh
 	bash -n scripts/tm-ci-has-test-changes.sh
 	bash -n scripts/tm-ci-classify-changes.sh
+	bash -n scripts/tm-ci-run-tests.sh
 	bash -n tests/ci-change-classify.sh
 	bash tests/ci-change-classify.sh
+	bash tests/ci-policy.sh
 	bash tests/portable-ci-gate.sh
 	bash tests/portable-probe-env.sh
 	bash -n tests/ci-validate-results.sh

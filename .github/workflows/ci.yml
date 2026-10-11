@@ -27,28 +27,7 @@ jobs:
           TM_DIFF_HEAD: ${{ github.sha }}
           TM_TRUST_POLICY_JSON: ${{ vars.TM_TRUST_POLICY_JSON }}
         run: |
-          classification=$(bash scripts/tm-ci-classify-changes.sh \
-            "$TM_DIFF_BASE" "$TM_DIFF_HEAD")
-          printf '%s\n' "$classification" >> "$GITHUB_OUTPUT"
-          tests_required=$(printf '%s\n' "$classification" |
-            sed -n 's/^tests_required=//p')
-          has_results=$(printf '%s\n' "$classification" |
-            sed -n 's/^has_results=//p')
-          results_only=$(printf '%s\n' "$classification" |
-            sed -n 's/^results_only=//p')
-
-          if [[ "$results_only" == true ]]; then
-            echo "Result-only change: validating trusted evidence without running unrelated tests."
-          elif [[ "$tests_required" == true ]]; then
-            TM_REQUIRE_PTRACE=1 make clean test
-            TM_REQUIRE_PTRACE=1 make analyze
-          else
-            echo "Documentation or unrelated change: skipping source tests and analysis."
-          fi
-
-          if [[ "$has_results" == true ]]; then
-            bash scripts/tm-ci-validate-results.sh
-          fi
+          bash scripts/tm-ci-run-tests.sh "$TM_DIFF_BASE" "$TM_DIFF_HEAD"
 
   portable-acceptance:
     needs: test
